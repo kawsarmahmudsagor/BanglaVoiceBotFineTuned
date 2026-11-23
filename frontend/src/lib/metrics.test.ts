@@ -62,3 +62,14 @@ describe("phaseStates", () => {
     expect(phaseStates(null, "cancelled")).toEqual(["pending", "pending", "pending", "pending"]);
   });
 });
+
+import { metricRows } from "./metrics";
+
+describe("metricRows", () => {
+  it("pairs x with base/x and hides base rows", () => {
+    expect(metricRows({ wer: 0.2, "base/wer": 0.3 })).toEqual([{ name: "wer", value: 0.2, base: 0.3, delta: -0.1 }]);
+  });
+  it("leaves unpaired metrics without base", () => {
+    expect(metricRows({ rtf: 1.5 })).toEqual([{ name: "rtf", value: 1.5 }]);
+  });
+});

@@ -3,27 +3,31 @@
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { EvalSamples } from "@/components/eval-samples";
 import { LogView } from "@/components/log-view";
 import { PageHeader, Panel } from "@/components/matra";
 import { MetricCharts } from "@/components/metric-charts";
 import { ErrorNotice, WarningNotice } from "@/components/notice";
+import { PreparedCard } from "@/components/prepared-card";
 import { PhaseTimeline } from "@/components/phase-timeline";
 import { StatusBadge } from "@/components/status-badge";
 import { Tabs } from "@/components/tabs";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  ApiError, cancelRun, getLogs, getMetrics, getRecipeVersion, getRun, promoteRun, resumeRun, runEventsUrl, runExportFileUrl,
+  ApiError, cancelRun, getLogs, getMetrics, getPrepared, getRecipeVersion, getRun, promoteRun, resumeRun, runEventsUrl, runExportFileUrl,
 } from "@/lib/api";
 import { formatBytes, formatDuration } from "@/lib/format";
-import { LOG_LIMIT, appendLog, mergeMetrics, metricsToSeries } from "@/lib/metrics";
+import { LOG_LIMIT, appendLog, mergeMetrics, metricRows, metricsToSeries } from "@/lib/metrics";
 import { runProgress } from "@/lib/run-filters";
-import type { RunDetail, RunMetric, RunState, RunStatus } from "@/lib/types";
+import type { PreparedRef, RunDetail, RunMetric, RunState, RunStatus } from "@/lib/types";
 
 const TERMINAL: RunState[] = ["done", "failed", "cancelled"];
 const isTerminal = (s: RunState) => TERMINAL.includes(s);
 
 type TabKey = "metrics" | "logs" | "config" | "eval" | "artifacts";
+
+const fmtMetric = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(4));
 
 const errText = (e: unknown) => (e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e));
 
@@ -44,6 +48,8 @@ function RunDetailView({ id }: { id: string }) {
   const [now, setNow] = useState(() => Date.now());
   const [tab, setTab] = useState<TabKey>("metrics");
   const [config, setConfig] = useState<{ yaml: string } | { error: string } | null>(null);
+
+  const [prepared, setPrepared] = useState<PreparedRef[] | null>(null);
 
   const refresh = useCallback(async () => {
     const r = await getRun(id);
@@ -168,6 +174,12 @@ function RunDetailView({ id }: { id: string }) {
       .catch((e) => setConfig({ error: errText(e) }));
   }, [tab, config, recipeName, recipeNumber]);
 
+  // Prepared-data refs, loaded once when the Config tab is first opened.
+  useEffect(() => {
+    if (tab !== "config" || prepared) return;
+    getPrepared(id).then((p) => setPrepared(p.refs)).catch(() => setPrepared([]));
+  }, [tab, prepared, id]);
+
   if (!run) {
     return loadError ? (
       <div className="space-y-4">
@@ -249,6 +261,7 @@ function RunDetailView({ id }: { id: string }) {
         {tab === "metrics" && <MetricCharts series={series} />}
         {tab === "logs" && <LogView stdout={logs.stdout} stderr={logs.stderr} />}
         {tab === "config" && (
+          <div className="space-y-4">
           <Panel title={`${run.recipe.name} v${run.recipe.number}`}>
             {config === null && <p className="text-sm text-muted-foreground">Loading recipe…</p>}
             {config && "error" in config && <ErrorNotice>Cannot load the recipe version ({config.error})</ErrorNotice>}
@@ -256,27 +269,36 @@ function RunDetailView({ id }: { id: string }) {
               <pre aria-label="Recipe YAML" className="overflow-auto rounded-md bg-ink p-3 font-mono text-[13px] leading-relaxed">{config.yaml}</pre>
             )}
           </Panel>
+          <PreparedCard refs={prepared ?? []} />
+          </div>
         )}
         {tab === "eval" &&
           (run.eval ? (
-            <Panel title="Eval metrics">
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead>Metric</TableHead>
-                    <TableHead>Value</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {Object.entries(run.eval.metrics).map(([k, v]) => (
-                    <TableRow key={k}>
-                      <TableCell className="font-mono">{k}</TableCell>
-                      <TableCell className="font-mono">{Number.isInteger(v) ? v : v.toFixed(4)}</TableCell>
+            <div className="space-y-4">
+              <Panel title="Eval metrics">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead>Metric</TableHead>
+                      <TableHead>Value</TableHead>
+                      <TableHead>base/</TableHead>
+                      <TableHead>Delta</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Panel>
+                  </TableHeader>
+                  <TableBody>
+                    {metricRows(run.eval.metrics).map((m) => (
+                      <TableRow key={m.name}>
+                        <TableCell className="font-mono">{m.name}</TableCell>
+                        <TableCell className="font-mono">{fmtMetric(m.value)}</TableCell>
+                        <TableCell className="font-mono">{m.base === undefined ? "" : fmtMetric(m.base)}</TableCell>
+                        <TableCell className="font-mono">{m.delta === undefined ? "" : `${m.delta > 0 ? "+" : ""}${fmtMetric(m.delta)}`}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Panel>
+              <EvalSamples runId={run.id} task={run.task ?? null} />
+            </div>
           ) : (
             <p className="text-sm text-muted-foreground">No eval results yet. They appear after the eval phase finishes.</p>
           ))}

@@ -1,6 +1,6 @@
 import type {
   Backend, CancelResult, CatalogEntry, CatalogList, CreateRunBody, DatasetDetail, DatasetListItem, Dataset, IngestRequest,
-  IngestStatus, ModelVersion, RecipeBody, RecipeDetail, RecipeListItem, RecipeVersionDetail,
+  EvalSamplesPage, IngestStatus, ModelVersion, PreparedRef, RecipeBody, RecipeDetail, RecipeListItem, RecipeVersionDetail,
   ResumeResult, RunDetail, RunListItem, RunLogs, RunMetrics, SamplesPage, SamplesQuery, SavedRecipe,
   SystemInfo, Task, ValidateResult, VersionDetail, VersionSummary,
 } from "./types";
@@ -110,6 +110,10 @@ export const resumeRun = (id: string) => apiPost<ResumeResult>(`/api/runs/${enc(
 export const getMetrics = (id: string, offset = 0) =>
   apiGet<RunMetrics>(`/api/runs/${enc(id)}/metrics${qs({ offset })}`);
 export const getLogs = (id: string, tail?: number) => apiGet<RunLogs>(`/api/runs/${enc(id)}/logs${qs({ tail })}`);
+export const getPrepared = (id: string) => apiGet<{ refs: PreparedRef[] }>(`/api/runs/${enc(id)}/prepared`);
+export const getEvalSamples = (id: string, offset = 0, limit = 50) =>
+  apiGet<EvalSamplesPage>(`/api/runs/${enc(id)}/eval/samples${qs({ offset, limit })}`);
+export const evalAudioUrl = (id: string, name: string) => `${API_URL}/api/runs/${enc(id)}/eval/audio/${enc(name)}`;
 export const promoteRun = (id: string) => apiPost<ModelVersion>(`/api/runs/${enc(id)}/promote`);
 
 // models

@@ -210,6 +210,7 @@ export interface RunDetail {
   finished_at: string | null;
   recipe: { name: string; number: number };
   status: RunStatus | null;
+  task?: Task | null;
   eval: EvalResults | null;
   exports: ExportArtifact[];
   oom_hint: string | null;
@@ -317,4 +318,27 @@ export interface CatalogEntry {
   };
   sources: { title: string; url: string }[];
   verified: string;
+}
+
+export interface PreparedSkip {
+  sample_id: string;
+  split: string;
+  reason: string;
+}
+export interface PreparedRef {
+  role: "train" | "eval";
+  spec: { family: string; version: number | string; params: Record<string, unknown> };
+  spec_hash: string;
+  dataset_hash: string;
+  counts: Record<string, number>;
+  skipped: PreparedSkip[];
+  files: string[];
+  built_at: string | null;
+  build_s: number | null;
+  path: string;
+  cache_hit: boolean;
+}
+export interface EvalSamplesPage {
+  items: Record<string, unknown>[];
+  total: number;
 }

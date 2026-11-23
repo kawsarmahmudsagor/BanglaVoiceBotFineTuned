@@ -55,3 +55,16 @@ export function phaseStates(statusPhase: Phase | null | undefined, state: RunSta
     return "pending";
   });
 }
+
+export type MetricRow = { name: string; value: number; base?: number; delta?: number };
+
+/** One row per metric; `base/x` is paired with `x` (value, base, delta) and hidden from its own row. */
+export function metricRows(metrics: Record<string, number>): MetricRow[] {
+  const rows: MetricRow[] = [];
+  for (const [name, value] of Object.entries(metrics)) {
+    if (name.startsWith("base/")) continue;
+    const base = metrics[`base/${name}`];
+    rows.push(base === undefined ? { name, value } : { name, value, base, delta: Number((value - base).toPrecision(12)) });
+  }
+  return rows;
+}
