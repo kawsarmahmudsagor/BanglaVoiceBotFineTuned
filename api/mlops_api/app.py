@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .db import make_engine, make_sessionmaker
 from .routers.datasets import router as datasets_router
+from .routers.recipes import router as recipes_router
 from .uploads import router as uploads_router
 from .settings import Settings, get_settings
 
@@ -28,6 +29,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.include_router(uploads_router)
     app.include_router(datasets_router)
+    app.include_router(recipes_router)
 
     @app.get("/api/health")
     async def health() -> dict:
