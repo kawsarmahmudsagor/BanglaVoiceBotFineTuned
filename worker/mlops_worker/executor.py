@@ -218,6 +218,8 @@ def _unverified_reason(rec: object, rd: RunDir) -> str | None:
     if not isinstance(rec, dict) or not isinstance(rec.get("pgid"), int) or rec["pgid"] <= 1:
         return "unrecognised pid file"
     pgid = rec["pgid"]
+    if pgid == os.getpgrp():
+        return "recorded group is the worker's own process group"
     if not (_PROC / "self" / "stat").exists():
         return "/proc is unavailable, cannot verify the process"
     if rec.get("boot_id") is None or rec.get("boot_id") != _boot_id():
@@ -225,12 +227,14 @@ def _unverified_reason(rec: object, rd: RunDir) -> str | None:
     if not _group_alive(pgid):
         return "process group is gone"
     if rec.get("start_ticks") is None or rec.get("start_ticks") != _start_ticks(pgid):
-        return "pid now belongs to a different process"
+        return "group leader exited or its pid was reused"
     try:
-        cmdline = (_PROC / str(pgid) / "cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace")
+        raw = (_PROC / str(pgid) / "cmdline").read_bytes()
     except OSError:
         return "cannot read the process command line"
-    if "mlops_backend" not in cmdline or str(rd.path) not in cmdline:
+    tokens = [t.decode("utf-8", "surrogateescape") for t in raw.split(b"\0")]
+    run_dirs = [tokens[i + 1] for i, t in enumerate(tokens[:-1]) if t == "--run-dir"]
+    if "mlops_backend" not in tokens or run_dirs != [str(rd.path)]:
         return "process is not this run's backend"
     return None
 

@@ -9,6 +9,7 @@ import pytest
 
 from mlops_shared.contract import RunDir
 from mlops_worker import jobs
+from mlops_worker import executor
 from mlops_worker.executor import kill_recorded_backend
 from mlops_worker.jobs import claim_next_ingest, claim_next_run, recover
 from mlops_worker.lock import acquire, current, release
@@ -192,17 +193,21 @@ async def test_recover_kills_orphaned_backend_group(session, tmp_path):
 
 
 @POSIX
-@pytest.mark.parametrize("case", ["boot_id", "start_ticks", "cmdline", "plain_int"])
-async def test_kill_recorded_backend_skips_unverified_groups(tmp_path, case):
-    run_dir = tmp_path / "run"
-    other = tmp_path / "other-run"
-    child = _fake_backend(other if case == "cmdline" else run_dir)
+@pytest.mark.parametrize(
+    "case", ["boot_id", "start_ticks", "cmdline", "plain_int", "run_dir_prefix", "own_group"]
+)
+async def test_kill_recorded_backend_skips_unverified_groups(tmp_path, case, monkeypatch):
+    run_dir = tmp_path / "r-1"
+    child_dir = {"cmdline": tmp_path / "other-run", "run_dir_prefix": tmp_path / "r-12"}.get(case, run_dir)
+    child = _fake_backend(child_dir)
     try:
         ident = _identity(child.pid)
         if case == "boot_id":
             ident["boot_id"] = "00000000-0000-0000-0000-000000000000"
         elif case == "start_ticks":
             ident["start_ticks"] += 1
+        elif case == "own_group":  # everything else matches, but it is the worker's own process group
+            monkeypatch.setattr(executor.os, "getpgrp", lambda: child.pid)
         pid_file = _write_pid(run_dir, str(child.pid) if case == "plain_int" else ident)
         await kill_recorded_backend(RunDir(run_dir), grace_s=1)
         assert child.poll() is None, f"{case}: an unverified process group was signalled"
