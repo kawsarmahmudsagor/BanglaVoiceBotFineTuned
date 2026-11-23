@@ -281,3 +281,40 @@ export interface CatalogList {
   entries: CatalogSummary[];
   errors: CatalogLoadError[];
 }
+export interface CatalogEntry {
+  id: string;
+  task: Task;
+  name: string;
+  hf_repo: string;
+  derived_from?: string | null;
+  params: string;
+  role: CatalogRole;
+  license: CatalogLicense;
+  bangla: { status: BanglaStatus; evidence: string; url?: string | null };
+  runtime: { engine: string; convert?: string | null; streaming: boolean };
+  description: string;
+  dataset: {
+    format: Task;
+    required_fields: string[];
+    optional_fields: string[];
+    example: string;
+    recommended: Record<string, string>;
+    notes?: string | null;
+  };
+  finetune: {
+    methods: string[];
+    frameworks: string[];
+    targets: string[];
+    hyperparams: Record<string, unknown>;
+    metrics: string[];
+    pitfalls: string[];
+  };
+  recipe_template: {
+    backend?: string | null;
+    method: Record<string, unknown> & { type: string };
+    hparams: Record<string, unknown>;
+    export: string[];
+  };
+  sources: { title: string; url: string }[];
+  verified: string;
+}

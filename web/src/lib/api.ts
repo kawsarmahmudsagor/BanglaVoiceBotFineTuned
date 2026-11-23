@@ -1,5 +1,5 @@
 import type {
-  Backend, CancelResult, CatalogList, CreateRunBody, DatasetDetail, DatasetListItem, Dataset, IngestRequest,
+  Backend, CancelResult, CatalogEntry, CatalogList, CreateRunBody, DatasetDetail, DatasetListItem, Dataset, IngestRequest,
   IngestStatus, ModelVersion, RecipeBody, RecipeDetail, RecipeListItem, RecipeVersionDetail,
   ResumeResult, RunDetail, RunListItem, RunLogs, RunMetrics, SamplesPage, SamplesQuery, SavedRecipe,
   SystemInfo, Task, ValidateResult, VersionDetail, VersionSummary,
@@ -71,6 +71,7 @@ export const getSystem = () => apiGet<SystemInfo>("/api/system");
 
 // catalog
 export const listCatalog = (task?: Task) => apiGet<CatalogList>(`/api/catalog${qs({ task })}`);
+export const getCatalogEntry = (id: string) => apiGet<CatalogEntry>(`/api/catalog/${enc(id)}`);
 
 // datasets
 export const listDatasets = () => apiGet<DatasetListItem[]>("/api/datasets");
