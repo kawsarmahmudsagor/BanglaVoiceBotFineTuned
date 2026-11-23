@@ -291,3 +291,39 @@ async def test_blocking_forwarder_does_not_block_event_loop(env):
     await t
     # each blocking forwarder call sleeps 0.5 s; the loop must keep ticking meanwhile
     assert max_gap < 0.3, max_gap
+
+
+async def test_backend_pid_file_written_during_phase_and_removed_after(env):
+    run = await queued_run(env, hparams={"steps": 1000, "step_sleep_s": 0.05})
+    pid_file = RunDir(env.settings.runs_dir / "r-test0001").logs_dir / "backend.pid"
+    task = asyncio.create_task(execute_run(env.sf, run.id, env.settings, env.fwd))
+    await wait_for_state(env, run.id, "training")
+    for _ in range(200):
+        if pid_file.exists() and pid_file.read_text().strip():
+            break
+        await asyncio.sleep(0.02)
+    assert int(pid_file.read_text()) > 0
+    await set_cancel(env, run.id)
+    assert await asyncio.wait_for(task, 15) == "cancelled"
+    assert not pid_file.exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+async def test_worker_cancellation_sigterms_backend_before_kill(env):
+    env.settings.cancel_grace_s = 10
+    run = await queued_run(env, hparams={"steps": 1000, "step_sleep_s": 30})
+    rd = RunDir(env.settings.runs_dir / "r-test0001")
+    task = asyncio.create_task(execute_run(env.sf, run.id, env.settings, env.fwd))
+    await wait_for_state(env, run.id, "training")
+    for _ in range(500):  # the fake installs its SIGTERM handler right after creating checkpoints/
+        if rd.checkpoints_dir.exists():
+            break
+        await asyncio.sleep(0.02)
+    await asyncio.sleep(0.5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert list(rd.checkpoints_dir.glob("step-*")), "backend was killed without SIGTERM"
+    r = await run_of(env, run.id)
+    assert r.state == "failed" and r.error == "worker interrupted"
+    assert (await lock_state(env)).holder_kind is None

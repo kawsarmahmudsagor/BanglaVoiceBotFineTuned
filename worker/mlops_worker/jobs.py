@@ -1,10 +1,15 @@
 """Database-backed job queue: claim runs and ingests, recover after a restart."""
 
+from pathlib import Path
+
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mlops_api.models import Ingest, Run, utcnow
 
+from mlops_shared.contract import RunDir
+
+from .executor import kill_recorded_backend
 from .lock import acquire, current, release
 
 ACTIVE_RUN_STATES = ("preparing", "training", "evaluating", "exporting")
@@ -52,13 +57,19 @@ async def claim_next_ingest(session: AsyncSession) -> Ingest | None:
     return None
 
 
-async def recover(session: AsyncSession) -> list[str]:
-    """Fail work orphaned by a worker restart and free a run-held GPU lock."""
+async def recover(session: AsyncSession, cancel_grace_s: float = 60) -> list[str]:
+    """Fail work orphaned by a worker restart and free a run-held GPU lock.
+
+    A backend process group still alive from the dead worker (recorded in logs/backend.pid)
+    is stopped first: SIGTERM, up to `cancel_grace_s`, then SIGKILL."""
     rows = (
-        await session.execute(select(Run.id, Run.state).where(Run.state.in_(ACTIVE_RUN_STATES)))
+        await session.execute(
+            select(Run.id, Run.state, Run.run_dir).where(Run.state.in_(ACTIVE_RUN_STATES))
+        )
     ).all()
     recovered: list[str] = []
-    for run_id, state in rows:
+    for run_id, state, run_dir in rows:
+        await kill_recorded_backend(RunDir(Path(run_dir)), cancel_grace_s)
         result = await session.execute(
             update(Run)
             .where(Run.id == run_id, Run.state == state)

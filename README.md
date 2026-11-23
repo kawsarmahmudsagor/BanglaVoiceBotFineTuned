@@ -12,6 +12,8 @@ Target: Ubuntu 24.04 with an NVIDIA driver, Docker with Compose, nvidia-containe
 4. Run `scripts/setup_venvs.sh` to sync the workspace venv and one venv per real backend.
 5. Run `scripts/dev.sh`. It starts the compose stack, waits for `/api/health`, and runs the worker in the foreground (`uv run python -m mlops_worker`). Stop the worker with Ctrl-C; `docker compose down` stops the rest.
 
+Run `scripts/dev.sh` inside `tmux` (or as a systemd user unit) so the worker survives a dropped SSH connection: `tmux new -s mlops`, run the script, detach with Ctrl-b d, reattach with `tmux attach -t mlops`. If the worker does die mid-run, its next start stops the orphaned backend process group and marks the run failed.
+
 `deploy/postgres/init.sql` (which creates the `mlflow` database) only runs on a fresh Postgres volume. On an existing volume, create it by hand: `docker compose exec postgres psql -U mlops -d mlops -c 'CREATE DATABASE mlflow;'`.
 
 MLflow runs as your VM user (`UID`/`GID`, default 1000). Services listen on the VM's loopback only: web on 3000, API on 8000, MLflow on 5000, Postgres on 5432.
@@ -33,7 +35,7 @@ Run this once after setup to confirm the whole platform works end to end. It use
 1. On the VM, run `scripts/check_vm.sh`. Success: the last line is `OK`.
 2. Run `scripts/setup_venvs.sh`. Success: it exits 0 without errors.
 3. Run `cp .env.example .env` (skip if done) and set `DATA_ROOT`, `REPO_ROOT`, `POSTGRES_PASSWORD` and the matching password in `DATABASE_URL`.
-4. Run `scripts/dev.sh`. Success: it prints the tunnel hint, then the worker starts and stays in the foreground. Leave this terminal open.
+4. Start `tmux new -s mlops` and run `scripts/dev.sh` inside it. Success: it prints the tunnel hint, then the worker starts and stays in the foreground. Detach with Ctrl-b d; the worker keeps running if SSH drops.
 5. On your PC, open the tunnel from "Reaching it from your PC" and browse `http://localhost:3000`. Success: the dashboard loads.
 6. Datasets > Upload: choose task `llm-sft` and upload a small Bangla JSONL file (sample below). Fill in source, license and consent. Success: the report shows no errors and a dataset version 1 appears.
 7. Recipes > New: create a recipe named `smoke` with backend `fake`, task `llm-sft`, train dataset `<your dataset>@v1`, and hyperparameters `steps: 20` and `step_sleep_s: 0.5`. Success: validation passes and the recipe saves as v1.

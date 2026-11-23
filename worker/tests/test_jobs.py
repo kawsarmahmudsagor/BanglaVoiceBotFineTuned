@@ -1,4 +1,9 @@
 import datetime as dt
+import signal
+import subprocess
+import sys
+
+import pytest
 
 from mlops_worker import jobs
 from mlops_worker.jobs import claim_next_ingest, claim_next_run, recover
@@ -125,3 +130,30 @@ async def test_recover_leaves_other_states_and_serve_lock(session):
 async def test_recover_covers_all_active_states(session):
     ids = [(await make_run(session, state=s)).id for s in ("preparing", "training", "evaluating", "exporting")]
     assert sorted(await recover(session)) == sorted(ids)
+
+
+async def test_recover_without_pid_file_still_fails_run(session, tmp_path):
+    run = await make_run(session, state="training")
+    run.run_dir = str(tmp_path / "run")
+    await session.commit()
+    assert await recover(session, cancel_grace_s=1) == [run.id]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+async def test_recover_kills_orphaned_backend_group(session, tmp_path):
+    run = await make_run(session, state="training")
+    run_dir = tmp_path / "run"
+    (run_dir / "logs").mkdir(parents=True)
+    run.run_dir = str(run_dir)
+    await session.commit()
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
+    try:
+        (run_dir / "logs" / "backend.pid").write_text(str(child.pid))
+        assert await recover(session, cancel_grace_s=1) == [run.id]
+        assert child.wait(timeout=5) == -signal.SIGTERM
+        assert not (run_dir / "logs" / "backend.pid").exists()
+        assert (await get_run(session, run.id)).state == "failed"
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()

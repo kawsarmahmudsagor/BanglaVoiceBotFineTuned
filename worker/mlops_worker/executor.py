@@ -150,11 +150,19 @@ def _spawn_kwargs() -> dict:
     return {"start_new_session": True}
 
 
+PID_FILE = "backend.pid"
+_KILL = signal.SIGKILL if sys.platform != "win32" else signal.SIGTERM
+
+
 def _signal(proc: asyncio.subprocess.Process, sig: int, win_method: str) -> None:
-    """Signal the backend's whole process group (POSIX) or the process (Windows)."""
+    """Signal the backend's whole process group (POSIX) or the process (Windows).
+
+    On POSIX the group is signalled even when the leader has already exited, so stray
+    children (DataLoader / torchrun workers) are reached too."""
     try:
         if sys.platform == "win32":
-            getattr(proc, win_method)()
+            if proc.returncode is None:
+                getattr(proc, win_method)()
         else:
             os.killpg(proc.pid, sig)  # session leader: pgid == pid
     except (ProcessLookupError, PermissionError):
@@ -162,13 +170,50 @@ def _signal(proc: asyncio.subprocess.Process, sig: int, win_method: str) -> None
 
 
 async def _stop(proc: asyncio.subprocess.Process, grace_s: float) -> None:
-    if proc.returncode is None:
-        _signal(proc, signal.SIGTERM, "terminate")
-        try:
-            await asyncio.wait_for(proc.wait(), grace_s)
-        except asyncio.TimeoutError:
-            _signal(proc, signal.SIGKILL if sys.platform != "win32" else signal.SIGTERM, "kill")
+    """SIGTERM the group, wait up to `grace_s` for the leader, then SIGKILL the group."""
+    _signal(proc, signal.SIGTERM, "terminate")
+    try:
+        await asyncio.wait_for(proc.wait(), grace_s)
+    except asyncio.TimeoutError:
+        pass
+    _signal(proc, _KILL, "kill")
     await proc.wait()
+
+
+def _group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+async def kill_recorded_backend(rd: RunDir, grace_s: float) -> None:
+    """Stop a backend left behind by a dead worker, using the process group in logs/backend.pid."""
+    pid_file = rd.logs_dir / PID_FILE
+    try:
+        pgid = int(pid_file.read_text().strip())
+    except (OSError, ValueError):
+        return
+    if sys.platform == "win32":
+        log.warning("not killing orphaned backend pid %s of %s on Windows; stop it by hand", pgid, rd.path)
+    elif _group_alive(pgid):
+        log.warning("stopping orphaned backend process group %s of %s", pgid, rd.path)
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + grace_s
+        while _group_alive(pgid) and loop.time() < deadline:
+            await asyncio.sleep(0.1)
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    pid_file.unlink(missing_ok=True)
 
 
 async def _run_phase(session_factory, run_id, settings, python: Path, rd: RunDir, phase: str,
@@ -177,11 +222,13 @@ async def _run_phase(session_factory, run_id, settings, python: Path, rd: RunDir
     rd.logs_dir.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     cancelled = False
+    pid_file = rd.logs_dir / PID_FILE
     with (rd.logs_dir / "stdout.log").open("ab") as out, (rd.logs_dir / "stderr.log").open("ab") as err:
         proc = await asyncio.create_subprocess_exec(
             str(python), "-m", "mlops_backend", phase, "--run-dir", str(rd.path),
             stdout=out, stderr=err, env=env, **_spawn_kwargs(),
         )
+        pid_file.write_text(str(proc.pid))  # POSIX: the process-group id (session leader)
         try:
             while proc.returncode is None:
                 try:
@@ -194,8 +241,10 @@ async def _run_phase(session_factory, run_id, settings, python: Path, rd: RunDir
                     await _stop(proc, settings.cancel_grace_s)
         finally:
             if proc.returncode is None:
-                _signal(proc, signal.SIGKILL if sys.platform != "win32" else signal.SIGTERM, "kill")
-                await proc.wait()
+                # Worker cancelled (or crashed) mid-phase: same graceful stop, shielded so the
+                # pending cancellation does not cut the grace period short.
+                await asyncio.shield(_stop(proc, settings.cancel_grace_s))
+            pid_file.unlink(missing_ok=True)
     offset = await _drain_metrics(rd, offset, forwarder)
     return proc.returncode, offset, cancelled
 

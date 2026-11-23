@@ -54,7 +54,7 @@ async def main(settings, forwarder_factory=make_forwarder, install_signals: bool
         async with sf() as s:
             await ensure_lock_row(s)
         async with sf() as s:
-            recovered = await recover(s)
+            recovered = await recover(s, settings.cancel_grace_s)
         if recovered:
             log.warning("recovered orphaned runs: %s", ", ".join(recovered))
 
@@ -69,7 +69,7 @@ async def main(settings, forwarder_factory=make_forwarder, install_signals: bool
                     stopping = True
                     current.cancel()
 
-            for sig in (signal.SIGINT, signal.SIGTERM):
+            for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):  # SIGHUP: SSH session dropped
                 loop.add_signal_handler(sig, _stop)
 
         log.info("worker started")
