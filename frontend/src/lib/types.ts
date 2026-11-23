@@ -77,7 +77,19 @@ export interface VersionDetail extends VersionSummary {
   report: VersionReport | null;
   provenance: Provenance | null;
   split_ratios: Record<string, number> | null;
-  splits: Record<string, number>;
+  split_source: "dataset" | "none";
+  given_splits: Record<string, number>;
+  default_split_counts: Record<string, number>;
+}
+export interface SplitRatios {
+  train: number;
+  val: number;
+  test: number;
+}
+/** Per-run split settings; ratios are fractions (0.9), not percentages. */
+export interface SplitConfig {
+  use_dataset_splits: boolean;
+  ratios: SplitRatios;
 }
 export interface SampleRow {
   sample_id: string;

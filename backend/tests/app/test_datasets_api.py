@@ -88,7 +88,7 @@ async def test_version_detail_and_samples(client, session_factory, settings):
     await ingest_via_api(client, session_factory, settings, "a.jsonl", jsonl_bytes(5), "ecom-instruct")
     v = (await client.get("/api/datasets/ecom-instruct/versions/1")).json()
     assert v["n_samples"] == 5 and len(v["hash"]) == 16
-    assert sum(v["splits"].values()) == 5
+    assert sum(v["default_split_counts"].values()) == 5 and "splits" not in v
     assert v["provenance"]["license"] == "cc-by" and v["parent_number"] is None
     assert "errors" in v["report"]
     page = (await client.get("/api/datasets/ecom-instruct/versions/1/samples?limit=2")).json()

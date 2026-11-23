@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { ReportView } from "@/components/report-view";
+import { SplitSummary } from "@/components/split-summary";
 import { SampleTable } from "@/components/sample-table";
 import { X } from "lucide-react";
 import { PageHeader, Panel } from "@/components/matra";
@@ -107,7 +108,8 @@ function VersionView() {
           </Panel>
           <Panel title="Splits">
             <div className="space-y-1 text-sm">
-              {Object.entries(version.splits).map(([k, v]) => (
+              <SplitSummary splitSource={version.split_source} given={version.given_splits} />
+              {version.split_source === "none" && Object.entries(version.default_split_counts).map(([k, v]) => (
                 <div key={k}>
                   <span className="font-mono">{k}</span>: <span className="font-mono">{v}</span>
                 </div>

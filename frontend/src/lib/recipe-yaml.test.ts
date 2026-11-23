@@ -29,3 +29,13 @@ describe("recipe yaml", () => {
     expect(yamlToSpec("").ok).toBe(false);
   });
 });
+
+describe("recipe yaml datasets.split", () => {
+  it("round-trips datasets.split", () => {
+    const spec = {
+      ...SPEC,
+      datasets: { train: "ds@v1", eval: null, split: { use_dataset_splits: false, ratios: { train: 0.9, val: 0.05, test: 0.05 } } },
+    };
+    expect(yamlToSpec(specToYaml(spec))).toEqual({ ok: true, spec });
+  });
+});

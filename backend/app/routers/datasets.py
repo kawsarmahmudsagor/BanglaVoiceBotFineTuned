@@ -177,7 +177,7 @@ async def get_version(name: str, n: int, session: AsyncSession = Depends(get_ses
     return {**_summary(v, await _parent_number(session, v)), "dataset": ds.name, "task": ds.task,
             "report": v.report, "provenance": v.provenance, "split_ratios": v.split_ratios,
             "split_source": v.split_source, "given_splits": v.given_splits or {},
-            "default_split_counts": counts, "splits": counts}
+            "default_split_counts": counts}
 
 
 @router.get("/datasets/{name}/versions/{n}/samples")

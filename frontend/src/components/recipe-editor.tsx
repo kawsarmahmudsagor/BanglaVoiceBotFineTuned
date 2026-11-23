@@ -5,12 +5,14 @@ import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "rea
 import { Panel } from "@/components/matra";
 import { ErrorNotice, WarningNotice } from "@/components/notice";
 import { SchemaFields, type JsonSchema } from "@/components/schema-fields";
+import { SplitFields, type SplitDataset } from "@/components/split-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getDataset, listBackends, listDatasets, saveRecipe, validateRecipe } from "@/lib/api";
+import { getDataset, getVersion, listBackends, listDatasets, saveRecipe, validateRecipe } from "@/lib/api";
 import { groupErrors, type RecipeField } from "@/lib/recipe-errors";
+import { DEFAULT_SPLIT, ratiosValid } from "@/lib/splits";
 import { specToYaml, yamlToSpec } from "@/lib/recipe-yaml";
-import type { DatasetDetail, DatasetListItem, RecipeBody, Task } from "@/lib/types";
+import type { DatasetDetail, DatasetListItem, RecipeBody, SplitConfig, Task } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Spec = Record<string, unknown>;
@@ -152,6 +154,30 @@ export function RecipeEditor({ initial, notice }: { initial?: Spec; notice?: str
     }
   }, [firstTrain, spec.task]);
 
+  // The chosen train dataset's split info feeds the "Data splits" group.
+  const trainRef = str(datasetsObj.train);
+  const [splitDataset, setSplitDataset] = useState<SplitDataset | null>(null);
+  useEffect(() => {
+    const m = /^(.+)@v(\d+)$/.exec(trainRef);
+    if (!m) {
+      setSplitDataset(null);
+      return;
+    }
+    let active = true;
+    getVersion(m[1], Number(m[2]))
+      .then((v) => active && setSplitDataset({ split_source: v.split_source, given_splits: v.given_splits, n_samples: v.n_samples }))
+      .catch(() => active && setSplitDataset(null));
+    return () => {
+      active = false;
+    };
+  }, [trainRef]);
+  const splitValue: SplitConfig = {
+    ...DEFAULT_SPLIT,
+    ...asObj(datasetsObj.split),
+    ratios: { ...DEFAULT_SPLIT.ratios, ...asObj(asObj(datasetsObj.split).ratios) },
+  } as SplitConfig;
+  const splitError = ratiosValid(splitValue.ratios);
+
   const taskBackends = backends.filter((b) => b.tasks?.[task]);
   const cap = backends.find((b) => b.name === spec.backend)?.tasks?.[task];
 
@@ -229,7 +255,7 @@ export function RecipeEditor({ initial, notice }: { initial?: Spec; notice?: str
   const shown = validating ? [] : unnamed ? errors.filter((e) => !e.startsWith("name")) : errors;
   const grouped = groupErrors(shown);
   const err = (f: RecipeField) => grouped[f];
-  const canSave = !saving && !validating && errors.length === 0 && !yamlError;
+  const canSave = !saving && !validating && errors.length === 0 && !yamlError && !splitError;
   const exportsSel = Array.isArray(spec.export) ? (spec.export as string[]) : [];
   const schemaProps = cap?.schema?.properties ?? {};
   const methods = withCurrent(cap?.methods ?? [], str(methodObj.type));
@@ -341,6 +367,11 @@ export function RecipeEditor({ initial, notice }: { initial?: Spec; notice?: str
               )}
               <FieldErrors id="hparams-errors" errors={err("hparams")} />
             </fieldset>
+            <SplitFields
+              value={splitValue}
+              dataset={splitDataset}
+              onChange={(v) => setField("datasets", { ...datasetsObj, split: v })}
+            />
           </div>
         </Panel>
 
