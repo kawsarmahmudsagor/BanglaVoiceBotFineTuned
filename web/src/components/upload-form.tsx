@@ -10,6 +10,7 @@ import { ReportView } from "@/components/report-view";
 import { API_URL, ApiError, getIngest, startIngest } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
 import { isValidSlug } from "@/lib/slug";
+import { describeUploadError, ingestOutcome, uploadIdFromUrl } from "@/lib/upload";
 import type { IngestStatus, Task } from "@/lib/types";
 
 const POLL_MS = 2000;
@@ -18,14 +19,6 @@ const TASKS: Task[] = ["llm-sft", "asr", "tts"];
 
 const field = "space-y-1 text-sm";
 const label = "block font-medium";
-
-function describeUploadError(err: Error): string {
-  const res = (err as { originalResponse?: { getStatus(): number; getBody(): string } }).originalResponse;
-  const status = res?.getStatus();
-  if (status === 507) return "Server disk is full (507). Free space on the VM before uploading.";
-  if (status === 409) return `Conflict (409): ${res?.getBody() || err.message}`;
-  return status ? `Upload failed (${status}): ${res?.getBody() || err.message}` : `Upload failed: ${err.message}`;
-}
 
 export function UploadForm() {
   const router = useRouter();
@@ -67,13 +60,18 @@ export function UploadForm() {
         const st = await getIngest(id);
         if (!alive.current) return;
         setIngest(st);
-        if (st.state === "done" && st.version) {
-          if (timer.current) clearInterval(timer.current);
+        setError(null);
+        const outcome = ingestOutcome(st);
+        if (outcome === "continue") return;
+        if (timer.current) clearInterval(timer.current);
+        if (outcome === "done" && st.version) {
           router.push(`/datasets/${encodeURIComponent(st.dataset)}/v/${st.version.number}`);
-        } else if (st.state === "failed") {
-          if (timer.current) clearInterval(timer.current);
+        } else if (outcome === "failed") {
           setPhase("idle");
           setError(st.error ?? "Ingest failed");
+        } else {
+          setPhase("idle");
+          setError("Ingest finished but reported no version; check the dataset page.");
         }
       } catch (e) {
         if (alive.current) setError(e instanceof Error ? e.message : String(e));
@@ -84,7 +82,8 @@ export function UploadForm() {
   }
 
   async function finishUpload(url: string) {
-    const uploadId = url.split("/").filter(Boolean).pop() ?? "";
+    if (!alive.current) return;
+    const uploadId = uploadIdFromUrl(url);
     setPhase("ingesting");
     try {
       const { ingest_id } = await startIngest({
@@ -96,6 +95,7 @@ export function UploadForm() {
       });
       if (alive.current) poll(ingest_id);
     } catch (e) {
+      if (!alive.current) return;
       setPhase("idle");
       setError(e instanceof ApiError ? `${e.status}: ${e.detail}` : e instanceof Error ? e.message : String(e));
     }
