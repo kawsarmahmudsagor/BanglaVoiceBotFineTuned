@@ -28,9 +28,9 @@ def iso(d: dt.datetime | None) -> str | None:
 
 
 class Provenance(BaseModel):
-    source: str = ""
-    license: str = ""
-    consent: str = ""
+    source: str = Field(min_length=1)
+    license: str = Field(min_length=1)
+    consent: str = Field(min_length=1)
     commercial_ok: bool = False
     notes: str = ""
 

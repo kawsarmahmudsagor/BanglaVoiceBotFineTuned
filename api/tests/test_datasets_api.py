@@ -264,3 +264,36 @@ async def test_run_ingest_on_done_ingest_is_noop(client, session_factory, settin
     await run_ingest_now(session_factory, iid, settings)
     assert [v["number"] for v in (await client.get("/api/datasets/once")).json()["versions"]] == [1]
     assert (await client.get(f"/api/ingests/{iid}")).json()["state"] == "done"
+
+
+async def test_new_version_applies_request_eval_only_to_existing_dataset(client, session_factory, settings):
+    await ingest_via_api(client, session_factory, settings, "a.jsonl", jsonl_bytes(1), "evalset")
+    assert (await client.get("/api/datasets/evalset")).json()["eval_only"] is False
+    await ingest_via_api(client, session_factory, settings, "b.jsonl", jsonl_bytes(2, offset=5), "evalset",
+                         eval_only=True)
+    assert (await client.get("/api/datasets/evalset")).json()["eval_only"] is True
+
+
+async def test_provenance_source_license_consent_required(client):
+    up = await upload_bytes(client, "a.jsonl", jsonl_bytes(1))
+    for field in ("source", "license", "consent"):
+        body = req(up, "prov")
+        body["provenance"][field] = ""
+        assert (await client.post("/api/datasets/ingest", json=body)).status_code == 422, field
+        del body["provenance"][field]
+        assert (await client.post("/api/datasets/ingest", json=body)).status_code == 422, field
+    assert (await client.post("/api/datasets/ingest", json=req(up, "prov"))).status_code == 202
+
+
+async def test_upload_dir_deleted_after_done_kept_after_failed(client, session_factory, settings):
+    ok_up = await upload_bytes(client, "a.jsonl", jsonl_bytes(1))
+    r = await client.post("/api/datasets/ingest", json=req(ok_up, "keep"))
+    await run_ingest_now(session_factory, r.json()["ingest_id"], settings)
+    assert (await client.get(f"/api/ingests/{r.json()['ingest_id']}")).json()["state"] == "done"
+    assert not (settings.incoming_dir / ok_up).exists()
+
+    bad_up = await upload_bytes(client, "b.jsonl", b"not json\n")
+    r = await client.post("/api/datasets/ingest", json=req(bad_up, "broken"))
+    await run_ingest_now(session_factory, r.json()["ingest_id"], settings)
+    assert (await client.get(f"/api/ingests/{r.json()['ingest_id']}")).json()["state"] == "failed"
+    assert (settings.incoming_dir / bad_up).is_dir()

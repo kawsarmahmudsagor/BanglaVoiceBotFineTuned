@@ -112,3 +112,21 @@ def test_upload_suffix_is_case_insensitive(tmp_path, make_zip, jsonl, audio):
     z = make_zip(files={"a.wav": audio.sine(2.0)}, metadata="file,text\na.wav,ক\n")
     z = z.rename(z.with_name("UPLOAD.ZIP"))
     assert ingest(z, "asr", tmp_path / "out2").report.ok
+
+
+def test_zip_larger_than_free_space_minus_reserve_is_insufficient_disk(tmp_path, make_zip, audio, monkeypatch):
+    import collections
+
+    from mlops_api.datasets import ingest as ingest_mod
+
+    z = make_zip(files={"a.wav": audio.sine(1.0)}, metadata="file,text\na.wav,ক\n")
+    usage = collections.namedtuple("usage", "total used free")
+    gb = 1024**3
+    # 10 GB reserve, 10 GB + a few bytes free: the uncompressed size does not fit
+    monkeypatch.setattr(ingest_mod.shutil, "disk_usage", lambda p: usage(100 * gb, 0, 10 * gb + 100))
+    r = ingest(z, "asr", tmp_path / "out", disk_min_gb=10)
+    assert [i.code for i in r.report.errors] == ["insufficient_disk"] and r.version_dir is None
+    assert not list((tmp_path / "out").glob("*"))
+    # plenty of space: same archive ingests
+    monkeypatch.setattr(ingest_mod.shutil, "disk_usage", lambda p: usage(100 * gb, 0, 50 * gb))
+    assert ingest(z, "asr", tmp_path / "out", disk_min_gb=10).report.ok

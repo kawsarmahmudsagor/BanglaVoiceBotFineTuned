@@ -47,11 +47,12 @@ async def run_ingest(session, ingest_id: int, settings) -> None:
         row.state = "running"
         await session.commit()
 
-        files = [p for p in (settings.incoming_dir / row.upload_id).iterdir() if p.is_file()]
+        upload_dir = settings.incoming_dir / row.upload_id
+        files = [p for p in upload_dir.iterdir() if p.is_file()]
         if len(files) != 1:
             raise RuntimeError(f"expected exactly one file for upload {row.upload_id}, found {len(files)}")
         result = await asyncio.to_thread(
-            ingest, files[0], row.task, settings.datasets_dir / row.dataset_name
+            ingest, files[0], row.task, settings.datasets_dir / row.dataset_name, settings.disk_min_gb
         )
         report = asdict(result.report)
         if not result.report.ok:
@@ -63,6 +64,8 @@ async def run_ingest(session, ingest_id: int, settings) -> None:
             dataset = Dataset(name=row.dataset_name, task=row.task, eval_only=row.eval_only)
             session.add(dataset)
             await session.flush()
+        else:
+            dataset.eval_only = row.eval_only
         top = (
             await session.execute(
                 select(func.max(DatasetVersion.number)).where(DatasetVersion.dataset_id == dataset.id)
@@ -84,6 +87,8 @@ async def run_ingest(session, ingest_id: int, settings) -> None:
         row.report = report
         row.version_id = version.id
         await session.commit()
+        # The upload is now copied into the dataset version; keep it only on failure (for a retry).
+        await asyncio.to_thread(shutil.rmtree, upload_dir, True)
     except Exception as exc:  # noqa: BLE001 - run_ingest must never raise
         log.exception("ingest %s failed", ingest_id)
         try:

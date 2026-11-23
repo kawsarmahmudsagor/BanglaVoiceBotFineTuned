@@ -17,6 +17,7 @@ from .validate_audio import assign_split, validate_audio
 from .validate_llm import validate_llm
 
 _TASK_EXT = {"llm-sft": ".jsonl", "asr": ".zip", "tts": ".zip"}
+GB = 1024**3
 
 
 @dataclass
@@ -42,7 +43,7 @@ def _unsafe(name: str) -> bool:
     return name.startswith("/") or ".." in parts or bool(parts and len(parts[0]) >= 2 and parts[0][1] == ":")
 
 
-def _extract(upload: Path, dest: Path, report: Report) -> Path | None:
+def _extract(upload: Path, dest: Path, report: Report, disk_min_gb: float = 0) -> Path | None:
     """Extract safely; return the dataset root, or None after recording errors."""
     try:
         zf = zipfile.ZipFile(upload)
@@ -55,6 +56,15 @@ def _extract(upload: Path, dest: Path, report: Report) -> Path | None:
         for n in bad:
             report.errors.append(Issue("unsafe_path", f"archive member '{n}' escapes the dataset directory"))
         if bad:
+            return None
+        need = sum(i.file_size for i, _ in members)
+        room = shutil.disk_usage(dest).free - disk_min_gb * GB
+        if need > room:
+            report.errors.append(Issue(
+                "insufficient_disk",
+                f"archive unpacks to {need / GB:.1f} GB but only {max(room, 0) / GB:.1f} GB is free "
+                f"above the {disk_min_gb:g} GB reserve",
+            ))
             return None
         for info, name in members:
             if name.endswith("/") or info.is_dir():
@@ -91,7 +101,7 @@ def _locate(root: Path, rel: str) -> Path:
     raise FileNotFoundError(rel)
 
 
-def ingest(upload_file: Path, task: str, dest_root: Path) -> IngestResult:
+def ingest(upload_file: Path, task: str, dest_root: Path, disk_min_gb: float = 0) -> IngestResult:
     upload_file = Path(upload_file)
     dest_root = Path(dest_root)
     want = _TASK_EXT.get(task)
@@ -110,7 +120,7 @@ def ingest(upload_file: Path, task: str, dest_root: Path) -> IngestResult:
             extracted.mkdir()
             report = Report()
             rows = []
-            root = _extract(upload_file, extracted, report)
+            root = _extract(upload_file, extracted, report, disk_min_gb)
             if root is not None:
                 report, rows = validate_audio(root, task)
         if report.ok and not rows:
