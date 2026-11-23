@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 
 import pytest
@@ -302,7 +303,10 @@ async def test_backend_pid_file_written_during_phase_and_removed_after(env):
         if pid_file.exists() and pid_file.read_text().strip():
             break
         await asyncio.sleep(0.02)
-    assert int(pid_file.read_text()) > 0
+    recorded = json.loads(pid_file.read_text())
+    assert recorded["pgid"] > 0
+    if sys.platform == "linux":
+        assert recorded["boot_id"] and isinstance(recorded["start_ticks"], int)
     await set_cancel(env, run.id)
     assert await asyncio.wait_for(task, 15) == "cancelled"
     assert not pid_file.exists()

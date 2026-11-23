@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import re
@@ -180,26 +181,80 @@ async def _stop(proc: asyncio.subprocess.Process, grace_s: float) -> None:
     await proc.wait()
 
 
+_PROC = Path("/proc")
+
+
+def _boot_id() -> str | None:
+    try:
+        return (_PROC / "sys/kernel/random/boot_id").read_text().strip()
+    except OSError:
+        return None
+
+
+def _start_ticks(pid: int) -> int | None:
+    """Process start time (field 22 of /proc/<pid>/stat), parsed after the comm field's last ')'."""
+    try:
+        stat = (_PROC / str(pid) / "stat").read_text()
+        return int(stat[stat.rindex(")") + 2:].split()[19])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def backend_identity(pid: int) -> dict:
+    """What logs/backend.pid records: the process group plus enough to recognise it after a reboot."""
+    return {"pgid": pid, "boot_id": _boot_id(), "start_ticks": _start_ticks(pid)}
+
+
 def _group_alive(pgid: int) -> bool:
     try:
         os.killpg(pgid, 0)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):  # PermissionError: someone else's group, not ours
         return False
-    except PermissionError:
-        return True
     return True
 
 
+def _unverified_reason(rec: object, rd: RunDir) -> str | None:
+    """Why the recorded group must not be signalled, or None when it is provably this run's backend."""
+    if not isinstance(rec, dict) or not isinstance(rec.get("pgid"), int) or rec["pgid"] <= 1:
+        return "unrecognised pid file"
+    pgid = rec["pgid"]
+    if not (_PROC / "self" / "stat").exists():
+        return "/proc is unavailable, cannot verify the process"
+    if rec.get("boot_id") is None or rec.get("boot_id") != _boot_id():
+        return "recorded before a reboot"
+    if not _group_alive(pgid):
+        return "process group is gone"
+    if rec.get("start_ticks") is None or rec.get("start_ticks") != _start_ticks(pgid):
+        return "pid now belongs to a different process"
+    try:
+        cmdline = (_PROC / str(pgid) / "cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace")
+    except OSError:
+        return "cannot read the process command line"
+    if "mlops_backend" not in cmdline or str(rd.path) not in cmdline:
+        return "process is not this run's backend"
+    return None
+
+
 async def kill_recorded_backend(rd: RunDir, grace_s: float) -> None:
-    """Stop a backend left behind by a dead worker, using the process group in logs/backend.pid."""
+    """Stop a backend left behind by a dead worker, using the process group in logs/backend.pid.
+
+    The group is signalled only when the leader is verifiably this run's backend (same boot,
+    same start time, command line names mlops_backend and the run dir); otherwise it is skipped."""
     pid_file = rd.logs_dir / PID_FILE
     try:
-        pgid = int(pid_file.read_text().strip())
-    except (OSError, ValueError):
+        text = pid_file.read_text()
+    except OSError:
         return
+    try:
+        rec = json.loads(text)
+    except ValueError:
+        rec = None
     if sys.platform == "win32":
-        log.warning("not killing orphaned backend pid %s of %s on Windows; stop it by hand", pgid, rd.path)
-    elif _group_alive(pgid):
+        log.warning("not killing orphaned backend of %s on Windows; stop it by hand (%s)", rd.path, text.strip())
+    elif (reason := _unverified_reason(rec, rd)) is not None:
+        log.warning("not signalling recorded backend of %s: %s", rd.path, reason)
+    else:
+        pgid = rec["pgid"]
         log.warning("stopping orphaned backend process group %s of %s", pgid, rd.path)
         try:
             os.killpg(pgid, signal.SIGTERM)
@@ -228,7 +283,7 @@ async def _run_phase(session_factory, run_id, settings, python: Path, rd: RunDir
             str(python), "-m", "mlops_backend", phase, "--run-dir", str(rd.path),
             stdout=out, stderr=err, env=env, **_spawn_kwargs(),
         )
-        pid_file.write_text(str(proc.pid))  # POSIX: the process-group id (session leader)
+        pid_file.write_text(json.dumps(backend_identity(proc.pid)))  # POSIX: pid == pgid (session leader)
         try:
             while proc.returncode is None:
                 try:

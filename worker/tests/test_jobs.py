@@ -1,11 +1,15 @@
 import datetime as dt
+import json
 import signal
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
+from mlops_shared.contract import RunDir
 from mlops_worker import jobs
+from mlops_worker.executor import kill_recorded_backend
 from mlops_worker.jobs import claim_next_ingest, claim_next_run, recover
 from mlops_worker.lock import acquire, current, release
 
@@ -139,21 +143,69 @@ async def test_recover_without_pid_file_still_fails_run(session, tmp_path):
     assert await recover(session, cancel_grace_s=1) == [run.id]
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+POSIX = pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+
+
+def _fake_backend(run_dir) -> subprocess.Popen:
+    """A sleeping group leader whose command line looks like a backend phase for `run_dir`."""
+    return subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)", "mlops_backend", "train", "--run-dir", str(run_dir)],
+        start_new_session=True,
+    )
+
+
+def _identity(pid: int) -> dict:
+    boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    stat = Path(f"/proc/{pid}/stat").read_text()
+    start_ticks = int(stat[stat.rindex(")") + 2:].split()[19])
+    return {"pgid": pid, "boot_id": boot_id, "start_ticks": start_ticks}
+
+
+def _write_pid(run_dir, data) -> Path:
+    f = run_dir / "logs" / "backend.pid"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(data if isinstance(data, str) else json.dumps(data))
+    return f
+
+
+def _reap(child: subprocess.Popen) -> None:
+    if child.poll() is None:
+        child.kill()
+        child.wait()
+
+
+@POSIX
 async def test_recover_kills_orphaned_backend_group(session, tmp_path):
     run = await make_run(session, state="training")
     run_dir = tmp_path / "run"
-    (run_dir / "logs").mkdir(parents=True)
     run.run_dir = str(run_dir)
     await session.commit()
-    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
+    child = _fake_backend(run_dir)
     try:
-        (run_dir / "logs" / "backend.pid").write_text(str(child.pid))
+        pid_file = _write_pid(run_dir, _identity(child.pid))
         assert await recover(session, cancel_grace_s=1) == [run.id]
         assert child.wait(timeout=5) == -signal.SIGTERM
-        assert not (run_dir / "logs" / "backend.pid").exists()
+        assert not pid_file.exists()
         assert (await get_run(session, run.id)).state == "failed"
     finally:
-        if child.poll() is None:
-            child.kill()
-            child.wait()
+        _reap(child)
+
+
+@POSIX
+@pytest.mark.parametrize("case", ["boot_id", "start_ticks", "cmdline", "plain_int"])
+async def test_kill_recorded_backend_skips_unverified_groups(tmp_path, case):
+    run_dir = tmp_path / "run"
+    other = tmp_path / "other-run"
+    child = _fake_backend(other if case == "cmdline" else run_dir)
+    try:
+        ident = _identity(child.pid)
+        if case == "boot_id":
+            ident["boot_id"] = "00000000-0000-0000-0000-000000000000"
+        elif case == "start_ticks":
+            ident["start_ticks"] += 1
+        pid_file = _write_pid(run_dir, str(child.pid) if case == "plain_int" else ident)
+        await kill_recorded_backend(RunDir(run_dir), grace_s=1)
+        assert child.poll() is None, f"{case}: an unverified process group was signalled"
+        assert not pid_file.exists()  # stale file removed
+    finally:
+        _reap(child)
