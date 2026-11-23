@@ -9,6 +9,9 @@ package = false
 
 [tool.uv.workspace]
 members = ["shared", "backends/fake", "api", "worker"]
+# Real backends under backends/ are NOT members: each has its own venv (synced by scripts/setup_venvs.sh).
+# Add "backends/<name>" here for every one so uv does not auto-discover it as a member.
+exclude = []
 
 [tool.uv.sources]
 mlops-shared = { workspace = true }

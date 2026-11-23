@@ -1,0 +1,90 @@
+# Postgres, MLflow, API and web run here. The worker runs natively on the VM (see README).
+name: banglavoice
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mlops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: mlops
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d mlops"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mlflow:
+    build: ./deploy/mlflow
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      mlflow server
+      --backend-store-uri postgresql://${POSTGRES_USER:-mlops}:${POSTGRES_PASSWORD}@postgres:5432/mlflow
+      --artifacts-destination ${DATA_ROOT:?set DATA_ROOT in .env}/mlflow
+      --serve-artifacts
+      --host 0.0.0.0 --port 5000
+    volumes:
+      - ${DATA_ROOT}:${DATA_ROOT}
+    ports:
+      - "127.0.0.1:5000:5000"
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    working_dir: /app
+    command: >
+      sh -c "alembic -c api/alembic.ini upgrade head &&
+      uvicorn mlops_api.app:create_app --factory --host 0.0.0.0 --port 8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mlops}:${POSTGRES_PASSWORD}@postgres:5432/mlops
+      DATA_ROOT: ${DATA_ROOT}
+      BACKENDS_ROOT: ${REPO_ROOT:?set REPO_ROOT in .env}/backends
+      RECIPES_DIR: ${REPO_ROOT}/recipes
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      DISK_WARN_GB: ${DISK_WARN_GB:-20}
+      DISK_MIN_GB: ${DISK_MIN_GB:-10}
+      CANCEL_GRACE_S: ${CANCEL_GRACE_S:-60}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: utility
+    volumes:
+      - ${DATA_ROOT}:${DATA_ROOT}
+      - ./backends:${REPO_ROOT}/backends:ro
+      - ./recipes:${REPO_ROOT}/recipes
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "127.0.0.1:3000:3000"
+
+volumes:
+  pgdata:
