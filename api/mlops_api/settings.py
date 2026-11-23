@@ -1,10 +1,17 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# api/mlops_api/settings.py -> repo root; the worker and API read `<repo>/.env` regardless of cwd.
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
+    # Precedence: init kwargs > environment variables > .env file. Unknown .env keys
+    # (POSTGRES_USER, REPO_ROOT, ...) belong to compose/scripts and are ignored.
+    model_config = SettingsConfigDict(env_file=REPO_ROOT / ".env", env_file_encoding="utf-8", extra="ignore")
+
     database_url: str = "sqlite+aiosqlite:///./mlops.db"
     data_root: Path = Path("./var")
     backends_root: Path = Path("./backends")

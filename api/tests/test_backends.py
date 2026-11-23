@@ -18,7 +18,7 @@ def _repo(tmp_path: Path, members: list[str], root_venv: bool = True) -> Setting
         py = repo / ".venv" / VENV_SUB
         py.parent.mkdir(parents=True)
         py.write_text("")
-    return Settings(data_root=tmp_path / "data", backends_root=repo / "backends")
+    return Settings(_env_file=None, data_root=tmp_path / "data", backends_root=repo / "backends")
 
 
 def test_load_capabilities_finds_fake(settings):

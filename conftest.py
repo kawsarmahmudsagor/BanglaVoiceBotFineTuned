@@ -20,6 +20,7 @@ def settings(tmp_path, monkeypatch) -> Settings:
     data_root = tmp_path / "root"
     data_root.mkdir()
     return Settings(
+        _env_file=None,  # never pick up a developer's .env
         database_url=f"sqlite+aiosqlite:///{(tmp_path / 'test.db').as_posix()}",
         data_root=data_root,
         backends_root=REPO / "backends",
