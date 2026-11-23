@@ -23,7 +23,7 @@ from app.core.recipes import RecipeSpec, commercial_ok, parse_dataset_ref
 from .. import system
 from ..backends import load_capabilities
 from ..db import get_session
-from ..runs_init import resolve_init
+from ..runs_init import list_checkpoints, resolve_init
 from ..models import Dataset, DatasetVersion, Recipe, RecipeVersion, Run
 from .datasets import iso
 from .recipes import check_recipe
@@ -215,6 +215,12 @@ def _tail(path: Path, n: int) -> list[str]:
     except FileNotFoundError:
         return []
     return text.splitlines()[-n:]
+
+
+@router.get("/runs/{run_id}/checkpoints")
+async def run_checkpoints(run_id: str, session: AsyncSession = Depends(get_session)) -> dict:
+    run = await get_run(session, run_id)
+    return {"items": list_checkpoints(RunDir(Path(run.run_dir)))}
 
 
 @router.get("/runs/{run_id}/logs")

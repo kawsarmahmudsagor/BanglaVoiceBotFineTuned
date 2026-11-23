@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .db import make_engine, make_sessionmaker
 from .routers.catalog import router as catalog_router
+from .routers.init_sources import router as init_sources_router
 from .routers.datasets import router as datasets_router
 from .routers.models import router as models_router
 from .routers.recipes import router as recipes_router
@@ -35,6 +36,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(datasets_router)
     app.include_router(recipes_router)
     app.include_router(runs_router)
+    app.include_router(init_sources_router)
     app.include_router(models_router)
     app.include_router(system_router)
     app.include_router(catalog_router)

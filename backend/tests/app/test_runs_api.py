@@ -388,3 +388,44 @@ async def test_eval_audio_rejects_traversal(client, run_with_dir, name):
         except OSError:
             pytest.skip("symlinks not permitted")
     assert (await client.get(f"/api/runs/{rid}/eval/audio/{name}")).status_code == 404
+
+
+def _ckpt(run_dir, name, step=None, complete=True, meta=True):
+    from app.core.backend_kit import mark_complete, write_init_meta
+    d = RunDir(run_dir).checkpoints_dir / name
+    d.mkdir(parents=True)
+    if meta and step is not None:
+        write_init_meta(d, backend="fake", base_model="m", method="none", format="fake", step=step)
+    if complete:
+        mark_complete(d)
+
+
+async def test_checkpoints_lists_complete_and_incomplete(client, session, settings):
+    rid = await make_run(client, session)
+    rdir = settings.runs_dir / rid
+    _ckpt(rdir, "step-2", step=2)
+    _ckpt(rdir, "step-7", complete=False)
+    (RunDir(rdir).checkpoints_dir / "step-9.txt").write_text("x")
+    items = (await client.get(f"/api/runs/{rid}/checkpoints")).json()["items"]
+    assert items == [
+        {"name": "step-7", "step": 7, "complete": False, "init_meta": None},
+        {"name": "step-2", "step": 2, "complete": True,
+         "init_meta": {"backend": "fake", "base_model": "m", "method": "none", "format": "fake", "step": 2}},
+    ]
+    assert (await client.get("/api/runs/r-nope/checkpoints")).status_code == 404
+
+
+async def test_checkpoints_final_first(client, session, settings):
+    rid = await make_run(client, session)
+    rdir = settings.runs_dir / rid
+    _ckpt(rdir, "step-3", step=3)
+    _ckpt(rdir, "final", step=5)
+    _ckpt(rdir, "step-10", step=10)
+    items = (await client.get(f"/api/runs/{rid}/checkpoints")).json()["items"]
+    assert [i["name"] for i in items] == ["final", "step-10", "step-3"]
+    assert items[0]["step"] == 5
+
+
+async def test_checkpoints_empty_without_dir(client, session):
+    rid = await make_run(client, session)
+    assert (await client.get(f"/api/runs/{rid}/checkpoints")).json() == {"items": []}

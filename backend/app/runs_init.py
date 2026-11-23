@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -56,7 +57,9 @@ async def resolve_init(
     ckpt = resolve_checkpoint(RunDir(Path(run.run_dir)), which)
     if ckpt is None:
         return None, [f"init_from: run {run.id} has no complete checkpoint '{which}'"]
-    meta = read_init_meta(ckpt) or {}
+    meta = read_init_meta(ckpt)
+    if meta is None:
+        return None, [f"init_from: run {run.id} checkpoint '{which}' has no init_meta.json"]
     src_method = meta.get("method") or (src.get("method") or {}).get("type")
     dst_method = spec.method["type"]
     pairs = FAKE_PAIRS if spec.backend == "fake" else INIT_METHOD_PAIRS
@@ -65,6 +68,24 @@ async def resolve_init(
     ref = InitRef(path=str(ckpt), source_run=run.id, checkpoint=ckpt.name, method=src_method,
                   format=str(meta.get("format", "")))
     return (run, ckpt, ref), []
+
+
+def list_checkpoints(rd: RunDir) -> list[dict]:
+    """Checkpoint directories of a run: `final` first, then the rest newest (highest step) first."""
+    if not rd.checkpoints_dir.is_dir():
+        return []
+    items = []
+    for d in rd.checkpoints_dir.iterdir():
+        if not d.is_dir():
+            continue
+        meta = read_init_meta(d)
+        step = meta.get("step") if meta else None
+        if not isinstance(step, int) or isinstance(step, bool):
+            m = re.search(r"(\d+)$", d.name)
+            step = int(m.group(1)) if m else None
+        items.append({"name": d.name, "step": step, "complete": (d / ".complete").exists(), "init_meta": meta})
+    items.sort(key=lambda i: (i["name"] != "final", -(i["step"] if i["step"] is not None else -1), i["name"]))
+    return items
 
 
 def link_tree(src: Path, dst: Path) -> None:

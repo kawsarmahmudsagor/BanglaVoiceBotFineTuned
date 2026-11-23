@@ -153,3 +153,10 @@ async def test_create_run_422_when_source_checkpoint_gone(client, session, done_
     r = await client.post("/api/runs", json={"recipe": "child"})
     assert r.status_code == 422
     assert r.json()["errors"] == [f"init_from: run {done_run.id} has no complete checkpoint 'final'"]
+
+
+async def test_resolve_init_rejects_checkpoint_without_init_meta(session, done_run):
+    (RunDir(done_run.run_dir).checkpoints_dir / "final" / "init_meta.json").unlink()
+    res, errors = await resolve_init(session, _spec(init_from={"run": done_run.id}), settings=None)
+    assert res is None
+    assert errors == [f"init_from: run {done_run.id} checkpoint 'final' has no init_meta.json"]
