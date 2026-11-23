@@ -1,0 +1,55 @@
+[project]
+name = "bangla-voice-backend"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+# Base install is what app.core needs. Real training backends install this package with no extras.
+dependencies = ["pydantic>=2.7", "pyyaml"]
+
+[project.optional-dependencies]
+validate = ["jsonschema>=4"]
+server = [
+  "jsonschema>=4",
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "sqlalchemy[asyncio]>=2.0",
+  "asyncpg",
+  "aiosqlite",
+  "alembic>=1.13",
+  "pydantic-settings>=2.2",
+  "pyarrow",
+  "numpy",
+  "soundfile",
+  "pyloudnorm",
+  "nvidia-ml-py",
+  "sse-starlette",
+  "python-multipart",
+]
+worker = ["bangla-voice-backend[server]", "mlflow-skinny>=2.14"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app", "workers"]
+exclude = ["workers/backends"]
+
+[tool.uv]
+package = true
+
+[tool.uv.workspace]
+members = ["workers/backends/fake"]
+# Real backends live in workers/backends/<name>, have their own venv (synced by scripts/setup_venvs.sh),
+# and must be listed in `exclude` (e.g. "workers/backends/<name>") so uv never treats them as members.
+exclude = []
+
+[tool.uv.sources]
+mlops-backend-fake = { workspace = true }
+
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio", "httpx", "jsonschema", "mlops-backend-fake"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests", "workers/backends/fake/tests"]

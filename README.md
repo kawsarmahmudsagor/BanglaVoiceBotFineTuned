@@ -9,8 +9,8 @@ Target: Ubuntu 24.04 with an NVIDIA driver, Docker with Compose, nvidia-containe
 1. Clone the repo and copy the config: `cp .env.example .env`. Set `DATA_ROOT` (a directory with plenty of disk), `REPO_ROOT` (absolute path of this checkout), and `POSTGRES_PASSWORD`. Put the same password in `DATABASE_URL`. Keep `.env` plain: no quotes, no spaces around `=`, and no `$` or `#` in values (the scripts also strip Windows line endings). The password goes into database URLs, so it must be URL-safe (letters and digits).
 2. Create `DATA_ROOT` and make it writable by uid 1000 (the API container user, normally the first VM user). `dev.sh` creates it if missing and stops with a message if it is not writable.
 3. Run `scripts/check_vm.sh`. It checks the GPU driver, the Docker nvidia runtime, Compose, uv and free disk, and prints `OK` or each failure.
-4. Run `scripts/setup_venvs.sh` to sync the workspace venv and one venv per real backend.
-5. Run `scripts/dev.sh`. It starts the compose stack, waits for `/api/health`, and runs the worker in the foreground (`uv run python -m mlops_worker`). Stop the worker with Ctrl-C; `docker compose down` stops the rest.
+4. Run `scripts/setup_venvs.sh` to sync the backend venv (`backend/.venv`) and one venv per real backend.
+5. Run `scripts/dev.sh`. It starts the compose stack, waits for `/api/health`, and runs the worker in the foreground (`uv run --project backend --extra worker python -m workers`). Stop the worker with Ctrl-C; `docker compose down` stops the rest.
 
 Run `scripts/dev.sh` inside `tmux` (or as a systemd user unit) so the worker survives a dropped SSH connection: `tmux new -s mlops`, run the script, detach with Ctrl-b d, reattach with `tmux attach -t mlops`. If the worker does die mid-run, its next start stops the orphaned backend process group and marks the run failed.
 
@@ -76,33 +76,43 @@ Everything is under `DATA_ROOT`:
 - `runs/`: one directory per training or evaluation run, with logs and checkpoints.
 - `mlflow/`: MLflow artifacts. Run and experiment metadata is in the `mlflow` Postgres database.
 
-Platform records (datasets, jobs, runs) are in the `mlops` Postgres database, kept in the `pgdata` Docker volume. The API container sees `DATA_ROOT` and the repo's `backends/` and `recipes/` at the same absolute paths as the host, so paths it hands to the worker are valid on both sides.
+Platform records (datasets, jobs, runs) are in the `mlops` Postgres database, kept in the `pgdata` Docker volume. The API container sees `DATA_ROOT` and the repo's `backend/workers/backends/` and `recipes/` at the same absolute paths as the host, so paths it hands to the worker are valid on both sides.
 
 ## Model catalog
 
 The Catalog page lists base models you can fine-tune, in three sections: LLM, STT and TTS. Each entry says what the model is, its license and Bangla support, the training data it needs (in the platform's upload format), and what to target when fine-tuning. "Fine-tune" opens a new recipe pre-filled from the entry.
 
-- Entries are YAML files at `catalog/<section>/<id>.yaml`, where `<section>` is `llm`, `stt` or `tts` and `<id>` matches the file's `id` field. The schema is `CatalogEntry` in `shared/mlops_shared/catalog.py`; unknown fields are rejected.
+- Entries are YAML files at `catalog/<section>/<id>.yaml`, where `<section>` is `llm`, `stt` or `tts` and `<id>` matches the file's `id` field. The schema is `CatalogEntry` in `backend/app/core/catalog.py`; unknown fields are rejected.
 - To add a model, copy an existing entry in the same section, edit it, cite every claim in `sources`, and set `verified` to the date you checked the model card. No code change is needed.
-- `uv run pytest shared/tests/test_repo_catalog.py` validates every committed entry. A file that fails to load also shows as a warning on the Catalog page, and the other entries still load.
+- `cd backend && uv run pytest tests/core/test_repo_catalog.py` validates every committed entry. A file that fails to load also shows as a warning on the Catalog page, and the other entries still load.
 - The API reads the directory in `CATALOG_DIR` (default `<repo>/catalog`; compose mounts it read-only).
 
 ## Adding a backend
 
-A backend is a directory under `backends/<name>/` that the worker runs as a subprocess in its own venv.
+A backend is a directory under `backend/workers/backends/<name>/` that the worker runs as a subprocess in its own venv.
 
 1. Add `capabilities.json` describing what the backend supports (tasks, parameters, outputs).
-2. Add a Python package exposing the `mlops_backend` CLI that implements those capabilities. Use `backends/fake` as the reference.
-3. Give it its own `pyproject.toml`. It must not be a workspace member, so add `"backends/<name>"` to `exclude` under `[tool.uv.workspace]` in the root `pyproject.toml`.
-4. Run `scripts/setup_venvs.sh`. It runs `uv sync --project backends/<name>` for every backend except `fake` and fails with a clear message if a backend is missing from `exclude`.
+2. Add a Python package exposing the `mlops_backend` CLI that implements those capabilities. Use `backend/workers/backends/fake` as the reference.
+3. Give it its own `pyproject.toml`, depending on `bangla-voice-backend` by path (`bangla-voice-backend = { path = "../../..", editable = true }` under `[tool.uv.sources]`) with no extras, so the backend gets `app.core.contract` without the API's server dependencies. It must not be a workspace member, so add `"workers/backends/<name>"` to `exclude` under `[tool.uv.workspace]` in `backend/pyproject.toml`.
+4. Run `scripts/setup_venvs.sh`. It runs `uv sync --project backend/workers/backends/<name>` for every backend except `fake` and fails with a clear message if a backend is missing from `exclude`.
 
 ## The fake backend
 
-`backends/fake` is a lightweight backend that simulates preparation, training and evaluation without a GPU or model downloads. It is a workspace member and is used by the test suite and for exercising the API, worker and UI end to end. It is also the reference implementation of the backend contract.
+`backend/workers/backends/fake` is a lightweight backend that simulates preparation, training and evaluation without a GPU or model downloads. It is a workspace member and is used by the test suite and for exercising the API, worker and UI end to end. It is also the reference implementation of the backend contract.
 
 ## Development
 
-`uv sync` then `uv run pytest` runs the tests for all workspace packages.
+Python tests: `cd backend && uv sync --all-extras && uv run pytest`. Web tests: `cd frontend && npm ci && npm test`.
+
+### Layout
+
+- `backend/app`: the FastAPI service (package `app`). `backend/app/core` (package `app.core`) holds the recipe, catalog and backend-contract models; it needs only pydantic and PyYAML.
+- `backend/workers`: the worker (`python -m workers`). `backend/workers/backends/<name>` holds the training backends.
+- `backend/alembic`: database migrations. `backend/tests`: Python tests.
+- `frontend`: the Next.js web UI.
+- `catalog`, `recipes`: model catalog entries and saved recipes. `deploy`: compose support files. `scripts`: VM scripts.
+
+`backend/pyproject.toml` is the uv workspace root. Its extras: `server` (API dependencies), `worker` (`server` plus MLflow). The Docker image installs `server`; the VM venv and `run-local.bat` install all extras.
 
 ### Running everything locally on Windows
 
