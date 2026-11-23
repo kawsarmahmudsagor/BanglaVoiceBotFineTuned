@@ -8,16 +8,13 @@ import sys
 from mlops_api.db import make_engine, make_sessionmaker
 from mlops_api.settings import get_settings
 
-from .executor import Forwarder, NullForwarder, execute_run
+from .executor import NullForwarder, execute_run
 from .ingest_job import cpu_tick
 from .jobs import claim_next_run, recover
 from .lock import ensure_lock_row
+from .tracking import make_forwarder
 
 log = logging.getLogger("mlops_worker")
-
-
-def default_forwarder_factory(settings) -> Forwarder:
-    return NullForwarder()
 
 
 async def gpu_tick(sf, settings, forwarder_factory) -> bool:
@@ -50,7 +47,7 @@ async def loop_forever(tick, interval_s: float, name: str) -> None:
             await asyncio.sleep(interval_s)
 
 
-async def main(settings, forwarder_factory=default_forwarder_factory, install_signals: bool = True) -> None:
+async def main(settings, forwarder_factory=make_forwarder, install_signals: bool = True) -> None:
     engine = make_engine(settings.database_url)
     sf = make_sessionmaker(engine)
     try:
