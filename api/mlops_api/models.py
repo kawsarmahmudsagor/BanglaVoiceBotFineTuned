@@ -1,6 +1,6 @@
 import datetime as dt
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -18,7 +18,7 @@ class Upload(Base):
     __tablename__ = "upload"
     id: Mapped[str] = mapped_column(String, primary_key=True)
     filename: Mapped[str] = mapped_column(String)
-    length: Mapped[int] = mapped_column()
+    length: Mapped[int] = mapped_column(BigInteger)
     state: Mapped[str] = mapped_column(String, default="uploading")  # uploading|complete
     created_at: Mapped[dt.datetime] = _ts(default=utcnow)
 

@@ -1,3 +1,6 @@
+import sys
+from pathlib import Path
+
 import pytest
 
 from mlops_api.backends import BackendMissing, backend_python, load_capabilities
@@ -20,4 +23,4 @@ def test_backend_python_missing_venv_raises(settings, monkeypatch):
 
 
 def test_backend_python_env_override(settings):
-    assert str(backend_python("fake", settings))
+    assert backend_python("fake", settings) == Path(sys.executable)
