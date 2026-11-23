@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   API_URL, ApiError, apiGet, apiPatch, apiPost, audioUrl, exportUrl, getSamples, listModels,
-  listRuns, runEventsUrl,
+  listRuns, runEventsUrl, runExportFileUrl,
 } from "./api";
 
 function mockFetch(status: number, body: unknown) {
@@ -87,5 +87,10 @@ describe("url builders", () => {
     expect(runEventsUrl("r-1")).toBe(`${API_URL}/api/runs/r-1/events`);
     expect(audioUrl("my-set", 3, "s 1")).toBe(`${API_URL}/api/datasets/my-set/versions/3/audio/s%201`);
     expect(exportUrl(7, 0)).toBe(`${API_URL}/api/models/7/exports/0`);
+  });
+  it("prefixes run export manifest paths with export/ and encodes segments", () => {
+    expect(runExportFileUrl("r-1", "gguf/model q4.gguf")).toBe(
+      `${API_URL}/api/runs/r-1/files/export/gguf/model%20q4.gguf`,
+    );
   });
 });

@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  ApiError, cancelRun, getLogs, getMetrics, getRun, promoteRun, resumeRun, runEventsUrl, runFileUrl,
+  ApiError, cancelRun, getLogs, getMetrics, getRun, promoteRun, resumeRun, runEventsUrl, runExportFileUrl,
 } from "@/lib/api";
 import { formatBytes, formatDuration, stateColor } from "@/lib/format";
 import { LOG_LIMIT, appendLog, mergeMetrics, metricsToSeries } from "@/lib/metrics";
@@ -267,7 +267,7 @@ function RunDetailView({ id }: { id: string }) {
             {run.exports.map((x) => (
               <li key={x.path} className="flex flex-wrap items-center gap-2">
                 <Badge variant="outline">{x.format}</Badge>
-                <a href={runFileUrl(run.id, x.path)} download className="font-mono underline">{x.path}</a>
+                <a href={runExportFileUrl(run.id, x.path)} download className="font-mono underline">{x.path}</a>
                 <span className="text-muted-foreground">{formatBytes(x.size_bytes)}</span>
                 {x.serve_with && <span className="text-muted-foreground">serve with {x.serve_with}</span>}
               </li>

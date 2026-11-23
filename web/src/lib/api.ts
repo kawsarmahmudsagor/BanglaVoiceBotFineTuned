@@ -116,6 +116,8 @@ export const setChampion = (id: number) => apiPost<ModelVersion>(`/api/models/${
 export const runEventsUrl = (id: string) => `${API_URL}/api/runs/${enc(id)}/events`;
 export const runFileUrl = (id: string, path: string) =>
   `${API_URL}/api/runs/${enc(id)}/files/${path.split("/").map(enc).join("/")}`;
+// export manifest paths are relative to the run's export/ directory
+export const runExportFileUrl = (id: string, path: string) => runFileUrl(id, `export/${path}`);
 export const audioUrl = (name: string, n: number, sampleId: string) =>
   `${API_URL}/api/datasets/${enc(name)}/versions/${n}/audio/${enc(sampleId)}`;
 export const exportUrl = (modelId: number, index: number) => `${API_URL}/api/models/${modelId}/exports/${index}`;
