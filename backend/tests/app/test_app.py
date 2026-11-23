@@ -31,6 +31,24 @@ def test_alembic_head_matches_models(tmp_path):
         assert c.execute(sa.text("select id, holder_id from gpu_lock")).all() == [(1, None)]
 
 
+def test_migration_0003_upgrade_downgrade(tmp_path):
+    db = tmp_path / "mig.db"
+    cfg = Config(str(Path(__file__).parents[2] / "alembic.ini"))
+    cfg.set_main_option("sqlalchemy.url", f"sqlite+aiosqlite:///{db.as_posix()}")
+    command.upgrade(cfg, "0002")
+    eng = sa.create_engine(f"sqlite:///{db.as_posix()}")
+    command.upgrade(cfg, "0003")
+    insp = sa.inspect(eng)
+    cols = {c["name"] for c in insp.get_columns("run")}
+    assert {"parent_run_id", "parent_checkpoint"} <= cols
+    assert any(fk["referred_table"] == "run" and fk["constrained_columns"] == ["parent_run_id"]
+               for fk in insp.get_foreign_keys("run"))
+    command.downgrade(cfg, "0002")
+    cols = {c["name"] for c in sa.inspect(eng).get_columns("run")}
+    assert "parent_run_id" not in cols and "parent_checkpoint" not in cols
+    command.upgrade(cfg, "head")
+
+
 def test_migration_0002_upgrade_downgrade(tmp_path):
     db = tmp_path / "mig.db"
     cfg = Config(str(Path(__file__).parents[2] / "alembic.ini"))

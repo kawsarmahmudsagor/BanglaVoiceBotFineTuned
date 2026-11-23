@@ -23,6 +23,7 @@ from app.core.recipes import RecipeSpec, commercial_ok, parse_dataset_ref
 from .. import system
 from ..backends import load_capabilities
 from ..db import get_session
+from ..runs_init import resolve_init
 from ..models import Dataset, DatasetVersion, Recipe, RecipeVersion, Run
 from .datasets import iso
 from .recipes import check_recipe
@@ -84,19 +85,27 @@ async def create_run(body: CreateRun, request: Request, session: AsyncSession = 
         raise HTTPException(404, f"version {body.version} of '{body.recipe}' not found")
     _check_disk(request)
     spec = RecipeSpec.model_validate(rv.spec)
-    errors = await check_recipe(session, spec, load_capabilities(settings.backends_root))
+    errors = await check_recipe(session, spec, load_capabilities(settings.backends_root), settings)
     if errors:
         return JSONResponse({"errors": errors}, status_code=422)
     train = await _dataset_version(session, spec.datasets.train)
     hashes = {"train": train.hash}
     if spec.datasets.eval:
         hashes["eval"] = (await _dataset_version(session, spec.datasets.eval)).hash
+    resolved, init_errors = await resolve_init(session, spec, settings)
+    if init_errors:
+        return JSONResponse({"errors": init_errors}, status_code=422)
+    parent, _, init_ref = resolved if resolved else (None, None, None)
     rv.frozen = True
     run_id = f"r-{secrets.token_hex(4)}"
     session.add(Run(
         id=run_id, recipe_version_id=rv.id, state="queued", run_dir=str(settings.runs_dir / run_id),
-        commercial_ok=commercial_ok(spec.base_model_meta, [bool((train.provenance or {}).get("commercial_ok"))]),
+        commercial_ok=commercial_ok(
+            spec.base_model_meta, [bool((train.provenance or {}).get("commercial_ok"))]
+            + ([parent.commercial_ok] if parent else [])),
         dataset_hashes=hashes,
+        parent_run_id=parent.id if parent else None,
+        parent_checkpoint=init_ref.checkpoint if init_ref else None,
     ))
     await session.commit()
     return {"id": run_id}
@@ -131,7 +140,8 @@ async def run_detail(run_id: str, session: AsyncSession = Depends(get_session)) 
         "cancel_requested": run.cancel_requested, "run_dir": run.run_dir,
         "commercial_ok": run.commercial_ok, "error": run.error, "oom": run.oom, "git_sha": run.git_sha,
         "lock_hash": run.lock_hash, "dataset_hashes": run.dataset_hashes,
-        "mlflow_run_id": run.mlflow_run_id, "created_at": iso(run.created_at),
+        "mlflow_run_id": run.mlflow_run_id, "parent_run_id": run.parent_run_id,
+        "parent_checkpoint": run.parent_checkpoint, "created_at": iso(run.created_at),
         "started_at": iso(run.started_at), "finished_at": iso(run.finished_at),
         "recipe": {"name": recipe.name, "number": rv.number}, "task": rv.spec.get("task"),
         "status": status.model_dump(mode="json") if status else None,

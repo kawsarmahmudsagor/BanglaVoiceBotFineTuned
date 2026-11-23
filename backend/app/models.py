@@ -100,6 +100,8 @@ class Run(Base):
     lock_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     dataset_hashes: Mapped[dict] = mapped_column(JSON, default=dict)
     mlflow_run_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    parent_run_id: Mapped[str | None] = mapped_column(ForeignKey("run.id"), nullable=True)
+    parent_checkpoint: Mapped[str | None] = mapped_column(String, nullable=True)
     started_at: Mapped[dt.datetime | None] = _ts(nullable=True)
     finished_at: Mapped[dt.datetime | None] = _ts(nullable=True)
     created_at: Mapped[dt.datetime] = _ts(default=utcnow)

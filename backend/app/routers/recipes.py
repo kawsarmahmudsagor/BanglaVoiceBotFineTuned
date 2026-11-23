@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.recipes import Capabilities, RecipeSpec, parse_dataset_ref, validate_recipe
 
 from ..backends import load_capabilities
+from ..runs_init import resolve_init
 from ..db import get_session
 from ..models import Dataset, DatasetVersion, Recipe, RecipeVersion
 from .datasets import SLUG, iso
@@ -36,7 +37,9 @@ class CloneBody(BaseModel):
     new_name: str = Field(pattern=SLUG)
 
 
-async def check_recipe(session: AsyncSession, spec: RecipeSpec, caps: dict[str, Capabilities]) -> list[str]:
+async def check_recipe(
+    session: AsyncSession, spec: RecipeSpec, caps: dict[str, Capabilities], settings=None
+) -> list[str]:
     errors = validate_recipe(spec, caps)
     if spec.backend not in caps:
         return errors
@@ -62,6 +65,7 @@ async def check_recipe(session: AsyncSession, spec: RecipeSpec, caps: dict[str, 
             errors.append(f"dataset '{name}' is task '{ds.task}', recipe is task '{spec.task}'")
         if slot == "train" and ds.eval_only:
             errors.append(f"dataset '{name}' is eval-only and cannot be used for training")
+    errors.extend((await resolve_init(session, spec, settings))[1])
     return errors
 
 
@@ -87,7 +91,7 @@ async def _parse_and_check(
     if spec is None:
         return None, errors
     caps = load_capabilities(request.app.state.settings.backends_root)
-    return spec, await check_recipe(session, spec, caps)
+    return spec, await check_recipe(session, spec, caps, request.app.state.settings)
 
 
 def _dump(spec: RecipeSpec) -> tuple[dict, str]:
