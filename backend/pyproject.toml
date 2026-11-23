@@ -54,4 +54,5 @@ dev = ["pytest", "pytest-asyncio", "httpx", "jsonschema", "soxr", "mlops-backend
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["workers/backends"]
 testpaths = ["tests", "workers/backends/fake/tests"]

@@ -30,6 +30,14 @@ else
   failures+=("uv not installed")
 fi
 
+for tool in cmake gcc make git; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    echo "$tool: present"
+  else
+    failures+=("$tool not on PATH (needed to build llama.cpp for GGUF export; install build-essential, cmake and git)")
+  fi
+done
+
 min_gb="${DISK_MIN_GB:-10}"
 if [ -z "${DATA_ROOT:-}" ]; then
   failures+=("DATA_ROOT is not set (copy .env.example to .env)")
