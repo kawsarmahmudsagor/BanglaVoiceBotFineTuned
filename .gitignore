@@ -11,3 +11,4 @@ mlruns/
 
 # web pages named models/runs/data are source, not artifacts
 !web/src/**
+var/

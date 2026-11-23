@@ -94,3 +94,12 @@ A backend is a directory under `backends/<name>/` that the worker runs as a subp
 ## Development
 
 `uv sync` then `uv run pytest` runs the tests for all workspace packages.
+
+### Running everything locally on Windows
+
+Double-click `run-local.bat` (or run it from a terminal). It installs dependencies, migrates the database, opens three windows (API on :8000, worker, web on :3000) and opens the browser.
+
+- If Docker Desktop is running, Postgres and MLflow (http://localhost:5000) start from `deploy/local/docker-compose.yml`. Otherwise it falls back to SQLite with MLflow disabled. `run-local.bat sqlite` forces SQLite.
+- Data goes to `.\var` (git-ignored). The script's settings override the VM values in `.env`.
+- `run-local.bat stop` closes the three windows and stops the Docker services.
+- Requires `uv` and Node.js 20+. Training uses the fake backend locally; real backends run on the VM.
