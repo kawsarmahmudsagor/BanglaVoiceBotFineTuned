@@ -324,3 +324,116 @@ If a backend's VM install check fails (Unsloth or NeMo on sm_120 are the known r
 - Whether Parler-TTS training code installs cleanly with the pinned torch and transformers versions.
 - Licenses carried over from the parent spec: IndicConformer, BanglaConformer, IndicF5 weights.
 - GGUF export needs llama.cpp built on the VM. Unsloth builds it on first use; the build tools (`cmake`, `build-essential`) are added to `scripts/check_vm.sh`.
+
+## 14. Warm start: a new run from an existing checkpoint
+
+Added 2026-11-23 at the user's request. Resume (parent spec §5.3) continues the *same* run with its optimizer and scheduler state. Warm start begins a *new* run from another run's weights.
+
+### 14.1 Recipe field
+
+`RecipeSpec.init_from` is optional. It holds exactly one of:
+
+- `{"run": "<run id>", "checkpoint": "final" | "latest" | <step int>}`. The default checkpoint is `"final"`.
+- `{"model_version": "<model name>@v<N>"}`. This resolves to the promoted run's `final` checkpoint.
+
+`base_model` stays the catalog model. Tokenizer, vocabulary, converter choice and the license metadata all still come from it.
+
+### 14.2 What carries over
+
+Only weights carry over. The new run gets:
+- a fresh optimizer and learning-rate schedule
+- a step counter starting at 0
+- its own hparams, which apply in full
+
+Method combinations:
+
+| Source method | New run method | Loading |
+|---|---|---|
+| `lora`/`qlora` | `lora`/`qlora` | load base model, attach the source adapter as trainable |
+| `lora`/`qlora` | `full` | load base model, attach adapter, merge, train all weights |
+| `full` | `lora`/`qlora` | load source full weights as the base, add a new adapter |
+| `full` | `full` | load source full weights |
+| `adapter` (MMS) | `adapter` | load base model, load the source `ben` adapter weights |
+| `full` (nemo, f5, hf) | `full` | load source weights |
+
+Any other combination is rejected at validation.
+
+### 14.3 Validation
+
+Validation runs on recipe validate/save and again on run create, before any GPU time. It checks:
+- the source exists
+- same `task`, `backend` and `base_model` as the new recipe
+- the source method/new method pair is allowed by §14.2
+- the checkpoint is complete (`.complete` marker present):
+  - `final`: `checkpoints/final/`
+  - `latest`: newest complete checkpoint
+  - a step: the complete checkpoint whose name ends in that number
+
+Error messages name the failing rule, e.g. `init_from: run r-1a2b3c4d is backend 'hf', recipe is backend 'unsloth'`.
+
+### 14.4 Checkpoint metadata
+
+Every backend's train phase writes `checkpoints/final/` and marks it complete. Every complete checkpoint, final or intermediate, gets `init_meta.json`:
+
+```json
+{"backend": "unsloth", "base_model": "Qwen/Qwen3-4B-Instruct-2507", "method": "lora", "format": "hf-peft", "step": 1200}
+```
+
+`format` is one of:
+- `hf-peft`: an adapter directory
+- `hf-full`: a `save_pretrained` directory
+- `hf-mms-adapter`: `adapter.ben.safetensors`
+- `nemo`: a `.nemo` file, used for `final`
+- `lightning-ckpt`: intermediate NeMo checkpoints
+- `f5-pt`: `model_last.pt` + `vocab.txt`
+
+### 14.5 Run start
+
+- When a warm-started run starts, the worker links the source checkpoint directory into `<run-dir>/init/`. It hard-links each file, or copies when hard links are not possible.
+- Deleting the source run afterwards does not break the new run.
+- `RunConfig.init_from` gives `path` (the `init/` directory), `source_run`, `checkpoint`, `method` and `format` from `init_meta.json`.
+- On resume of a warm-started run, its own latest checkpoint wins. `init/` is used only when the run has no complete checkpoint yet.
+
+### 14.6 Data preparation with a warm start
+
+- **wav2vec2 (CTC)**: the vocabulary is the source checkpoint's `vocab.json` in `fixed` mode. Rows with characters outside it are skipped with a reason. A new vocabulary would break the trained head.
+- **F5**: the vocabulary extends the source checkpoint's `vocab.txt`, not the IndicF5 original. New characters are appended.
+- **All tasks**: the source checkpoint's spec hash is part of `PrepSpec.params` only where it changes the output (CTC and F5 vocabularies).
+
+### 14.7 Baseline with a warm start
+
+With `init_from` set, the `base/` metrics score the init checkpoint, the model the run started from. The baseline cache key includes the source run id and checkpoint name.
+
+### 14.8 Lineage and licensing
+
+- `Run` gains `parent_run_id` and `parent_checkpoint` (Alembic migration `0002`).
+- A run's `commercial_ok` is the AND of the base model flag, every training dataset flag and the parent run's `commercial_ok`.
+- Model versions promoted from a warm-started run show the parent chain on the Models page.
+
+### 14.9 API and UI
+
+- `GET /api/runs/{id}/checkpoints` returns `[{name, step, complete, init_meta}]`.
+- `GET /api/init-sources?task=&backend=&base_model=` returns compatible runs, each with its complete checkpoints, and compatible model versions.
+- **Recipe form**: a "Start from" picker with the options base model (default), a run checkpoint, or a model version. It is filled from `init-sources` and written to `init_from` in the YAML.
+- **Run detail page**:
+  - a "Checkpoints" list with a "New run from this checkpoint" button. The button opens the recipe editor prefilled with this run's recipe and `init_from`.
+  - a "Started from" link to the parent run.
+
+### 14.10 Tests
+
+Local, CPU:
+- `init_from` validation rules and messages
+- checkpoint resolution (`final`/`latest`/step, incomplete ignored)
+- `init/` linking survives source deletion
+- `commercial_ok` AND with the parent
+- the migration
+- the two endpoints
+- the recipe form picker
+- the run detail button
+
+Per backend, light:
+- the loader picks the right path for each §14.2 combination (model loading stubbed)
+
+VM smoke:
+- each backend trains once from the base model, then once more from the first run's `final`
+- both runs must finish `done`

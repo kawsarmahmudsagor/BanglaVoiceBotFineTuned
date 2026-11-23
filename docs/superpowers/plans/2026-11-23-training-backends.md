@@ -27,6 +27,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-23-training-backends-design.md` (parent: `docs/superpowers/specs/2026-11-23-bangla-voice-mlops-design.md`)
 
+**Execution order:** Tasks 1–9, then 28–30 (warm start, spec §14), then 10–27. Backend tasks carry **Warm start** lines that implement spec §14.2–14.7 for that backend.
+
 ## Global Constraints
 
 **Python, packaging and environments**
@@ -718,6 +720,14 @@ MODELS = {
 
 ### Task 12: LLM training (LoRA / QLoRA / full) with resume
 
+**Warm start (spec §14):**
+- Before loading, call `init_source(cfg, rd)` (Task 28). If it returns `kind == "resume"`, keep the existing resume path. If `kind == "init"`, load per the spec §14.2 table:
+  - `hf-peft` + lora/qlora: `FastLanguageModel.from_pretrained(<init path>)`. Unsloth loads base + adapter; make the adapter trainable.
+  - `hf-peft` + full: load, `merge_and_unload()`.
+  - `hf-full`: `from_pretrained(<init path>)` as the base, then add a new adapter for lora/qlora.
+- Factor the choice into `plan_init(meta: dict | None, method: str) -> Literal["base", "attach_adapter", "merge_adapter", "full_weights", "full_then_adapter"]` with a light test per combination.
+- Every complete checkpoint gets `write_init_meta` (format `hf-peft` for lora/qlora, `hf-full` for full).
+
 **Files:**
 - Create: `backend/workers/backends/unsloth/mlops_backend/llm.py`: `train_llm(rd, cfg, rep) -> int`, `_trainer_args(cfg, rd) -> dict`
 - Test: `backend/workers/backends/unsloth/tests/test_llm_train.py`
@@ -745,6 +755,8 @@ MODELS = {
 - [ ] **Step 2: FAIL. Step 3: Implement. Step 4: light PASS. Step 5: Commit** `feat(unsloth): llm sft training with resume, stop and nan guard`
 
 ### Task 13: LLM eval
+
+**Warm start:** if `cfg.init_from` is set, `compute` for `baseline_metrics` loads the init checkpoint through `plan_init` instead of the raw base model. The `eval_key` includes `{"init": [source_run, checkpoint]}`.
 
 **Files:**
 - Modify: `backend/workers/backends/unsloth/mlops_backend/llm.py`: `eval_llm(rd, cfg, rep) -> int`
@@ -791,6 +803,8 @@ MODELS = {
 - [ ] **Step 6: VM GATE**: `bash scripts/test_backend.sh unsloth --heavy`. Expected: chat + llm heavy tests pass.
 
 ### Task 15: Whisper converter + Whisper LoRA (unsloth)
+
+**Warm start:** Whisper LoRA uses the same `plan_init` rules as Task 12. Write init meta on every complete checkpoint. The baseline loads the init checkpoint when set.
 
 **Files:**
 - Create: `backend/app/core/backend_kit/whisper.py` (shared by unsloth and hf; imports transformers):
@@ -851,6 +865,8 @@ Same shape as Task 10:
 
 ### Task 17: Whisper full fine-tune (hf)
 
+**Warm start:** `hf-full` init → `WhisperForConditionalGeneration.from_pretrained(<init path>)`. Write init meta (`hf-full`) on every complete checkpoint, `final` included. The baseline loads the init checkpoint when set.
+
 **Files:** `backend/workers/backends/hf/mlops_backend/whisper_full.py`
 - `train`: `WhisperForConditionalGeneration.from_pretrained`, `Seq2SeqTrainer`, `gradient_checkpointing=True`, `ContractCallback`
 - `eval`: `make_transcriber` + `run_asr_eval` + baseline
@@ -861,6 +877,12 @@ Same shape as Task 10:
 - [ ] Steps 1–4. **Step 5: Commit** `feat(hf): whisper full fine-tune`
 
 ### Task 18: `ctc` converter + wav2vec2 / MMS adapter
+
+**Warm start:**
+- wav2vec2: when `cfg.init_from` is set, the vocab is `<init path>/vocab.json` in `fixed` mode (spec §14.6), and the model loads from the init path.
+- MMS: init format `hf-mms-adapter` → load base, `init_adapter_layers()`, load `adapter.ben.safetensors`.
+- Write init meta (`hf-full` or `hf-mms-adapter`) on every complete checkpoint.
+- Light test: `test_ctc_vocab_from_init_when_warm_start`.
 
 **Files:**
 - Create: `backend/workers/backends/hf/mlops_backend/prepare/ctc.py`:
@@ -895,6 +917,8 @@ Heavy: `test_wav2vec2_20_steps`, `test_mms_adapter_only_trains_adapter` (asserts
 - [ ] Steps 1–4. **Step 5: Commit** `feat(hf): ctc converter, wav2vec2 and mms adapter training`
 
 ### Task 19: `parler` converter + Indic Parler-TTS training
+
+**Warm start:** `hf-full` init → `ParlerTTSForConditionalGeneration.from_pretrained(<init path>)`. Write init meta on complete checkpoints. The baseline loads the init checkpoint when set.
 
 **Files:**
 - Create: `backend/workers/backends/hf/mlops_backend/prepare/parler.py`:
@@ -968,6 +992,13 @@ def test_nemo_skips_unk_rows(tmp_path):
 
 ### Task 22: NeMo training / eval / export (3 models)
 
+**Warm start:**
+- `nemo` init (`final/model.nemo`) → `ASRModel.restore_from(<init path>/model.nemo)`.
+- `lightning-ckpt` init → load the base model, then `model.load_state_dict(torch.load(ckpt)["state_dict"])`.
+- Write init meta: `nemo` for final, `lightning-ckpt` for intermediate.
+- The baseline loads the init checkpoint when set.
+- Light test: `test_nemo_init_path_choice`.
+
 **Files:**
 - Create: `backend/workers/backends/nemo/mlops_backend/asr.py`:
   - `load_model(base_model)`: `ASRModel.from_pretrained(model_name=base)`, falling back to `restore_from(hf_hub_download(base, <the .nemo file in the repo>))`
@@ -1000,6 +1031,8 @@ As Task 10:
 
 ### Task 24: `f5` converter (vocab extend, reference clips)
 
+**Warm start:** when `cfg.init_from` is set, `build_f5`'s base vocab is `<init path>/vocab.txt` (spec §14.6). The init vocab hash goes into `PrepSpec.params`. Light test: `test_f5_vocab_extends_init_vocab`.
+
 **Files:**
 - Create: `backend/workers/backends/f5/mlops_backend/prepare/f5.py`:
   - `extend_vocab(base: list[str], texts: Iterable[str]) -> list[str]`: `base` unchanged, then new characters in first-seen order
@@ -1023,6 +1056,12 @@ def test_build_writes_24k_audio_and_duration_json(tiny_tts_ds, tmp_path): ...
 - [ ] Steps 1–4. **Step 5: Commit** `feat(f5): converter with vocab extension and reference clips`
 
 ### Task 25: F5 training / eval / export
+
+**Warm start:**
+- `f5-pt` init → load `<init path>/model_last.pt`.
+- Embedding expansion applies relative to the init vocab.
+- Train writes `checkpoints/final/` (`model_last.pt` + `vocab.txt` + init meta `f5-pt`).
+- The baseline loads the init checkpoint when set.
 
 **Files:**
 - Create: `backend/workers/backends/f5/mlops_backend/tts.py`:
@@ -1074,8 +1113,129 @@ def test_build_writes_24k_audio_and_duration_json(tiny_tts_ds, tmp_path): ...
      - `GET /prepared` non-empty
      - `eval.metrics` contains the task key: `perplexity`, `wer` or `rtf`
      - each export artifact `path` exists on disk
-  6. print `PASS <backend>/<model>` or `FAIL ... <reason>`; exit non-zero on any failure
+  6. start a second run of the same recipe with `init_from: {run: <first run id>, checkpoint: final}` and apply the same checks to it, plus `parent_run_id` set
+  7. print `PASS <backend>/<model>` and `PASS <backend>/<model> warm-start`, or `FAIL ... <reason>`; exit non-zero on any failure
 - Modify: `README.md`: section "Training backends" covering setup (`scripts/setup_venvs.sh`), `HF_TOKEN`, the per-backend check, the smoke script, and the dataset-format → prepared-format table (spec §4.4)
 
 - [ ] **Step 1:** Write the fixtures and script; `bash -n scripts/smoke_backends.sh` passes. **Step 2: Commit** `test: end-to-end smoke script for training backends; README`
 - [ ] **Step 3: VM GATE**: `bash scripts/setup_venvs.sh && bash scripts/smoke_backends.sh`. Expected: `PASS` per backend/model.
+
+---
+
+## Part G — Warm start (spec §14). Execute after Task 9, before Task 10.
+
+### Task 28: `init_from` contract, validation, lineage, `init/` linking
+
+**Files:**
+- Modify: `backend/app/core/recipes.py`:
+  - `InitFrom(BaseModel)`: `run: str | None = None`, `checkpoint: Literal["final", "latest"] | int = "final"`, `model_version: str | None = None`. A validator requires exactly one of `run`/`model_version`, and a non-default `checkpoint` only with `run`.
+  - `RecipeSpec.init_from: InitFrom | None = None`.
+  - `INIT_METHOD_PAIRS: frozenset[tuple[str, str]]` from spec §14.2: `(lora,lora) (lora,qlora) (qlora,lora) (qlora,qlora) (lora,full) (qlora,full) (full,lora) (full,qlora) (full,full) (adapter,adapter)`.
+- Modify: `backend/app/core/contract.py`:
+  - `InitRef(BaseModel)`: `path: str`, `source_run: str`, `checkpoint: str`, `method: str`, `format: str`
+  - `RunConfig.init_from: InitRef | None = None`
+  - `RunDir.init_dir` (`init/`)
+- Modify: `backend/app/core/backend_kit/__init__.py`:
+  - `INIT_META = "init_meta.json"`
+  - `write_init_meta(ckpt_dir: Path, *, backend: str, base_model: str, method: str, format: str, step: int) -> None`
+  - `read_init_meta(ckpt_dir: Path) -> dict | None`
+  - `resolve_checkpoint(rd: RunDir, which: str | int) -> Path | None`: `"final"` = `checkpoints/final` if complete; `"latest"` = `latest_checkpoint(rd)`; int = the complete dir whose trailing int equals it
+  - `@dataclass InitChoice`: `kind: Literal["resume", "init"]`, `path: Path`, `meta: dict | None`
+  - `init_source(cfg: RunConfig, rd: RunDir) -> InitChoice | None`:
+    - own `latest_checkpoint` when `cfg.resume` and one exists → `resume`
+    - else `cfg.init_from` → `init` with `path=rd.init_dir`, `meta=read_init_meta(rd.init_dir)`
+    - else `None`
+- Create: `backend/app/runs_init.py` (server side, async, DB):
+  - `async resolve_init(session, spec: RecipeSpec, settings) -> tuple[tuple[Run, Path, InitRef] | None, list[str]]`
+  - Validates per spec §14.3. A `model_version` ref (`<name>@v<N>`) resolves to its run with checkpoint `final`.
+  - The source method is read from the resolved checkpoint's `init_meta.json`.
+  - Error strings:
+    - `init_from: run <id> not found`
+    - `init_from: model version <ref> not found`
+    - `init_from: run <id> is <field> '<a>', recipe is <field> '<b>'` (field ∈ task, backend, base_model)
+    - `init_from: method '<src>' cannot start a '<dst>' run`
+    - `init_from: run <id> has no complete checkpoint '<which>'`
+  - `link_tree(src: Path, dst: Path) -> None`: hard-link every file, falling back to `shutil.copy2` on `OSError`; build into `dst.tmp` then `os.replace`.
+- Modify: `backend/app/routers/recipes.py`: `check_recipe` appends `resolve_init` errors.
+- Modify: `backend/app/routers/runs.py`:
+  - `create_run`: resolve init again (422 on errors); `commercial_ok` ANDs the parent run's flag; set `Run.parent_run_id`/`parent_checkpoint`
+  - run detail JSON adds `parent_run_id`, `parent_checkpoint`
+- Modify: `backend/workers/executor.py`:
+  - `build_config` sets `init_from` (`InitRef` with `path=str(rd.init_dir)`)
+  - before the first phase, when `init_from` is set and `rd.init_dir` does not exist, `link_tree(source checkpoint, rd.init_dir)`
+  - a missing source checkpoint at that point fails the run with the matching `init_from:` message
+- Create: `backend/alembic/versions/0002_run_parent.py`: nullable `parent_run_id` (FK `run.id`) and `parent_checkpoint` (String) on `run`; upgrade and downgrade
+- Modify: `backend/app/models.py` (two columns)
+- Modify: the fake backend's train writes `checkpoints/final/` with `.complete` and `write_init_meta(..., method=cfg.method["type"], format="fake")`, so warm start works end to end in tests. Add `"none"` to the allowed pairs only for the fake backend: `INIT_METHOD_PAIRS` plus `("none", "none")`.
+- Test: `backend/tests/core/test_recipes.py`, `backend/tests/core/test_backend_kit.py`, `backend/tests/app/test_runs_init.py`, `backend/tests/workers/test_executor.py`, the existing migration test module
+
+**Interfaces:**
+- Produces (used by Tasks 12–25, 29, 30):
+  - `InitFrom`, `InitRef`, `RunConfig.init_from`
+  - `write_init_meta`, `read_init_meta`, `resolve_checkpoint`, `init_source`, `InitChoice`
+  - `resolve_init`, `link_tree`
+  - `Run.parent_run_id`, `Run.parent_checkpoint`
+
+- [ ] **Step 1: Failing tests**
+
+```python
+def test_init_from_requires_exactly_one_source(): ...          # both / neither -> ValidationError
+def test_init_from_checkpoint_only_with_run(): ...
+def test_resolve_checkpoint_final_latest_step(tmp_path): ...   # incomplete dirs ignored; 300 picks checkpoint-300
+def test_init_source_prefers_own_checkpoint_on_resume(tmp_path): ...
+def test_init_source_uses_init_dir_when_no_own_checkpoint(tmp_path): ...
+async def test_resolve_init_rejects_backend_mismatch(session, settings, done_run):
+    # errors == [f"init_from: run {done_run.id} is backend 'fake', recipe is backend 'other'"]
+async def test_resolve_init_rejects_method_pair(...): ...       # source "adapter" -> new "full"
+async def test_resolve_init_model_version_uses_final(...): ...
+async def test_resolve_init_missing_checkpoint(...): ...        # "init_from: run r-… has no complete checkpoint 'latest'"
+def test_link_tree_survives_source_delete(tmp_path): ...
+async def test_create_run_sets_parent_and_ands_commercial_ok(...): ...   # parent False -> child False
+async def test_executor_links_init_dir_and_sets_config(...): ...         # fake run 2 from run 1: config.json init_from.path == <run2>/init, init/ has files
+def test_migration_0002_upgrade_downgrade(...): ...
+```
+
+- [ ] **Step 2: FAIL. Step 3: Implement. Step 4: PASS** (`cd backend && uv run pytest`). **Step 5: Commit** `feat: warm start contract, validation, lineage and init linking`
+
+### Task 29: Checkpoints and init-sources API
+
+**Files:**
+- Modify: `backend/app/routers/runs.py`:
+  - `GET /api/runs/{id}/checkpoints` returns `{"items": [{"name", "step", "complete", "init_meta"}]}`
+  - `final` comes first, then the rest newest first
+  - `step` is `init_meta.step`, else the trailing int, else `null`
+- Create: `backend/app/routers/init_sources.py` (wired in `backend/app/app.py`):
+  - `GET /api/init-sources?task=&backend=&base_model=` (all required) returns:
+    `{"runs": [{"id", "recipe", "state", "finished_at", "checkpoints": [complete items only, same shape]}], "model_versions": [{"ref": "<name>@v<N>", "run_id", "metrics"}]}`
+  - Runs are filtered to matching task/backend/base_model with at least one complete checkpoint, newest first, max 50.
+- Test: `backend/tests/app/test_runs_api.py`, `backend/tests/app/test_init_sources_api.py`
+
+- [ ] **Step 1: Failing tests:**
+  - `test_checkpoints_lists_complete_and_incomplete`
+  - `test_checkpoints_final_first`
+  - `test_init_sources_filters_by_backend_and_model`
+  - `test_init_sources_excludes_runs_without_complete_checkpoint`
+  - `test_init_sources_lists_model_versions`
+- [ ] **Step 2–4.** **Step 5: Commit** `feat(api): run checkpoints and init sources`
+
+### Task 30: UI — Start-from picker, checkpoints tab, parent link
+
+**Files:**
+- Modify: `frontend/src/lib/types.ts`, `frontend/src/lib/api.ts`: `getCheckpoints(id)`, `getInitSources(q)`, `InitFrom` type
+- Modify: `frontend/src/lib/recipe-yaml.ts`: round-trip `init_from`
+- Create: `frontend/src/components/start-from-picker.tsx` + test:
+  - a select with "Base model (default)", each run's complete checkpoints labelled `<run id> · <checkpoint> · step N`, and model versions `<name>@vN`
+  - `onChange(InitFrom | null)`
+  - it refetches when task/backend/base_model change and clears a selection that is no longer listed
+- Modify: `frontend/src/components/recipe-editor.tsx`: render the picker under the base model field
+- Modify: `frontend/src/app/runs/[id]/page.tsx`:
+  - a "Checkpoints" tab: table of name, step, complete badge, and a "New run from this checkpoint" button (only on complete rows) that navigates to the recipe editor with `?from_run=<id>&checkpoint=<name>`
+  - the header shows `Started from <parent run link> · <checkpoint>` when `parent_run_id` is set
+- Modify: the recipe creation page: with `from_run` in the query, prefill from that run's recipe version and set `init_from`
+- Tests (vitest):
+  - `recipe-yaml` round-trips `init_from`
+  - the picker lists options from mocked `getInitSources` and emits `{run, checkpoint}`
+  - the run page renders the button only for complete checkpoints
+  - the prefill sets `init_from`
+
+- [ ] **Step 1: Failing tests. Step 2: FAIL. Step 3: Implement. Step 4: PASS + `npm run typecheck` + `npm run build`** (run from an upper-case `C:\` cwd). **Step 5: Commit** `feat(web): start-from picker, checkpoints tab, parent link`
