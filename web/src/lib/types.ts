@@ -103,7 +103,7 @@ export interface IngestRequest {
   eval_only?: boolean;
   provenance: Provenance;
 }
-export type IngestState = "queued" | "running" | "done" | "failed" | (string & {});
+export type IngestState = "pending" | "running" | "done" | "failed";
 export interface IngestStatus {
   id: number;
   state: IngestState;
