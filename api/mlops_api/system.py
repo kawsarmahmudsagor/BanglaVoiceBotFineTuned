@@ -22,3 +22,35 @@ def disk_status(settings: Settings) -> DiskStatus:
         warn=free_gb < settings.disk_warn_gb,
         block=free_gb < settings.disk_min_gb,
     )
+
+
+@dataclass(frozen=True)
+class GpuInfo:
+    name: str
+    vram_used_mb: int
+    vram_total_mb: int
+    util_pct: int
+    temp_c: int
+
+
+def read_gpu() -> GpuInfo | None:
+    """First NVIDIA GPU via NVML; None when there is no GPU, driver or pynvml."""
+    try:
+        import pynvml
+
+        pynvml.nvmlInit()
+        try:
+            h = pynvml.nvmlDeviceGetHandleByIndex(0)
+            name = pynvml.nvmlDeviceGetName(h)
+            mem = pynvml.nvmlDeviceGetMemoryInfo(h)
+            return GpuInfo(
+                name=name.decode() if isinstance(name, bytes) else str(name),
+                vram_used_mb=int(mem.used // 2**20),
+                vram_total_mb=int(mem.total // 2**20),
+                util_pct=int(pynvml.nvmlDeviceGetUtilizationRates(h).gpu),
+                temp_c=int(pynvml.nvmlDeviceGetTemperature(h, pynvml.NVML_TEMPERATURE_GPU)),
+            )
+        finally:
+            pynvml.nvmlShutdown()
+    except Exception:
+        return None
