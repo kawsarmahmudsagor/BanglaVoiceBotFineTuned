@@ -1,4 +1,10 @@
-.venv
 **/.venv
 **/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/*.db
 tests
+# Real backends are bind-mounted by compose at runtime; only the fake backend's manifest is
+# needed in the image (it is a uv workspace member, so `uv sync --frozen` reads it).
+workers/backends/*
+!workers/backends/fake
