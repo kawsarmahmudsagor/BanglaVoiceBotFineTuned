@@ -1,4 +1,4 @@
-# Next.js 15 app (created in a later task). Build context is ./web.
+# Next.js 15 app. Build context is ./web.
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
