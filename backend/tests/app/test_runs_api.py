@@ -20,6 +20,7 @@ async def test_create_run_freezes_recipe_and_sets_commercial_flag(client, sessio
     d = (await client.get(f"/api/runs/{rid}")).json()
     assert d["state"] == "queued" and d["commercial_ok"] is True
     assert d["recipe"] == {"name": "r1", "number": 1}
+    assert d["task"] == "llm-sft"
     assert d["run_dir"] == str(settings.runs_dir / rid)
     assert d["status"] is None and d["eval"] is None and d["exports"] == [] and d["oom_hint"] is None
     assert (await client.get("/api/recipes/r1/versions/1")).json()["frozen"] is True

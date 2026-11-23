@@ -133,7 +133,7 @@ async def run_detail(run_id: str, session: AsyncSession = Depends(get_session)) 
         "lock_hash": run.lock_hash, "dataset_hashes": run.dataset_hashes,
         "mlflow_run_id": run.mlflow_run_id, "created_at": iso(run.created_at),
         "started_at": iso(run.started_at), "finished_at": iso(run.finished_at),
-        "recipe": {"name": recipe.name, "number": rv.number},
+        "recipe": {"name": recipe.name, "number": rv.number}, "task": rv.spec.get("task"),
         "status": status.model_dump(mode="json") if status else None,
         "eval": results.model_dump(mode="json") if results else None,
         "exports": [a.model_dump(mode="json") for a in manifest.artifacts] if manifest else [],

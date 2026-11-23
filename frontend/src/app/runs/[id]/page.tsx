@@ -50,6 +50,7 @@ function RunDetailView({ id }: { id: string }) {
   const [config, setConfig] = useState<{ yaml: string } | { error: string } | null>(null);
 
   const [prepared, setPrepared] = useState<PreparedRef[] | null>(null);
+  const [preparedError, setPreparedError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const r = await getRun(id);
@@ -174,11 +175,16 @@ function RunDetailView({ id }: { id: string }) {
       .catch((e) => setConfig({ error: errText(e) }));
   }, [tab, config, recipeName, recipeNumber]);
 
-  // Prepared-data refs, loaded once when the Config tab is first opened.
+  // Prepared-data refs: refetched on each Config tab open and whenever the run state changes (refs appear after prepare).
+  const runState = run?.state;
   useEffect(() => {
-    if (tab !== "config" || prepared) return;
-    getPrepared(id).then((p) => setPrepared(p.refs)).catch(() => setPrepared([]));
-  }, [tab, prepared, id]);
+    if (tab !== "config") return;
+    let active = true;
+    getPrepared(id)
+      .then((p) => { if (active) { setPrepared(p.refs); setPreparedError(null); } })
+      .catch((e) => { if (active) setPreparedError(errText(e)); });
+    return () => { active = false; };
+  }, [tab, id, runState]);
 
   if (!run) {
     return loadError ? (
@@ -269,7 +275,8 @@ function RunDetailView({ id }: { id: string }) {
               <pre aria-label="Recipe YAML" className="overflow-auto rounded-md bg-ink p-3 font-mono text-[13px] leading-relaxed">{config.yaml}</pre>
             )}
           </Panel>
-          <PreparedCard refs={prepared ?? []} />
+          {preparedError && <ErrorNotice>Cannot load prepared data ({preparedError})</ErrorNotice>}
+          {!preparedError && <PreparedCard refs={prepared ?? []} />}
           </div>
         )}
         {tab === "eval" &&

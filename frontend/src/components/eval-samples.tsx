@@ -43,6 +43,7 @@ export function EvalSamples({ runId, task }: { runId: string; task: Task | null 
   const [items, setItems] = useState<Item[]>([]);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [exhausted, setExhausted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sortWer, setSortWer] = useState(false);
   const loadingRef = useRef(false);
@@ -55,6 +56,8 @@ export function EvalSamples({ runId, task }: { runId: string; task: Task | null 
     try {
       const page = await getEvalSamples(runId, itemsLen.current, PAGE);
       itemsLen.current += page.items.length;
+      setExhausted(page.items.length === 0);
+      setError(null);
       setItems((cur) => [...cur, ...page.items]);
       setTotal(page.total);
     } catch (e) {
@@ -71,13 +74,14 @@ export function EvalSamples({ runId, task }: { runId: string; task: Task | null 
 
   const kind: Task | null = task ?? (items[0] ? ("wer" in items[0] ? "asr" : "audio" in items[0] ? "tts" : "llm-sft") : null);
 
-  if (error) return <p className="text-sm text-status-failed">Cannot load eval samples ({error})</p>;
+  if (error && items.length === 0) return <p className="text-sm text-status-failed">Cannot load eval samples ({error})</p>;
   if (!loading && items.length === 0) return <p className="text-sm text-muted-foreground">No eval samples for this run.</p>;
 
   const rows = kind === "asr" && sortWer ? [...items].sort((a, b) => Number(b.wer) - Number(a.wer)) : items;
 
   return (
     <Panel title="Eval samples" actions={<span className="font-mono text-[13px] text-muted-foreground">{items.length} / {total}</span>}>
+      {error && <p className="mb-3 text-sm text-status-failed">Cannot load more eval samples ({error})</p>}
       {kind === "tts" && (
         <ul className="space-y-3">
           {rows.map((r) => (
@@ -126,7 +130,7 @@ export function EvalSamples({ runId, task }: { runId: string; task: Task | null 
           </TableBody>
         </Table>
       )}
-      {items.length < total && (
+      {items.length < total && !exhausted && (
         <Button variant="outline" className="mt-3" disabled={loading} onClick={() => void load()}>Load more</Button>
       )}
     </Panel>
