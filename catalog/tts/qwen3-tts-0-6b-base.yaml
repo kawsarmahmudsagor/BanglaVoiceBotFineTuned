@@ -1,0 +1,66 @@
+id: qwen3-tts-0-6b-base
+task: tts
+name: Qwen3-TTS 0.6B Base
+hf_repo: Qwen/Qwen3-TTS-12Hz-0.6B-Base
+params: 0.6B
+role: comparison
+license:
+  id: apache-2.0
+  commercial_ok: true
+  url: https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base
+bangla:
+  status: none
+  evidence: Supports 10 languages (Chinese, English, Japanese, Korean, German, French, Russian, Portuguese, Spanish, Italian); no Indic language.
+  url: https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base
+runtime:
+  engine: QwenEngine
+  convert: gguf
+  streaming: true
+description: |
+  Qwen's speech-token TTS model built on a 12 Hz audio tokenizer. It already runs in RealtimeTTS (as GGUF through
+  qwentts.cpp) and streams well. The name says 0.6B; the Hugging Face page reports 0.9B including the tokenizer.
+
+  Bangla would be a new language, so fine-tuning is an experiment: it has an official fine-tune path but no
+  evidence yet that it learns a new script.
+dataset:
+  format: tts
+  required_fields: [file, text, speaker]
+  optional_fields: [style]
+  example: "clips/0001.wav,আপনার অর্ডারটি আগামীকাল বিকেলের মধ্যে পৌঁছে যাবে।,speaker_01"
+  recommended:
+    hours: "50-200"
+    speakers: "1"
+    sample_rate: "24000"
+    clip_seconds: "2-15"
+  notes: |
+    Studio-quality, single-microphone recordings with no music or background noise. Transcripts must match the audio
+    exactly, in Bangla script, Unicode NFC, with numbers, dates and prices written out as spoken. Record only voices
+    whose owners gave written consent for cloning and commercial use.
+finetune:
+  methods: [full]
+  frameworks: [qwen-tts]
+  targets:
+    - "Use the official `finetuning/` scripts: `prepare_data.py` (tokenises audio with `Qwen/Qwen3-TTS-Tokenizer-12Hz`), then `sft_12hz.py`."
+    - "Input JSONL keys are `audio`, `text` and `ref_audio`. Only Base models and only single-speaker fine-tuning are supported."
+    - "Train the HF weights, then convert back to GGUF for RealtimeTTS."
+  hyperparams:
+    learning_rate: 2.0e-6
+    num_epochs: 10
+    batch_size: 32
+  metrics: [mos, cer_via_asr, speaker_similarity, rtf]
+  pitfalls:
+    - "Bangla is unproven; budget an early CER-via-ASR check after a few epochs before a long run."
+    - "Multi-speaker data is not supported by the official script."
+recipe_template:
+  method: {type: full}
+  hparams:
+    learning_rate: 2.0e-6
+    num_epochs: 10
+    batch_size: 32
+  export: [gguf]
+sources:
+  - title: Qwen3-TTS 0.6B Base model card
+    url: https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base
+  - title: Qwen3-TTS fine-tuning folder
+    url: https://github.com/QwenLM/Qwen3-TTS/tree/main/finetuning
+verified: 2026-11-23

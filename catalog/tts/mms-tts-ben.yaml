@@ -1,0 +1,57 @@
+id: mms-tts-ben
+task: tts
+name: MMS-TTS Bengali
+hf_repo: facebook/mms-tts-ben
+params: 36M
+role: benchmark
+license:
+  id: cc-by-nc-4.0
+  commercial_ok: false
+  url: https://huggingface.co/facebook/mms-tts-ben
+  notes: Non-commercial license. Use only as a benchmark.
+bangla:
+  status: native
+  evidence: The card describes it as the Bengali (ben) checkpoint of Meta's MMS-TTS.
+  url: https://huggingface.co/facebook/mms-tts-ben
+runtime:
+  engine: custom
+  streaming: false
+description: |
+  A 36M-parameter single-language VITS model from Meta's Massively Multilingual Speech project. Quality is modest,
+  but it gives a quick Bangla baseline for CER-via-ASR and MOS comparisons.
+dataset:
+  format: tts
+  required_fields: [file, text, speaker]
+  optional_fields: [style]
+  example: "clips/0001.wav,আপনার অর্ডারটি আগামীকাল বিকেলের মধ্যে পৌঁছে যাবে।,speaker_01"
+  recommended:
+    hours: "1-10"
+    speakers: "1"
+    sample_rate: "16000"
+    clip_seconds: "2-15"
+  notes: |
+    Studio-quality, single-microphone recordings with no music or background noise. Transcripts must match the audio
+    exactly, in Bangla script, Unicode NFC, with numbers, dates and prices written out as spoken. Record only voices
+    whose owners gave written consent for cloning and commercial use.
+finetune:
+  methods: [full]
+  frameworks: [transformers]
+  targets:
+    - "Fine-tune the VITS model with a community VITS fine-tuning script for Transformers; Meta publishes no recipe."
+  hyperparams:
+    learning_rate: 2.0e-5
+    num_train_epochs: 200
+    per_device_train_batch_size: 16
+  metrics: [mos, cer_via_asr, rtf]
+  pitfalls:
+    - "Non-commercial license: a fine-tune cannot ship."
+recipe_template:
+  method: {type: full}
+  hparams:
+    learning_rate: 2.0e-5
+    num_train_epochs: 200
+  export: []
+sources:
+  - title: mms-tts-ben model card
+    url: https://huggingface.co/facebook/mms-tts-ben
+verified: 2026-11-23

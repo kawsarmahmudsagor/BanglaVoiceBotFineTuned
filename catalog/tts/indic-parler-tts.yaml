@@ -1,0 +1,75 @@
+id: indic-parler-tts
+task: tts
+name: Indic Parler-TTS
+hf_repo: ai4bharat/indic-parler-tts
+derived_from: ai4bharat/indic-parler-tts-pretrained
+params: 900M
+role: primary
+license:
+  id: apache-2.0
+  commercial_ok: false
+  url: https://huggingface.co/ai4bharat/indic-parler-tts
+  notes: |
+    Hugging Face tags it Apache-2.0, but our earlier survey found it listed under MIT on AIKosh. Until AI4Bharat confirms
+    which applies, treat it as not cleared for commercial use. Gated on Hugging Face.
+bangla:
+  status: native
+  evidence: The card lists Bengali among its 21 languages, with recommended Bengali speakers "Arjun" and "Aditi".
+  url: https://huggingface.co/ai4bharat/indic-parler-tts
+runtime:
+  engine: ParlerEngine
+  streaming: true
+description: |
+  A Parler-TTS model fine-tuned by AI4Bharat for 21 Indian languages. Voice and style are set by a plain-English
+  description ("Aditi speaks with a calm, clear voice at a moderate pace") rather than a reference clip. It uses a
+  separate tokenizer for the description, and outputs 44.1 kHz audio through the DAC codec.
+
+  RealtimeTTS's `ParlerEngine` can stream it.
+dataset:
+  format: tts
+  required_fields: [file, text, speaker]
+  optional_fields: [style]
+  example: "clips/0001.wav,আপনার অর্ডারটি আগামীকাল বিকেলের মধ্যে পৌঁছে যাবে।,speaker_01"
+  recommended:
+    hours: "5-20"
+    speakers: "1-10"
+    sample_rate: "44100"
+    clip_seconds: "2-15"
+  notes: |
+    Studio-quality, single-microphone recordings with no music or background noise. Transcripts must match the audio
+    exactly, in Bangla script, Unicode NFC, with numbers, dates and prices written out as spoken. Record only voices
+    whose owners gave written consent for cloning and commercial use.
+finetune:
+  methods: [full]
+  frameworks: [parler-tts, accelerate]
+  targets:
+    - "Use the parler-tts training script (`accelerate launch ./training/run_parler_tts_training.py <config.json>`) with `model_name_or_path` set to this checkpoint."
+    - "Fine-tune the decoder; keep the text encoder and the DAC audio codec frozen."
+    - "Write a description for every clip (speaker name, pitch, pace, recording quality) using the same wording style as the original speakers, so the speaker name becomes controllable."
+    - "Pre-compute DAC codes and description annotations with the dataspeech tools before training."
+  hyperparams:
+    learning_rate: 1.0e-4
+    num_train_epochs: 10
+    per_device_train_batch_size: 8
+    gradient_accumulation_steps: 4
+    warmup_steps: 250
+  metrics: [mos, cer_via_asr, speaker_similarity, rtf]
+  pitfalls:
+    - "Descriptions in a different style from training make the model ignore them."
+    - "Over-training on one speaker erases the other Bengali voices; mix in some original-speaker data or keep epochs low."
+    - "Two tokenizers (prompt and description): loading the wrong one gives garbage audio."
+recipe_template:
+  method: {type: full}
+  hparams:
+    learning_rate: 1.0e-4
+    num_train_epochs: 10
+    warmup_steps: 250
+  export: []
+sources:
+  - title: Indic Parler-TTS model card
+    url: https://huggingface.co/ai4bharat/indic-parler-tts
+  - title: Parler-TTS training README
+    url: https://github.com/huggingface/parler-tts/blob/main/training/README.md
+  - title: AIKosh (MIT listing, see docs/context/stt-tts-model-survey.md)
+    url: https://aikosh.indiaai.gov.in/
+verified: 2026-11-23
