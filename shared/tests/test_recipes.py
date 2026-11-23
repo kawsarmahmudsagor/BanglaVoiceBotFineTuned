@@ -31,7 +31,7 @@ def make_spec(**over) -> RecipeSpec:
 
 def test_parse_dataset_ref():
     assert parse_dataset_ref("ecom-instruct@v3") == ("ecom-instruct", 3)
-    for bad in ["ecom", "ecom@3", "ecom@v0", "Ecom@v1"]:
+    for bad in ["ecom", "ecom@3", "ecom@v0", "Ecom@v1", "d1@v1\n"]:
         with pytest.raises(ValueError):
             parse_dataset_ref(bad)
 
@@ -70,6 +70,8 @@ def test_commercial_ok():
 def test_recipe_name_must_be_slug():
     with pytest.raises(ValidationError):
         make_spec(name="Qwen 4B")
+    with pytest.raises(ValidationError):
+        make_spec(name="r1\n")
 
 
 def test_method_requires_type():

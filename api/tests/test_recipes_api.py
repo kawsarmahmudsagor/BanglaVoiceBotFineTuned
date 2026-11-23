@@ -130,6 +130,7 @@ async def test_clone(client, session, settings):
     assert (settings.recipes_dir / "r2.yaml").exists()
     assert (await client.post("/api/recipes/r1/clone", json={"new_name": "r2"})).status_code == 409
     assert (await client.post("/api/recipes/r1/clone", json={"new_name": "Bad Name"})).status_code == 422
+    assert (await client.post("/api/recipes/r1/clone", json={"new_name": "r2\n"})).status_code == 422
     assert (await client.post("/api/recipes/nope/clone", json={"new_name": "r3"})).status_code == 404
 
 

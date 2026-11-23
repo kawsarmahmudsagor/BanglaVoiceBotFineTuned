@@ -110,6 +110,7 @@ async def test_name_reused_with_other_task_is_409(client, session_factory, setti
 async def test_ingest_request_validation(client):
     up = await upload_bytes(client, "a.jsonl", jsonl_bytes(1))
     assert (await client.post("/api/datasets/ingest", json=req(up, "Bad Name"))).status_code == 422
+    assert (await client.post("/api/datasets/ingest", json=req(up, "ok\n"))).status_code == 422
     assert (await client.post("/api/datasets/ingest", json=req(up, "ok", task="nlp"))).status_code == 422
     assert (await client.post("/api/datasets/ingest", json=req("nope", "ok"))).status_code == 404
     # incomplete upload

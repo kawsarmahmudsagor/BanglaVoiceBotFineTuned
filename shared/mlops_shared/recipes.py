@@ -9,8 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 TASKS = ("llm-sft", "asr", "tts")
 
-_SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
-_REF_RE = re.compile(r"^([a-z0-9]+(?:-[a-z0-9]+)*)@v([1-9][0-9]*)$")
+_SLUG_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")  # used with fullmatch: "$" would accept a trailing newline
+_REF_RE = re.compile(r"([a-z0-9]+(?:-[a-z0-9]+)*)@v([1-9][0-9]*)")
 
 
 class BaseModelMeta(BaseModel):
@@ -37,7 +37,7 @@ class RecipeSpec(BaseModel):
     @field_validator("name")
     @classmethod
     def _slug(cls, v: str) -> str:
-        if not _SLUG_RE.match(v):
+        if not _SLUG_RE.fullmatch(v):
             raise ValueError("name must be a kebab-case slug")
         return v
 
@@ -69,7 +69,7 @@ class Capabilities(BaseModel):
 
 
 def parse_dataset_ref(ref: str) -> tuple[str, int]:
-    m = _REF_RE.match(ref)
+    m = _REF_RE.fullmatch(ref)
     if not m:
         raise ValueError(f"invalid dataset ref {ref!r}; expected 'name@vN'")
     return m.group(1), int(m.group(2))
