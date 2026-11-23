@@ -13,10 +13,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from .report import Issue, Report
-from .validate_audio import assign_split, validate_audio
+from .validate_audio import metadata_files, validate_audio
 from .validate_llm import validate_llm
 
-_TASK_EXT = {"llm-sft": ".jsonl", "asr": ".zip", "tts": ".zip"}
+_TASK_EXT = {"llm-sft": (".jsonl", ".zip"), "asr": (".zip",), "tts": (".zip",)}
 GB = 1024**3
 
 
@@ -73,10 +73,14 @@ def _extract(upload: Path, dest: Path, report: Report, disk_min_gb: float = 0) -
             target.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(info) as src, open(target, "wb") as out:
                 shutil.copyfileobj(src, out)
-    if (dest / "metadata.csv").is_file():
+    def has_meta(d: Path) -> bool:
+        plain, per_split = metadata_files(d)
+        return plain is not None or bool(per_split)
+
+    if has_meta(dest):
         return dest
     tops = [p for p in dest.iterdir() if p.name != "__MACOSX"]
-    if len(tops) == 1 and tops[0].is_dir() and (tops[0] / "metadata.csv").is_file():
+    if len(tops) == 1 and tops[0].is_dir() and has_meta(tops[0]):
         return tops[0]
     return dest
 
@@ -105,8 +109,8 @@ def ingest(upload_file: Path, task: str, dest_root: Path, disk_min_gb: float = 0
     upload_file = Path(upload_file)
     dest_root = Path(dest_root)
     want = _TASK_EXT.get(task)
-    if want is None or upload_file.suffix.lower() != want:
-        msg = f"unknown task '{task}'" if want is None else f"task '{task}' expects a {want} upload"
+    if want is None or upload_file.suffix.lower() not in want:
+        msg = f"unknown task '{task}'" if want is None else f"task '{task}' expects a {' or '.join(want)} upload"
         return IngestResult(Report(errors=[Issue("unsupported_format", msg)]), None, None, 0)
 
     staging = dest_root / ".staging" / uuid.uuid4().hex
@@ -128,11 +132,11 @@ def ingest(upload_file: Path, task: str, dest_root: Path, disk_min_gb: float = 0
         if not report.ok:
             return IngestResult(report, None, None, 0)
 
-        splits = {"train": 0, "val": 0, "test": 0}
+        given = {"train": 0, "val": 0, "test": 0, "unassigned": 0}
         for r in rows:
-            r["split"] = assign_split(r["sample_id"])
-            splits[r["split"]] += 1
-        report.stats["splits"] = splits
+            given[r.get("split") or "unassigned"] += 1
+        report.stats["given_splits"] = given
+        report.stats["split_source"] = "dataset" if given["unassigned"] < len(rows) else "none"
         report.stats["n_samples"] = len(rows)
 
         vhash = _version_hash(rows)[:16]

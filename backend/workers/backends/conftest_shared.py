@@ -55,6 +55,7 @@ def run_dir(tmp_path):
         import pyarrow.parquet as pq
 
         from app.core.contract import DatasetRef, RunConfig, RunDir, write_config
+        from app.core.splits import SplitConfig
 
         root = tmp_path / "dataset"
         root.mkdir(exist_ok=True)
@@ -76,7 +77,8 @@ def run_dir(tmp_path):
         manifest = root / "manifest.parquet"
         pq.write_table(pa.Table.from_pylist(rows), manifest)
         ref = DatasetRef(name="tiny", version=1, hash="h" * 16, root=str(root),
-                         manifest=str(manifest), splits=["train", "val", "test"])
+                         manifest=str(manifest), splits=["train", "val", "test"],
+                         split=SplitConfig())
         fields = dict(
             run_id="r1", attempt=1, resume=False, task=task, backend="test", base_model=base_model,
             method={"type": "lora"}, hparams=hparams or {}, export=[], seed=1,

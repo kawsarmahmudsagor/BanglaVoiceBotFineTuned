@@ -8,6 +8,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from app.core.splits import SplitConfig, SplitRatios
 from app.core.contract import DatasetRef, RunConfig, RunDir, read_prepared_refs, write_prepared_refs
 from app.core.prepare import (
     BuildResult,
@@ -33,18 +34,18 @@ def _ds(tmp_path, name, table, h):
     root.mkdir()
     pq.write_table(table, root / "manifest.parquet")
     return DatasetRef(name=name, version=1, hash=h, root=str(root),
-                      manifest=str(root / "manifest.parquet"), splits=["train", "val"])
+                      manifest=str(root / "manifest.parquet"), splits=["train", "val"], split=SplitConfig())
 
 
 @pytest.fixture
 def audio_ds(tmp_path):
     t = pa.table({
-        "sample_id": ["a", "b", "c"],
-        "file": ["a.wav", "b.wav", "c.wav"],
-        "text": ["x", "y", "z"],
-        "duration_s": [1.0, 2.0, 3.0],
-        "sample_rate": [16000] * 3,
-        "split": ["train", "train", "val"],
+        "sample_id": ["a", "b", "c", "d"],
+        "file": ["a.wav", "b.wav", "c.wav", "d.wav"],
+        "text": ["x", "y", "z", "w"],
+        "duration_s": [1.0, 2.0, 3.0, 4.0],
+        "sample_rate": [16000] * 4,
+        "split": ["train", "train", "val", "test"],
     })
     return _ds(tmp_path, "audio", t, "audiohash0001")
 
@@ -53,10 +54,10 @@ def audio_ds(tmp_path):
 def llm_ds(tmp_path):
     msgs = json.dumps([{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}])
     t = pa.table({
-        "sample_id": ["a", "b"],
-        "messages_json": [msgs, msgs],
-        "tools_json": [None, json.dumps([{"name": "t"}])],
-        "split": ["train", "val"],
+        "sample_id": ["a", "b", "c"],
+        "messages_json": [msgs, msgs, msgs],
+        "tools_json": [None, json.dumps([{"name": "t"}]), None],
+        "split": ["train", "val", "test"],
     })
     return _ds(tmp_path, "llm", t, "llmhash0001")
 
@@ -190,3 +191,32 @@ def test_prepared_refs_roundtrip(tmp_path):
     assert read_prepared_refs(rd) == []
     rd.prepared_refs_path.write_text('{"a": 1}')
     assert read_prepared_refs(rd) == []
+
+
+def test_iter_rows_applies_split_config(audio_ds):
+    # dataset gives train/val/test; use_dataset_splits=False reassigns everything by hash
+    ignore = audio_ds.model_copy(update={"split": SplitConfig(use_dataset_splits=False,
+                                                              ratios=SplitRatios(train=0.5, val=0.5, test=0.0))})
+    got = load_splits(ignore, ["train", "val"])
+    assert sum(len(v) for v in got.values()) == 4
+    assert {r["split"] for r in got["val"]} <= {"val"}
+    # same config twice (cached) is stable
+    assert [r["sample_id"] for r in iter_rows(ignore, "train")] == [r["sample_id"] for r in got["train"]]
+
+
+def test_empty_assigned_split_is_prepare_error(llm_ds):
+    ds = llm_ds.model_copy(update={"split": SplitConfig(use_dataset_splits=False)})  # 3 rows cannot fill 70/20/10
+    with pytest.raises(PrepareError, match="split '.*' is empty: add data or change datasets.split.ratios"):
+        list(iter_rows(ds, "train"))
+
+
+def test_prepared_dir_differs_when_only_ratios_differ(cfg, audio_ds):
+    other = audio_ds.model_copy(update={"split": SplitConfig(ratios=SplitRatios(train=0.8, val=0.1, test=0.1))})
+    assert prepared_dir(cfg, audio_ds, SPEC) != prepared_dir(cfg, other, SPEC)
+    assert prepared_dir(cfg, audio_ds, SPEC) != prepared_dir(cfg, audio_ds.model_copy(update={"split": None}), SPEC)
+    assert prepared_dir(cfg, audio_ds, SPEC).name == ensure_prepared(cfg, audio_ds, SPEC, _ok_build).spec_hash
+
+
+def test_eval_only_ref_yields_all_rows(audio_ds):
+    ref = audio_ds.model_copy(update={"split": None, "splits": ["train", "val", "test"]})
+    assert {s: len(list(iter_rows(ref, s))) for s in ref.splits} == {"train": 4, "val": 4, "test": 4}

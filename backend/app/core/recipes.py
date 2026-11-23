@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .splits import SplitConfig
+
 TASKS = ("llm-sft", "asr", "tts")
 
 _SLUG_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")  # used with fullmatch: "$" would accept a trailing newline
@@ -21,6 +23,7 @@ class BaseModelMeta(BaseModel):
 class RecipeDatasets(BaseModel):
     train: str
     eval: str | None = None
+    split: SplitConfig = SplitConfig()
 
 
 class RecipeSpec(BaseModel):

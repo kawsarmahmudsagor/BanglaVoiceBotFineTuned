@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.datasets.validate_audio import assign_split, validate_audio
+from app.datasets.validate_audio import validate_audio
 
 
 def codes(issues) -> set[str]:
@@ -58,11 +58,3 @@ def test_tts_requires_speaker_and_keeps_it(dir_with, audio):
     root = dir_with({"a.wav": audio.sine(1.0, amp=0.1)}, "file,text,speaker\na.wav,ক,spk1\n")
     report, rows = validate_audio(root, "tts")
     assert report.ok and rows[0]["speaker"] == "spk1"
-
-
-def test_assign_split_is_deterministic_and_roughly_90_5_5():
-    splits = [assign_split(f"{i:016x}") for i in range(20000)]
-    assert splits == [assign_split(f"{i:016x}") for i in range(20000)]
-    assert 0.88 < splits.count("train") / 20000 < 0.92
-    assert 0.03 < splits.count("val") / 20000 < 0.07
-    assert 0.03 < splits.count("test") / 20000 < 0.07

@@ -18,7 +18,6 @@ from ..models import Dataset, DatasetVersion, Ingest, Upload
 from .ingest import _version_hash, ingest
 from .validate_audio import _sha256_file
 
-SPLIT_RATIOS = [0.9, 0.05, 0.05]
 log = logging.getLogger(__name__)
 
 
@@ -79,7 +78,8 @@ async def run_ingest(session, ingest_id: int, settings) -> None:
             n_samples=result.n_samples,
             report=report,
             provenance=row.provenance,
-            split_ratios=SPLIT_RATIOS,
+            split_source=report.get("stats", {}).get("split_source", "none"),
+            given_splits=report.get("stats", {}).get("given_splits", {}),
         )
         session.add(version)
         await session.flush()
@@ -142,7 +142,7 @@ async def edit_transcript(session, version: DatasetVersion, sample_id: str, text
     audio = src_dir / "files" / row["file"]
     row["text"] = text
     row["sample_id"] = hashlib.sha256((text + "\n" + _sha256_file(audio)).encode("utf-8")).hexdigest()[:16]
-    # same rule as validate_audio; split is deliberately kept
+    # same rule as validate_audio; the dataset's own split label is deliberately kept
     vhash = _version_hash(rows)[:16]
 
     dest_root = settings.datasets_dir / dataset.name
@@ -177,6 +177,8 @@ async def edit_transcript(session, version: DatasetVersion, sample_id: str, text
         report=_remap_report(version.report, sample_id, row["sample_id"]),
         provenance=version.provenance,
         split_ratios=version.split_ratios,
+        split_source=version.split_source,
+        given_splits=version.given_splits,
         parent_version_id=version.id,
     )
     session.add(child)

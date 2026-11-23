@@ -43,7 +43,9 @@ class DatasetVersion(Base):
     n_samples: Mapped[int] = mapped_column()
     report: Mapped[dict] = mapped_column(JSON, default=dict)
     provenance: Mapped[dict] = mapped_column(JSON, default=dict)
-    split_ratios: Mapped[dict] = mapped_column(JSON, default=dict)
+    split_ratios: Mapped[dict] = mapped_column(JSON, default=dict)  # legacy; no longer written (spec 15.3)
+    split_source: Mapped[str] = mapped_column(String, default="none", server_default="none")
+    given_splits: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     parent_version_id: Mapped[int | None] = mapped_column(ForeignKey("dataset_version.id"), nullable=True)
     created_at: Mapped[dt.datetime] = _ts(default=utcnow)
 

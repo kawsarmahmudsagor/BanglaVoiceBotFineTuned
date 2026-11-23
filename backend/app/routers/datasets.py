@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.splits import SplitConfig, assign
 from ..datasets.versions import EditNotSupported, SampleNotFound, edit_transcript, read_manifest
 from ..db import get_session
 from ..models import Dataset, DatasetVersion, Ingest, Upload
@@ -171,11 +172,12 @@ async def patch_dataset(name: str, body: DatasetPatch, session: AsyncSession = D
 @router.get("/datasets/{name}/versions/{n}")
 async def get_version(name: str, n: int, session: AsyncSession = Depends(get_session)) -> dict:
     ds, v = await _version(session, name, n)
-    splits = {"train": 0, "val": 0, "test": 0}
-    for r in read_manifest(v.path):
-        splits[r["split"]] = splits.get(r["split"], 0) + 1
+    labels = assign(read_manifest(v.path), SplitConfig(), strict=False)
+    counts = {s: labels.count(s) for s in ("train", "val", "test")}
     return {**_summary(v, await _parent_number(session, v)), "dataset": ds.name, "task": ds.task,
-            "report": v.report, "provenance": v.provenance, "split_ratios": v.split_ratios, "splits": splits}
+            "report": v.report, "provenance": v.provenance, "split_ratios": v.split_ratios,
+            "split_source": v.split_source, "given_splits": v.given_splits or {},
+            "default_split_counts": counts, "splits": counts}
 
 
 @router.get("/datasets/{name}/versions/{n}/samples")
@@ -185,6 +187,8 @@ async def get_samples(
 ) -> dict:
     ds, v = await _version(session, name, n)
     rows = read_manifest(v.path)
+    for r, lab in zip(rows, assign(rows, SplitConfig(), strict=False)):
+        r["split"] = lab
     if split:
         rows = [r for r in rows if r["split"] == split]
     if warning:

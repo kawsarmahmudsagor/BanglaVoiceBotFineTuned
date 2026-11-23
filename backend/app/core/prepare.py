@@ -17,6 +17,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from .contract import DatasetRef, RunConfig
+from .splits import EmptySplitError, assign
 
 
 class PrepareError(RuntimeError):
@@ -58,13 +59,37 @@ class PrepInfo(BaseModel):
     cache_hit: bool = False  # set on return, not trusted from disk
 
 
+_ASSIGN_CACHE: dict[tuple, list[str]] = {}
+
+
+def _assigned(ds: DatasetRef, rows: list[dict]) -> list[str]:
+    st = os.stat(ds.manifest)
+    key = (ds.manifest, st.st_mtime_ns, st.st_size, json.dumps(ds.split.model_dump(), sort_keys=True))
+    got = _ASSIGN_CACHE.get(key)
+    if got is None:
+        try:
+            got = assign(rows, ds.split)
+        except EmptySplitError as e:
+            raise PrepareError(str(e)) from e
+        if len(_ASSIGN_CACHE) >= 8:
+            _ASSIGN_CACHE.clear()
+        _ASSIGN_CACHE[key] = got
+    return got
+
+
 def iter_rows(ds: DatasetRef, split: str) -> Iterator[dict]:
-    import pyarrow.compute as pc
+    """Rows of one split. `ds.split` set: assigned per run (spec section 15.5).
+    `ds.split` None (eval-only): every row, for any requested split."""
     import pyarrow.parquet as pq
 
-    table = pq.read_table(ds.manifest)
-    table = table.filter(pc.equal(table["split"], split))
-    for row in table.to_pylist():
+    rows = pq.read_table(ds.manifest).to_pylist()
+    if ds.split is not None:
+        labels = _assigned(ds, rows)
+        picked = [(r, lab) for r, lab in zip(rows, labels) if lab == split]
+    else:
+        picked = [(r, split) for r in rows]
+    for row, label in picked:
+        row["split"] = label
         if "messages_json" in row:
             row["messages"] = json.loads(row.pop("messages_json"))
             tools = row.pop("tools_json", None)
@@ -78,8 +103,15 @@ def load_splits(ds: DatasetRef, splits: list[str]) -> dict[str, list[dict]]:
     return {s: list(iter_rows(ds, s)) for s in splits}
 
 
+def spec_hash(ds: DatasetRef, spec: PrepSpec) -> str:
+    """Cache key: the prep spec mixed with the dataset's split config (spec section 15.6)."""
+    blob = json.dumps({"spec": spec.model_dump(), "split": ds.split.model_dump() if ds.split else None},
+                      sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
 def prepared_dir(cfg: RunConfig, ds: DatasetRef, spec: PrepSpec) -> Path:
-    return Path(cfg.prepared_root) / ds.hash / spec.hash()
+    return Path(cfg.prepared_root) / ds.hash / spec_hash(ds, spec)
 
 
 class _FileLock:
@@ -164,7 +196,7 @@ def ensure_prepared(
                 top3 = "; ".join(f"{r} ×{n}" for r, n in Counter(s.reason for s in result.skipped).most_common(3))
                 raise PrepareError(f"{share * 100:.1f}% of rows skipped (limit {max_skip_share * 100:.1f}%): {top3}")
             now = time.time()
-            info = PrepInfo(spec=spec, spec_hash=spec.hash(), dataset_hash=ds.hash, counts=result.counts,
+            info = PrepInfo(spec=spec, spec_hash=spec_hash(ds, spec), dataset_hash=ds.hash, counts=result.counts,
                             skipped=result.skipped, files=result.files, built_at=now, build_s=now - t0,
                             path=str(target))
             (tmp / "prepared.json").write_bytes(

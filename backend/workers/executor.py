@@ -20,6 +20,7 @@ from app.core.contract import (
     DatasetRef, Metric, RunConfig, RunDir, read_metrics, read_prepared_refs, write_config,
 )
 from app.core.recipes import RecipeSpec, parse_dataset_ref
+from app.core.splits import SplitConfig
 
 from .lock import release
 
@@ -53,7 +54,7 @@ class NullForwarder:
         return None
 
 
-def _ref(version: DatasetVersion, name: str, splits: list[str]) -> DatasetRef:
+def _ref(version: DatasetVersion, name: str, splits: list[str], split: SplitConfig | None = None) -> DatasetRef:
     return DatasetRef(
         name=name,
         version=version.number,
@@ -61,6 +62,7 @@ def _ref(version: DatasetVersion, name: str, splits: list[str]) -> DatasetRef:
         root=version.path,
         manifest=str(Path(version.path) / "manifest.parquet"),
         splits=splits,
+        split=split,
     )
 
 
@@ -75,11 +77,12 @@ def build_config(
     """`versions` maps recipe refs (`name@vN`) to versions; `eval_only` holds eval-only dataset names."""
     datasets: dict[str, DatasetRef] = {}
     name, _ = parse_dataset_ref(recipe.datasets.train)
-    datasets["train"] = _ref(versions[recipe.datasets.train], name, ["train", "val"])
+    datasets["train"] = _ref(versions[recipe.datasets.train], name, ["train", "val"], recipe.datasets.split)
     if recipe.datasets.eval:
         name, _ = parse_dataset_ref(recipe.datasets.eval)
         splits = ["train", "val", "test"] if name in eval_only else ["test"]
-        datasets["eval"] = _ref(versions[recipe.datasets.eval], name, splits)
+        datasets["eval"] = _ref(versions[recipe.datasets.eval], name, splits,
+                                None if name in eval_only else recipe.datasets.split)
     return RunConfig(
         run_id=run.id,
         attempt=run.attempt,

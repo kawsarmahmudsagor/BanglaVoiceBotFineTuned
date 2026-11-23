@@ -9,6 +9,8 @@ from typing import TypeVar
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from .splits import SplitConfig
+
 
 class Phase(str, Enum):
     prepare = "prepare"
@@ -24,6 +26,7 @@ class DatasetRef(BaseModel):
     root: str
     manifest: str
     splits: list[str]
+    split: SplitConfig | None = None
 
 
 class RunConfig(BaseModel):

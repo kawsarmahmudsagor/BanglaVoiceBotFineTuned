@@ -309,3 +309,22 @@ async def test_ingested_upload_is_consumed_and_cannot_be_ingested_again(client, 
     patch = await client.patch(f"/api/uploads/{up}", content=b"x", headers={
         **TUS, "Upload-Offset": "0", "Content-Type": "application/offset+octet-stream"})
     assert patch.status_code == 409
+
+
+async def test_version_detail_reports_split_source_and_default_counts(client, session_factory, settings):
+    rows = [{**r, "split": s} for r, s in zip(
+        [json.loads(x) for x in jsonl_bytes(10).decode().splitlines()],
+        ["train"] * 6 + ["val"] * 2 + ["test"] * 2)]
+    data = ("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n").encode()
+    await ingest_via_api(client, session_factory, settings, "s.jsonl", data, "with-splits")
+    v = (await client.get("/api/datasets/with-splits/versions/1")).json()
+    assert v["split_source"] == "dataset"
+    assert v["given_splits"] == {"train": 6, "val": 2, "test": 2, "unassigned": 0}
+    assert v["default_split_counts"] == {"train": 6, "val": 2, "test": 2}
+    rows = (await client.get("/api/datasets/with-splits/versions/1/samples?split=test")).json()
+    assert rows["total"] == 2
+
+    await ingest_via_api(client, session_factory, settings, "n.jsonl", jsonl_bytes(50), "no-splits")
+    v = (await client.get("/api/datasets/no-splits/versions/1")).json()
+    assert v["split_source"] == "none" and v["given_splits"]["unassigned"] == 50
+    assert sum(v["default_split_counts"].values()) == 50 and v["default_split_counts"]["val"] > 0

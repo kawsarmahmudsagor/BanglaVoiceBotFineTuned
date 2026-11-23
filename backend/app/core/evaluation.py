@@ -129,7 +129,8 @@ def run_tts_eval(rd: RunDir, rep: "Reporter", rows: list[dict],
 
 def baseline_metrics(cfg: RunConfig, ds: DatasetRef, eval_key: dict,
                      compute: Callable[[], dict[str, float]]) -> dict[str, float]:
-    blob = json.dumps({"base_model": cfg.base_model, "dataset_hash": ds.hash, "eval_key": eval_key},
+    blob = json.dumps({"base_model": cfg.base_model, "dataset_hash": ds.hash, "eval_key": eval_key,
+                       "split": ds.split.model_dump() if ds.split else None},
                       sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     key = hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
     path = Path(cfg.prepared_root) / "_baselines" / f"{key}.json"

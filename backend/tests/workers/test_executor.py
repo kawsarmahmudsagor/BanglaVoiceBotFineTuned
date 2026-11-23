@@ -368,3 +368,27 @@ async def test_existing_hf_home_is_respected(env, monkeypatch):
     run = await queued_run(env, hparams={"steps": 1, "echo_env": True})
     assert await execute_run(env.sf, run.id, env.settings, env.fwd) == "done"
     assert "HF_HOME=/custom/hf" in (RunDir(run.run_dir).logs_dir / "stdout.log").read_text()
+
+
+async def test_build_config_passes_split_config(env):
+    from app.core.recipes import RecipeSpec
+    from app.core.splits import SplitConfig, SplitRatios
+
+    run = await queued_run(env, eval_only_eval=True)
+    async with env.sf() as s:
+        versions = {}
+        for name in ("trainset", "evalset"):
+            ds = (await s.execute(select(Dataset).where(Dataset.name == name))).scalar_one()
+            versions[f"{name}@v1"] = (await s.execute(select(DatasetVersion).where(DatasetVersion.dataset_id == ds.id))).scalar_one()
+    raw = _spec({}, "evalset@v1")
+    raw["datasets"]["split"] = {"use_dataset_splits": False, "ratios": {"train": 0.8, "val": 0.1, "test": 0.1}}
+    spec = RecipeSpec.model_validate(raw)
+    want = SplitConfig(use_dataset_splits=False, ratios=SplitRatios(train=0.8, val=0.1, test=0.1))
+    cfg = build_config(run, spec, versions, env.settings, eval_only={"evalset"})
+    assert cfg.datasets["train"].split == want
+    assert cfg.datasets["eval"].split is None  # eval-only: every row
+    raw["datasets"]["eval"] = "trainset@v1"
+    cfg2 = build_config(run, RecipeSpec.model_validate(raw), {"trainset@v1": versions["trainset@v1"]},
+                        env.settings, eval_only=set())
+    assert cfg2.datasets["eval"].split == want
+    assert RecipeSpec.model_validate(_spec({})).datasets.split == SplitConfig()
