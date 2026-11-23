@@ -1,0 +1,21 @@
+[project]
+name = "bangla-voice-mlops"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = ["mlops-shared"]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["shared"]
+
+[tool.uv.sources]
+mlops-shared = { workspace = true }
+
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio", "httpx", "jsonschema"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["shared/tests"]
