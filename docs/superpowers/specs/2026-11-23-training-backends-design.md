@@ -413,7 +413,7 @@ With `init_from` set, the `base/` metrics score the init checkpoint, the model t
 
 ### 14.9 API and UI
 
-- `GET /api/runs/{id}/checkpoints` returns `[{name, step, complete, init_meta}]`.
+- `GET /api/runs/{id}/checkpoints` returns `{"items": [{name, step, complete, init_meta}]}`.
 - `GET /api/init-sources?task=&backend=&base_model=` returns compatible runs, each with its complete checkpoints, and compatible model versions.
 - **Recipe form**: a "Start from" picker with the options base model (default), a run checkpoint, or a model version. It is filled from `init-sources` and written to `init_from` in the YAML.
 - **Run detail page**:
