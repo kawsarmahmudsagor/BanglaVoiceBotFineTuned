@@ -1,0 +1,71 @@
+import {
+  Boxes, Database, FileCode2, GitCompareArrows, LayoutDashboard, Library, Play, type LucideIcon,
+} from "lucide-react";
+
+export interface NavItem {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+}
+export interface NavGroup {
+  label: string | null;
+  items: NavItem[];
+}
+
+export const NAV_GROUPS: NavGroup[] = [
+  { label: null, items: [{ href: "/", label: "Overview", icon: LayoutDashboard }] },
+  {
+    label: "Prepare",
+    items: [
+      { href: "/catalog", label: "Catalog", icon: Library },
+      { href: "/datasets", label: "Datasets", icon: Database },
+      { href: "/recipes", label: "Recipes", icon: FileCode2 },
+    ],
+  },
+  {
+    label: "Train",
+    items: [
+      { href: "/runs", label: "Runs", icon: Play },
+      { href: "/runs/compare", label: "Compare", icon: GitCompareArrows },
+    ],
+  },
+  { label: "Ship", items: [{ href: "/registry", label: "Registry", icon: Boxes }] },
+];
+
+const COMPARE = "/runs/compare";
+
+function under(pathname: string, href: string): boolean {
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+export function isActive(pathname: string, href: string): boolean {
+  if (href === "/") return pathname === "/";
+  if (href === "/runs" && under(pathname, COMPARE)) return false;
+  return under(pathname, href);
+}
+
+const LABELS: Record<string, string> = {
+  catalog: "Catalog",
+  datasets: "Datasets",
+  recipes: "Recipes",
+  runs: "Runs",
+  compare: "Compare",
+  registry: "Registry",
+  new: "New",
+  v: "Versions",
+};
+
+export function breadcrumbs(pathname: string): { href: string; label: string }[] {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length === 0) return [{ href: "/", label: "Overview" }];
+  return parts.map((p, i) => {
+    const decoded = (() => {
+      try {
+        return decodeURIComponent(p);
+      } catch {
+        return p;
+      }
+    })();
+    return { href: `/${parts.slice(0, i + 1).join("/")}`, label: LABELS[p] ?? decoded };
+  });
+}

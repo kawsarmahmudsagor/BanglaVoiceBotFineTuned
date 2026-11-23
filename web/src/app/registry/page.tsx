@@ -79,7 +79,7 @@ function ModelsList() {
               {g.models.map((m) => (
                 <TableRow key={m.id}>
                   <TableCell>
-                    <Link href={`/models/${m.id}`} className="underline">{m.name}</Link>
+                    <Link href={`/registry/${m.id}`} className="underline">{m.name}</Link>
                   </TableCell>
                   <TableCell>v{m.number}</TableCell>
                   <TableCell className="font-mono">{m.base_model}</TableCell>

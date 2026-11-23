@@ -176,7 +176,7 @@ export default function Dashboard() {
                   {m ? (
                     <>
                       <TableCell>
-                        <Link href={`/models/${m.id}`} className="underline">
+                        <Link href={`/registry/${m.id}`} className="underline">
                           {m.name} v{m.number}
                         </Link>
                       </TableCell>

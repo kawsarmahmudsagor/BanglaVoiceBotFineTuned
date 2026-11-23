@@ -146,7 +146,7 @@ function RunDetailView({ id }: { id: string }) {
   const onPromote = () =>
     act(async () => {
       const m = await promoteRun(id);
-      router.push(`/models/${m.id}`);
+      router.push(`/registry/${m.id}`);
     });
 
   const series = useMemo(() => metricsToSeries(metrics), [metrics]);

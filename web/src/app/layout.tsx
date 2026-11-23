@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Hind_Siliguri, JetBrains_Mono } from "next/font/google";
-import { Nav } from "@/components/nav";
+import { AppShell } from "@/components/shell/app-shell";
 import { THEME_SCRIPT } from "@/lib/theme";
 import "./globals.css";
 
@@ -23,10 +23,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body
         className="text-sm antialiased"
       >
-        <div className="flex min-h-screen">
-          <Nav />
-          <main className="min-w-0 flex-1 p-6">{children}</main>
-        </div>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );
