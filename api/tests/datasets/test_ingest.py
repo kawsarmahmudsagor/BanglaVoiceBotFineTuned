@@ -78,3 +78,37 @@ def test_not_a_zip_is_error_issue(tmp_path):
     f.write_bytes(b"nope")
     r = ingest(f, "asr", tmp_path / "out")
     assert [i.code for i in r.report.errors] == ["unsupported_format"]
+
+
+def test_duplicate_file_rows_are_an_error_not_a_crash(tmp_path, make_zip, audio):
+    z = make_zip(files={"a.wav": audio.sine(2.0)}, metadata="file,text\na.wav,ক\na.wav,খ\n")
+    r = ingest(z, "asr", tmp_path / "out")
+    assert [i.code for i in r.report.errors] == ["duplicate_file"]
+    assert "a.wav" in r.report.errors[0].message
+    assert r.version_dir is None and r.n_samples == 0
+
+
+def test_optional_columns_absent_from_first_row_are_kept(tmp_path, make_zip, audio):
+    z = make_zip(files={"a.wav": audio.sine(2.0), "b.wav": audio.sine(2.0, freq=300)},
+                 metadata="file,text,note\na.wav,ক\nb.wav,খ,hello\n")
+    r = ingest(z, "asr", tmp_path / "out")
+    assert r.report.ok, r.report.errors
+    rows = pq.read_table(r.version_dir / "manifest.parquet").to_pylist()
+    assert {x["text"]: x["note"] for x in rows} == {"ক": None, "খ": "hello"}
+
+
+def test_zero_sample_uploads_are_errors(tmp_path, make_zip, jsonl):
+    r = ingest(jsonl([]), "llm-sft", tmp_path / "out")
+    assert [i.code for i in r.report.errors] == ["no_samples"] and r.version_dir is None
+    r = ingest(make_zip(files={}, metadata="file,text\n"), "asr", tmp_path / "out")
+    assert [i.code for i in r.report.errors] == ["no_samples"] and r.version_dir is None
+
+
+def test_upload_suffix_is_case_insensitive(tmp_path, make_zip, jsonl, audio):
+    p = jsonl([{"messages": [{"role": "user", "content": "প্রশ্ন"},
+                             {"role": "assistant", "content": "উত্তর"}]}])
+    up = p.rename(p.with_name("DATA.JSONL"))
+    assert ingest(up, "llm-sft", tmp_path / "out").report.ok
+    z = make_zip(files={"a.wav": audio.sine(2.0)}, metadata="file,text\na.wav,ক\n")
+    z = z.rename(z.with_name("UPLOAD.ZIP"))
+    assert ingest(z, "asr", tmp_path / "out2").report.ok

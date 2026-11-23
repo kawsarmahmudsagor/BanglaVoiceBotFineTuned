@@ -113,6 +113,8 @@ def ingest(upload_file: Path, task: str, dest_root: Path) -> IngestResult:
             root = _extract(upload_file, extracted, report)
             if root is not None:
                 report, rows = validate_audio(root, task)
+        if report.ok and not rows:
+            report.errors.append(Issue("no_samples", "upload contains no samples"))
         if not report.ok:
             return IngestResult(report, None, None, 0)
 
@@ -135,7 +137,10 @@ def ingest(upload_file: Path, task: str, dest_root: Path) -> IngestResult:
                 dst = build / "files" / r["file"]
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(_locate(root, r["file"])), str(dst))
-        pq.write_table(pa.Table.from_pylist(sorted(rows, key=lambda r: r["sample_id"])), build / "manifest.parquet")
+        ordered = sorted(rows, key=lambda r: r["sample_id"])
+        columns = list(dict.fromkeys(k for r in ordered for k in r))  # union of keys, first-seen order
+        table = pa.table({c: [r.get(c) for r in ordered] for c in columns})
+        pq.write_table(table, build / "manifest.parquet")
         build.replace(final)
         return IngestResult(report, vhash, final, len(rows))
     finally:

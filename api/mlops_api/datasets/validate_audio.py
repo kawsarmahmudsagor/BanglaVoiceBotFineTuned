@@ -79,6 +79,9 @@ def validate_audio(root: Path, task: str) -> tuple[Report, list[dict]]:
                 Issue("missing_audio", f"'{rel}' is listed in metadata.csv but not found in the upload")
             )
             continue
+        if rel in referenced:
+            report.errors.append(Issue("duplicate_file", f"'{rel}' is listed more than once in metadata.csv"))
+            continue
         referenced.add(rel)
         if not text:
             report.errors.append(Issue("missing_transcript", f"'{rel}' has an empty transcript"))
