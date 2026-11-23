@@ -45,20 +45,19 @@ services:
 
   api:
     build:
-      context: .
-      dockerfile: api/Dockerfile
+      context: ./backend
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     working_dir: /app
     command: >
-      sh -c "alembic -c api/alembic.ini upgrade head &&
-      uvicorn mlops_api.app:create_app --factory --host 0.0.0.0 --port 8000"
+      sh -c "alembic -c alembic.ini upgrade head &&
+      uvicorn app.app:create_app --factory --host 0.0.0.0 --port 8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mlops}:${POSTGRES_PASSWORD}@postgres:5432/mlops
       DATA_ROOT: ${DATA_ROOT}
-      BACKENDS_ROOT: ${REPO_ROOT:?set REPO_ROOT in .env}/backends
+      BACKENDS_ROOT: ${REPO_ROOT:?set REPO_ROOT in .env}/backend/workers/backends
       RECIPES_DIR: ${REPO_ROOT}/recipes
       CATALOG_DIR: ${REPO_ROOT}/catalog
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
@@ -70,7 +69,7 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: utility
     volumes:
       - ${DATA_ROOT}:${DATA_ROOT}
-      - ./backends:${REPO_ROOT}/backends:ro
+      - ./backend/workers/backends:${REPO_ROOT}/backend/workers/backends:ro
       - ./recipes:${REPO_ROOT}/recipes
       - ./catalog:${REPO_ROOT}/catalog:ro
     deploy:
@@ -85,7 +84,7 @@ services:
 
   web:
     build:
-      context: ./web
+      context: ./frontend
       args:
         NEXT_PUBLIC_API_URL: http://localhost:8000
     restart: unless-stopped
