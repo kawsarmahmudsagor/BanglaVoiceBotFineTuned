@@ -1,0 +1,70 @@
+id: bangla-conformer
+task: asr
+name: BanglaConformer (Bengali.AI)
+hf_repo: bengaliAI/BanglaConformer
+params: 121M
+role: comparison
+license:
+  id: mit
+  commercial_ok: true
+  url: https://huggingface.co/bengaliAI/BanglaConformer
+  notes: The OOD-Speech training data has its own license; check it before redistributing data, not the model.
+bangla:
+  status: native
+  evidence: >-
+    Trained from scratch on the OOD-Speech Bengali dataset (about 1,178 hours, 22,645 speakers). The card reports
+    22.4% WER on held-out validation data and 69.25% WER / 42.13% CER on its test samples, most likely the
+    out-of-distribution OOD-Speech test set (23 hours from 17 domains).
+  url: https://huggingface.co/bengaliAI/BanglaConformer
+runtime:
+  engine: custom
+  convert: onnx
+  streaming: false
+description: |
+  A large Conformer-CTC model (about 121M parameters) from Bengali.AI, trained with NeMo on the OOD-Speech corpus.
+  It uses the BanglaBERT-large tokenizer rather than a custom one. It takes 16 kHz mono audio.
+
+  The high test WER reflects a deliberately hard, out-of-distribution benchmark, so compare it against the other
+  models on your own eval set. There is no RealtimeSTT engine for it (`custom`).
+dataset:
+  format: asr
+  required_fields: [file, text]
+  optional_fields: [region, channel, noise, speaker]
+  example: "clips/0001.wav,আমার অর্ডারটা কবে পৌঁছাবে জানাবেন?"
+  recommended:
+    hours: "10-100"
+    sample_rate: "16000"
+    clip_seconds: "1-30"
+    speakers: "100+ for speaker variety"
+  notes: |
+    Upload as a zip with `metadata.csv` (columns `file,text`) and the audio files. Transcripts in Bangla script,
+    Unicode NFC, with numbers written the way they are spoken (for example "১২৩" as "একশো তেইশ") if the model
+    should output words. Keep phone-call audio (8 kHz upsampled) in the mix if the bot serves calls.
+finetune:
+  methods: [full]
+  frameworks: [nemo]
+  targets:
+    - "Load with `nemo_asr.models.EncDecCTCModelBPE.from_pretrained(\"bengaliAI/BanglaConformer\")` (the card pins NeMo 1.19.0) and fine-tune with NeMo's CTC training script."
+    - "Keep the existing BanglaBERT tokenizer; it already covers Bangla script, so the CTC head is reused."
+    - "Fine-tune the whole model on in-domain audio (e-commerce calls); freeze the lower encoder blocks if data is under 10 h."
+  hyperparams:
+    learning_rate: 1.0e-4
+    max_epochs: 30
+    batch_size: 16
+    spec_augment: true
+  metrics: [wer, cer]
+  pitfalls:
+    - "The card's environment is old (NeMo 1.19.0, torchmetrics 0.9.2); newer NeMo may need config changes to restore the checkpoint."
+    - "CTC without a language model misspells rare words; add an n-gram LM for product names."
+recipe_template:
+  method: {type: full}
+  hparams:
+    learning_rate: 1.0e-4
+    max_epochs: 30
+  export: [onnx]
+sources:
+  - title: BanglaConformer model card
+    url: https://huggingface.co/bengaliAI/BanglaConformer
+  - title: "OOD-Speech: A Large Bengali Speech Recognition Dataset for Out-of-Distribution Benchmarking"
+    url: https://arxiv.org/abs/2305.09688
+verified: 2026-11-23
