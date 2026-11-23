@@ -44,7 +44,11 @@ async def test_init_sources_excludes_runs_without_complete_checkpoint(client, se
 async def test_init_sources_lists_model_versions(client, session, settings):
     a = await make_run(client, session, name="ra")
     b = await make_run(client, session, name="rb")
+    c = await make_run(client, session, name="rc")
+    _ckpt(settings.runs_dir / a, "final", 5)
+    _ckpt(settings.runs_dir / c, "final", 5, complete=False)
     session.add_all([
+        ModelVersion(name="m3", number=1, run_id=c, task="llm-sft", base_model="m"),
         ModelVersion(name="m1", number=2, run_id=a, task="llm-sft", base_model="m", metrics={"wer": 0.1}),
         ModelVersion(name="m2", number=1, run_id=b, task="asr", base_model="m"),
     ])

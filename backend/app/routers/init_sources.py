@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.backend_kit import resolve_checkpoint
 from app.core.contract import RunDir
 
 from ..db import get_session
@@ -30,8 +31,10 @@ async def init_sources(task: str = Query(...), backend: str = Query(...), base_m
         if (spec.get("task"), spec.get("backend"), spec.get("base_model")) != (task, backend, base_model):
             continue
         matching[run.id] = run
+        if len(runs) >= MAX_RUNS:
+            continue
         done = [c for c in list_checkpoints(RunDir(Path(run.run_dir))) if c["complete"]]
-        if done and len(runs) < MAX_RUNS:
+        if done:
             runs.append({"id": run.id, "recipe": recipe, "state": run.state,
                          "finished_at": iso(run.finished_at), "checkpoints": done})
     mvs = (await session.execute(select(ModelVersion).where(ModelVersion.task == task, ModelVersion.base_model == base_model)
@@ -39,5 +42,5 @@ async def init_sources(task: str = Query(...), backend: str = Query(...), base_m
     return {
         "runs": runs,
         "model_versions": [{"ref": f"{m.name}@v{m.number}", "run_id": m.run_id, "metrics": m.metrics}
-                           for m in mvs if m.run_id in matching],
+                           for m in mvs if m.run_id in matching and resolve_checkpoint(RunDir(Path(matching[m.run_id].run_dir)), "final")],
     }
