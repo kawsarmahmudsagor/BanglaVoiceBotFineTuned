@@ -58,6 +58,6 @@ describe("backendNotice", () => {
     expect(backendNotice("fake", ["fake"])).toBeNull();
   });
   it("uses the spec wording", () => {
-    expect(NO_BACKEND_NOTICE).toBe("No installed backend supports this model yet. Pick a backend or add one under backends/.");
+    expect(NO_BACKEND_NOTICE).toBe("No installed backend supports this model yet. Pick a backend or add one under backend/workers/backends/.");
   });
 });

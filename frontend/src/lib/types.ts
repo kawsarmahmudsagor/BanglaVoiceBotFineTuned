@@ -1,4 +1,4 @@
-// Response shapes of the FastAPI routers in api/mlops_api/routers.
+// Response shapes of the FastAPI routers in backend/app/routers.
 
 export type Task = "llm-sft" | "asr" | "tts";
 

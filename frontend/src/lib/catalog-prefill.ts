@@ -1,6 +1,6 @@
 import type { CatalogEntry } from "./types";
 
-export const NO_BACKEND_NOTICE = "No installed backend supports this model yet. Pick a backend or add one under backends/.";
+export const NO_BACKEND_NOTICE = "No installed backend supports this model yet. Pick a backend or add one under backend/workers/backends/.";
 
 /** A new recipe spec pre-filled from a catalog entry. Deep-copied so edits never touch the entry. */
 export function catalogToSpec(entry: CatalogEntry): Record<string, unknown> {

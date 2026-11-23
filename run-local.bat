@@ -20,7 +20,7 @@ where npm >nul 2>&1 || (echo [run-local] npm not found. Install Node.js 20+. & e
 
 rem ---- Local settings (override .env, which holds the VM values) ----
 set "DATA_ROOT=%ROOT%\var"
-set "BACKENDS_ROOT=%ROOT%\backends"
+set "BACKENDS_ROOT=%ROOT%\backend\workers\backends"
 set "RECIPES_DIR=%ROOT%\recipes"
 set "CATALOG_DIR=%ROOT%\catalog"
 set "WEB_ORIGIN=http://localhost:3000"
@@ -49,25 +49,25 @@ if "%MODE%"=="docker" (
 )
 
 echo [run-local] Installing Python dependencies...
-uv sync --frozen
+uv sync --frozen --all-extras --project backend
 if errorlevel 1 exit /b 1
 
 echo [run-local] Migrating the database...
-uv run alembic -c api/alembic.ini upgrade head
+uv run --project backend alembic -c backend\alembic.ini upgrade head
 if errorlevel 1 (echo [run-local] Migration failed. & exit /b 1)
 
-if not exist "web\node_modules" (
+if not exist "frontend\node_modules" (
   echo [run-local] Installing web dependencies...
-  pushd web
+  pushd frontend
   call npm ci
   if errorlevel 1 (popd & exit /b 1)
   popd
 )
 
 echo [run-local] Starting API, worker and web in separate windows...
-start "BanglaVoice API" cmd /k uv run uvicorn mlops_api.app:create_app --factory --host 127.0.0.1 --port 8000
-start "BanglaVoice Worker" cmd /k uv run python -m mlops_worker
-start "BanglaVoice Web" /d "%ROOT%\web" cmd /k npm run dev
+start "BanglaVoice API" cmd /k uv run --project backend uvicorn app.app:create_app --factory --host 127.0.0.1 --port 8000
+start "BanglaVoice Worker" cmd /k uv run --project backend python -m workers
+start "BanglaVoice Web" /d "%ROOT%\frontend" cmd /k npm run dev
 
 echo [run-local] Waiting for the API...
 set /a TRIES=0
