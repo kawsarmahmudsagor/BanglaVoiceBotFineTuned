@@ -53,7 +53,7 @@ uv sync --frozen --all-extras --project backend
 if errorlevel 1 exit /b 1
 
 echo [run-local] Migrating the database...
-uv run --project backend alembic -c backend\alembic.ini upgrade head
+uv run --project backend --extra server alembic -c backend\alembic.ini upgrade head
 if errorlevel 1 (echo [run-local] Migration failed. & exit /b 1)
 
 if not exist "frontend\node_modules" (
@@ -65,8 +65,8 @@ if not exist "frontend\node_modules" (
 )
 
 echo [run-local] Starting API, worker and web in separate windows...
-start "BanglaVoice API" cmd /k uv run --project backend uvicorn app.app:create_app --factory --host 127.0.0.1 --port 8000
-start "BanglaVoice Worker" cmd /k uv run --project backend python -m workers
+start "BanglaVoice API" cmd /k uv run --project backend --extra server uvicorn app.app:create_app --factory --host 127.0.0.1 --port 8000
+start "BanglaVoice Worker" cmd /k uv run --project backend --extra worker python -m workers
 start "BanglaVoice Web" /d "%ROOT%\frontend" cmd /k npm run dev
 
 echo [run-local] Waiting for the API...

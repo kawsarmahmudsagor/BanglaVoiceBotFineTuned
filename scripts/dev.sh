@@ -37,4 +37,4 @@ echo "  ssh -L 3000:localhost:3000 -L 8000:localhost:8000 -L 5000:localhost:5000
 echo "then browse http://localhost:3000"
 echo
 
-exec uv run --project backend python -m workers
+exec uv run --project backend --extra worker python -m workers

@@ -10,7 +10,7 @@ Target: Ubuntu 24.04 with an NVIDIA driver, Docker with Compose, nvidia-containe
 2. Create `DATA_ROOT` and make it writable by uid 1000 (the API container user, normally the first VM user). `dev.sh` creates it if missing and stops with a message if it is not writable.
 3. Run `scripts/check_vm.sh`. It checks the GPU driver, the Docker nvidia runtime, Compose, uv and free disk, and prints `OK` or each failure.
 4. Run `scripts/setup_venvs.sh` to sync the backend venv (`backend/.venv`) and one venv per real backend.
-5. Run `scripts/dev.sh`. It starts the compose stack, waits for `/api/health`, and runs the worker in the foreground (`uv run --project backend python -m workers`). Stop the worker with Ctrl-C; `docker compose down` stops the rest.
+5. Run `scripts/dev.sh`. It starts the compose stack, waits for `/api/health`, and runs the worker in the foreground (`uv run --project backend --extra worker python -m workers`). Stop the worker with Ctrl-C; `docker compose down` stops the rest.
 
 Run `scripts/dev.sh` inside `tmux` (or as a systemd user unit) so the worker survives a dropped SSH connection: `tmux new -s mlops`, run the script, detach with Ctrl-b d, reattach with `tmux attach -t mlops`. If the worker does die mid-run, its next start stops the orphaned backend process group and marks the run failed.
 
