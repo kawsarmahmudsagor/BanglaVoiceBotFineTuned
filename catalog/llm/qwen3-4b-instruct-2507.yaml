@@ -1,0 +1,78 @@
+id: qwen3-4b-instruct-2507
+task: llm-sft
+name: Qwen3-4B-Instruct-2507
+hf_repo: Qwen/Qwen3-4B-Instruct-2507
+params: 4B
+role: primary
+license:
+  id: apache-2.0
+  commercial_ok: true
+  url: https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507/blob/main/LICENSE
+bangla:
+  status: native
+  evidence: The Qwen3 release lists Bengali among its 119 supported languages and dialects.
+  url: https://qwenlm.github.io/blog/qwen3/
+runtime:
+  engine: llama-server
+  convert: gguf
+  streaming: true
+description: |
+  A 4B-parameter (3.6B non-embedding) instruction-tuned model from the Qwen3 family, July 2025 update.
+  It runs in non-thinking mode only, so it answers without `<think>` blocks, which suits a voice bot
+  where latency matters. Native context is 262,144 tokens.
+
+  It is the primary LLM for the e-commerce voice bot: small enough to serve beside STT and TTS on one GPU,
+  Apache-2.0, and Bangla is in its pretraining languages.
+dataset:
+  format: llm-sft
+  required_fields: [messages]
+  optional_fields: [tools, tags]
+  example: >-
+    {"messages": [{"role": "system", "content": "তুমি একটি অনলাইন দোকানের সহকারী।"},
+    {"role": "user", "content": "আমার অর্ডার কবে আসবে? অর্ডার নম্বর ১২৩৪৫।"},
+    {"role": "assistant", "content": "আপনার অর্ডার ১২৩৪৫ আগামীকাল বিকেলের মধ্যে পৌঁছে যাবে।"}]}
+  recommended:
+    conversations: "2k-20k"
+    turns: "1-8"
+    language: "bn (Bangla script), code-mixed allowed"
+  notes: |
+    Normalise Bangla text to Unicode NFC and use one digit style (Bangla or Latin) consistently.
+    Replies are spoken by TTS, so assistant turns must be plain text: no markdown, lists or emoji.
+finetune:
+  methods: [qlora, lora, full]
+  frameworks: [unsloth, transformers]
+  targets:
+    - "LoRA adapters on all attention and MLP projections (`q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, `down_proj`), rank 16-32."
+    - "Compute the loss on assistant turns only; mask system and user tokens."
+    - "Keep the model's own chat template, and serve with the same template after GGUF export."
+    - "Measure tokenizer efficiency on Bangla (tokens per word) before training; it sets the usable context and latency."
+  hyperparams:
+    learning_rate: 2.0e-4
+    epochs: 2
+    max_seq_len: 2048
+    lora_r: 16
+    lora_alpha: 32
+    lora_dropout: 0.05
+    per_device_batch_size: 4
+    grad_accum: 4
+    warmup_ratio: 0.03
+  metrics: [eval_loss, judge_score, refusal_rate]
+  pitfalls:
+    - "Catastrophic forgetting of instruction following when epochs or learning rate are too high; keep 10-20% general instruction data in the mix."
+    - "Chat-template mismatch between training and `llama-server` serving produces broken or looping replies."
+    - "Markdown leaking into replies, which TTS then reads aloud. Filter it out of training data."
+recipe_template:
+  method: {type: qlora}
+  hparams:
+    learning_rate: 2.0e-4
+    epochs: 2
+    max_seq_len: 2048
+    lora_r: 16
+    lora_alpha: 32
+  export: [gguf]
+sources:
+  - title: Qwen3-4B-Instruct-2507 model card
+    url: https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
+  - title: Qwen3 release blog (language list)
+    url: https://qwenlm.github.io/blog/qwen3/
+verified: 2026-11-23
