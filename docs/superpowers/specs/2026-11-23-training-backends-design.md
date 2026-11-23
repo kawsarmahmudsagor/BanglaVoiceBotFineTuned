@@ -437,3 +437,109 @@ Per backend, light:
 VM smoke:
 - each backend trains once from the base model, then once more from the first run's `final`
 - both runs must finish `done`
+
+## 15. Train / valid / test splits per run
+
+Added 2026-11-23 at the user's request. This replaces parent spec §4.4's ingest-time 90/5/5 hash split.
+
+### 15.1 Rule
+
+- If a dataset provides its own splits, a run uses them by default.
+- Otherwise a run splits the dataset 70/20/10 (train/valid/test).
+- Both are defaults. The recipe can change the ratios, or ignore the dataset's splits, like any other hyperparameter.
+
+### 15.2 How an upload declares splits
+
+Two layouts are accepted. Split names are case-insensitive:
+- `train` / `training` → `train`
+- `valid` / `validation` / `val` / `dev` → `val`
+- `test` / `testing` → `test`
+
+**Column layout:**
+- `llm-sft`: a `"split"` field on each `.jsonl` line.
+- `asr` / `tts`: a `split` column in `metadata.csv`.
+- An empty value means "not assigned".
+
+**File layout:**
+- `llm-sft`: a `.zip` containing any of `train.jsonl`, `valid.jsonl` (or `validation.jsonl`, `val.jsonl`, `dev.jsonl`), `test.jsonl`.
+- `asr` / `tts`: the zip has `metadata_train.csv`, `metadata_valid.csv` (aliases as above) and/or `metadata_test.csv` instead of `metadata.csv`. All of them reference files under the same `audio/` or `wavs/` directory.
+- The file name sets the split of every row in it. A file layout row that also has a `split` value is an ingest error.
+
+**Ingest errors (block registration):**
+- an unknown split value, such as `split value 'hold' on line 12: use train, valid or test`
+- both `metadata.csv` and `metadata_<split>.csv` in one zip
+- for `llm-sft`, a `.zip` without any recognised split file
+
+### 15.3 Storage
+
+- The manifest's `split` column holds the dataset's own split (`train`/`val`/`test`), or null when not assigned.
+- `DatasetVersion` gains `split_source`: `"dataset"` when at least one row has a split, else `"none"`.
+- `DatasetVersion` gains `given_splits`: counts per split, plus `unassigned`.
+- Alembic migration `0003` adds both columns. Existing versions get `split_source = "none"`. Their 90/5/5 hash values in the `split` column are ignored from then on.
+- `split_ratios` is no longer written. The column stays for history.
+
+### 15.4 Recipe
+
+`RecipeDatasets.split` holds a `SplitConfig`:
+- `use_dataset_splits: bool = True`
+- `ratios: {train: 0.7, val: 0.2, test: 0.1}`
+
+Validation:
+- each ratio ≥ 0
+- `train` > 0
+- the sum is within 1e-6 of 1
+
+It applies to the train dataset, and to the eval dataset when that dataset is not eval-only. Eval-only datasets still use every row.
+
+### 15.5 Assignment algorithm
+
+`app.core.splits.assign(rows, cfg: SplitConfig) -> list[str]` is pure, deterministic and order-independent.
+
+1. Labels:
+   - With `use_dataset_splits` true, each row's label is its stored `split` (or none).
+   - With it false, every row is unlabeled.
+2. Labelled rows keep their label.
+3. The pool is all rows labelled `train` plus all unlabeled rows.
+4. The targets are `train` plus every split that no row is labelled with.
+5. Pool rows are partitioned among the targets in proportion to their ratios, normalised over the targets.
+   - Row position: `u = int(sha256(sample_id)[:8], 16) / 2**32`.
+   - Targets are taken in the order train, val, test, with cumulative thresholds.
+
+Examples with the default ratios:
+
+| Dataset gives | Result |
+|---|---|
+| nothing | 70/20/10 of all rows |
+| train, valid, test | as given |
+| train + test | test as given; given train split 70:20 into train/val |
+| only test (others unlabeled) | test as given; unlabeled rows split 70:20 into train/val |
+| everything, but `use_dataset_splits: false` | 70/20/10 of all rows |
+
+A split that ends up with 0 rows is allowed only if its ratio is 0. Otherwise the run fails in prepare with `split '<name>' is empty: add data or change datasets.split.ratios`.
+
+### 15.6 Where splits are applied
+
+- `DatasetRef` gains `split: SplitConfig | None`. `build_config` sets it from the recipe. It is `None` for eval-only datasets, which means every row is used.
+- `app.core.prepare.iter_rows(ds, split)` assigns splits with §15.5 before filtering.
+- `prepared_dir` and `ensure_prepared` mix `ds.split` into the spec hash, so different split settings never share a cache entry.
+- `baseline_metrics` includes `ds.split` in its cache key.
+
+### 15.7 UI
+
+- **Dataset version page**: shows "Splits provided by dataset: train n · valid n · test n (unassigned n)" or "No splits in dataset — assigned per run (default 70/20/10)". The sample browser's split filter uses the default `SplitConfig`.
+- **Recipe form**: a "Data splits" group next to the hyperparameters.
+  - When the chosen train dataset has `split_source = "dataset"`, a checked "Use the dataset's splits" toggle with its counts.
+  - Three ratio inputs: train, valid, test, prefilled 70 / 20 / 10 and shown as percentages. They are enabled when the toggle is off or the dataset has no splits.
+  - A live preview of the resulting row counts, and an inline error when the ratios don't sum to 100.
+  - The values are written to `datasets.split` in the YAML.
+- The UI calls the split "valid". The stored and API name stays `val`.
+
+### 15.8 Tests
+
+- `assign`: every row in the §15.5 table, determinism, order independence, `use_dataset_splits: false`, the empty-split error.
+- Ingest: column layout, file layout, aliases, unknown value error, mixed `metadata.csv` and `metadata_<split>.csv` error, `split_source` and `given_splits`.
+- Migration `0003` upgrade and downgrade.
+- `SplitConfig` validation.
+- `iter_rows` with a `SplitConfig`.
+- The cache key differs when only the ratios differ.
+- UI: toggle and ratio inputs, sum validation, YAML round-trip.

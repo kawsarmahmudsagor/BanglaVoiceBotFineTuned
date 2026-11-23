@@ -27,7 +27,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-23-training-backends-design.md` (parent: `docs/superpowers/specs/2026-11-23-bangla-voice-mlops-design.md`)
 
-**Execution order:** Tasks 1–9, then 28–30 (warm start, spec §14), then 10–27. Backend tasks carry **Warm start** lines that implement spec §14.2–14.7 for that backend.
+**Execution order:** Tasks 1–9, then 31–32 (per-run splits, spec §15), then 28–30 (warm start, spec §14), then 10–27. Backend tasks carry **Warm start** lines that implement spec §14.2–14.7 for that backend.
 
 ## Global Constraints
 
@@ -1239,3 +1239,144 @@ def test_migration_0002_upgrade_downgrade(...): ...
   - the prefill sets `init_from`
 
 - [ ] **Step 1: Failing tests. Step 2: FAIL. Step 3: Implement. Step 4: PASS + `npm run typecheck` + `npm run build`** (run from an upper-case `C:\` cwd). **Step 5: Commit** `feat(web): start-from picker, checkpoints tab, parent link`
+
+---
+
+## Part H — Per-run splits (spec §15). Execute after Task 9, before Task 28.
+
+### Task 31: Split declaration at ingest, `SplitConfig`, per-run assignment
+
+**Files:**
+- Create: `backend/app/core/splits.py`:
+  - `class SplitRatios(BaseModel)`: `train: float = 0.7`, `val: float = 0.2`, `test: float = 0.1`, with the spec §15.4 validator
+  - `class SplitConfig(BaseModel)`: `use_dataset_splits: bool = True`, `ratios: SplitRatios = SplitRatios()`
+  - `SPLIT_ALIASES: dict[str, str]` (spec §15.2)
+  - `normalize_split(value: str | None) -> str | None`: raises `ValueError` for unknown values
+  - `assign(rows: list[dict], cfg: SplitConfig) -> list[str]`: spec §15.5
+  - `class EmptySplitError(ValueError)`: message `split '<name>' is empty: add data or change datasets.split.ratios`
+- Modify: `backend/app/core/contract.py`: `DatasetRef.split: SplitConfig | None = None` (import from `app.core.splits`, which is pure)
+- Modify: `backend/app/core/recipes.py`: `RecipeDatasets.split: SplitConfig = SplitConfig()`
+- Modify: `backend/app/core/prepare.py`:
+  - `iter_rows(ds, split)`: when `ds.split` is set, compute `assign` over all rows once (cache per `(manifest, split config)` within the process), then filter. When `ds.split is None`, yield every row for any requested split in `ds.splits` (eval-only behaviour).
+  - `prepared_dir`/`ensure_prepared`: the directory hash is the hash of `{"spec": spec.model_dump(), "split": ds.split.model_dump() if ds.split else None}`. The stored `spec_hash` is that value.
+  - `EmptySplitError` from `assign` becomes a `PrepareError` with the same message.
+- Modify: `backend/app/core/evaluation.py`: `baseline_metrics` key includes `ds.split`.
+- Modify: `backend/app/datasets/validate_llm.py`, `validate_audio.py`, `ingest.py`:
+  - accept the `"split"` field / `split` column (remove `split` from `_RESERVED`)
+  - accept the file layouts of spec §15.2: `llm-sft` now accepts `.jsonl` or `.zip`; audio zips accept `metadata_<split>.csv`
+  - store the normalised split, or null
+  - errors exactly as spec §15.2
+  - stop calling `assign_split`; delete it and its test, replaced by `tests/core/test_splits.py`
+- Modify: `backend/app/datasets/versions.py` and `backend/app/models.py`: `DatasetVersion.split_source: str = "none"`, `given_splits: dict`. Transcript edits keep both.
+- Create: `backend/alembic/versions/0003_dataset_splits.py` (after `0002_run_parent`; if Task 28 has not run yet, chain from `0001` and Task 28 renumbers its migration to chain after this one. Rule: migrations form one linear chain in commit order.)
+- Modify: `backend/app/routers/datasets.py`:
+  - the version detail returns `split_source` and `given_splits`, plus `default_split_counts` (counts under `SplitConfig()`)
+  - the sample listing's `split` filter and the per-row `split` field use `assign(rows, SplitConfig())`
+- Modify: `backend/workers/executor.py` `build_config`: train ref `split=spec.datasets.split`; eval ref `split=None` if eval-only, else `spec.datasets.split`
+- Tests:
+  - `backend/tests/core/test_splits.py`
+  - `backend/tests/core/test_prepare.py` (+ split cases)
+  - `backend/tests/app/datasets/test_ingest.py`, `test_validate_llm.py`, `test_validate_audio.py`
+  - `backend/tests/app/test_datasets_api.py`
+  - `backend/tests/workers/test_executor.py`
+  - the migration test module
+
+**Interfaces:**
+- Produces (Task 32 and every backend task rely on these):
+  - `SplitConfig`, `SplitRatios`, `assign`, `normalize_split`, `EmptySplitError`
+  - `DatasetRef.split`
+  - `RecipeDatasets.split`
+  - dataset version JSON fields `split_source`, `given_splits`, `default_split_counts`
+
+- [ ] **Step 1: Failing tests**
+
+```python
+def rows(labels): return [{"sample_id": f"{i:016x}", "split": l} for i, l in enumerate(labels)]
+
+def test_no_labels_70_20_10():
+    out = assign(rows([None] * 20000), SplitConfig())
+    assert abs(out.count("train") / 20000 - 0.7) < 0.02 and abs(out.count("val") / 20000 - 0.2) < 0.02
+def test_all_given_kept():
+    labels = ["train", "val", "test"] * 10
+    assert assign(rows(labels), SplitConfig()) == labels
+def test_train_and_test_given_carves_val_from_train():
+    labels = ["train"] * 9000 + ["test"] * 1000
+    out = assign(rows(labels), SplitConfig())
+    assert out[9000:] == ["test"] * 1000
+    assert abs(out[:9000].count("val") / 9000 - 0.2 / 0.9) < 0.02 and "test" not in out[:9000]
+def test_only_test_given_rest_split_70_20():
+    labels = ["test"] * 1000 + [None] * 9000
+    out = assign(rows(labels), SplitConfig())
+    assert out[:1000] == ["test"] * 1000
+    assert abs(out[1000:].count("train") / 9000 - 0.7 / 0.9) < 0.02
+def test_ignore_dataset_splits():
+    labels = ["test"] * 10000
+    out = assign(rows(labels), SplitConfig(use_dataset_splits=False))
+    assert abs(out.count("train") / 10000 - 0.7) < 0.02
+def test_deterministic_and_order_independent():
+    r = rows([None] * 500)
+    a = dict(zip([x["sample_id"] for x in r], assign(r, SplitConfig())))
+    rr = list(reversed(r))
+    assert dict(zip([x["sample_id"] for x in rr], assign(rr, SplitConfig()))) == a
+def test_empty_split_error():
+    with pytest.raises(EmptySplitError, match="split 'val' is empty"):
+        assign(rows([None]), SplitConfig())   # one row cannot fill train and val
+def test_zero_ratio_split_may_be_empty():
+    assign(rows([None] * 10), SplitConfig(ratios=SplitRatios(train=0.9, val=0.1, test=0.0)))
+@pytest.mark.parametrize("bad", [dict(train=0.5, val=0.2, test=0.2), dict(train=0, val=0.5, test=0.5), dict(train=1.1, val=-0.1, test=0)])
+def test_ratio_validation(bad):
+    with pytest.raises(ValidationError): SplitRatios(**bad)
+@pytest.mark.parametrize("v,exp", [("Validation", "val"), ("dev", "val"), ("TRAINING", "train"), ("testing", "test"), ("", None), (None, None)])
+def test_normalize_split(v, exp): assert normalize_split(v) == exp
+def test_normalize_split_unknown(): ...   # "hold" -> ValueError
+```
+
+  Ingest tests:
+  - `test_llm_split_field`
+  - `test_llm_zip_file_layout`
+  - `test_llm_zip_without_split_files_errors`
+  - `test_audio_split_column`
+  - `test_audio_metadata_split_files`
+  - `test_audio_mixed_metadata_layouts_errors`
+  - `test_unknown_split_value_errors` (exact message `split value 'hold' on line 2: use train, valid or test`)
+  - `test_split_source_and_given_splits_recorded`
+
+  Prepare tests:
+  - `test_iter_rows_applies_split_config`
+  - `test_prepared_dir_differs_when_only_ratios_differ`
+  - `test_eval_only_ref_yields_all_rows`
+
+  Executor test:
+  - `test_build_config_passes_split_config`
+
+  Migration test:
+  - `test_migration_0003_upgrade_downgrade`
+
+  API test:
+  - `test_version_detail_reports_split_source_and_default_counts`
+
+- [ ] **Step 2: FAIL. Step 3: Implement. Step 4: PASS** (`cd backend && uv run pytest`). **Step 5: Commit** `feat: per-run train/valid/test splits with dataset-provided defaults`
+
+### Task 32: UI — Data splits group, dataset split display
+
+**Files:**
+- Modify: `frontend/src/lib/types.ts`: `SplitConfig`; `DatasetVersion` gains `split_source`, `given_splits`, `default_split_counts`
+- Modify: `frontend/src/lib/recipe-yaml.ts`: round-trip `datasets.split`
+- Create: `frontend/src/lib/splits.ts`:
+  - `previewCounts(given: Record<string, number>, n: number, cfg: SplitConfig): {train: number, val: number, test: number}`. It is an approximation, like the server's proportional rule (spec §15.5), used for the live preview only.
+  - `ratiosValid(r): string | null`: returns the error text `Ratios must add up to 100%`, or `Train must be above 0%`
+- Create: `frontend/src/components/split-fields.tsx` + test:
+  - props: `value: SplitConfig`, `onChange`, `dataset: {split_source, given_splits, n_samples} | null`
+  - shows the "Use the dataset's splits" toggle only when `split_source === "dataset"`, with its counts
+  - percentage inputs train / valid / test (70 / 20 / 10), disabled while the toggle is on
+  - the live preview line `≈ train n · valid n · test n`
+  - the inline error from `ratiosValid`
+- Modify: `frontend/src/components/recipe-editor.tsx`: render `<SplitFields>` in the hyperparameters area, bound to `datasets.split`; block save while `ratiosValid` returns an error
+- Modify: `frontend/src/app/datasets/[name]/v/[n]/page.tsx`: the split summary line per spec §15.7
+- Tests (vitest):
+  - `splits.test.ts`: preview for none-given / partial / all-given, and the validation messages
+  - `split-fields.test.tsx`: toggle hidden without dataset splits, inputs disabled while on, error shown at 60/20/10
+  - `recipe-yaml` round-trips `datasets.split`
+  - the dataset page shows both summary variants
+
+- [ ] **Step 1: Failing tests. Step 2: FAIL. Step 3: Implement. Step 4: PASS + `npm run typecheck` + `npm run build`** (run from an upper-case `C:\` cwd). **Step 5: Commit** `feat(web): data splits fields in recipe form; dataset split summary`
