@@ -2,23 +2,28 @@
 
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { LogView } from "@/components/log-view";
+import { PageHeader, Panel } from "@/components/matra";
 import { MetricCharts } from "@/components/metric-charts";
+import { ErrorNotice, WarningNotice } from "@/components/notice";
 import { PhaseTimeline } from "@/components/phase-timeline";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/status-badge";
+import { Tabs } from "@/components/tabs";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
-  ApiError, cancelRun, getLogs, getMetrics, getRun, promoteRun, resumeRun, runEventsUrl, runExportFileUrl,
+  ApiError, cancelRun, getLogs, getMetrics, getRecipeVersion, getRun, promoteRun, resumeRun, runEventsUrl, runExportFileUrl,
 } from "@/lib/api";
-import { formatBytes, formatDuration, stateColor } from "@/lib/format";
+import { formatBytes, formatDuration } from "@/lib/format";
 import { LOG_LIMIT, appendLog, mergeMetrics, metricsToSeries } from "@/lib/metrics";
+import { runProgress } from "@/lib/run-filters";
 import type { RunDetail, RunMetric, RunState, RunStatus } from "@/lib/types";
-import { cn } from "@/lib/utils";
 
 const TERMINAL: RunState[] = ["done", "failed", "cancelled"];
 const isTerminal = (s: RunState) => TERMINAL.includes(s);
+
+type TabKey = "metrics" | "logs" | "config" | "eval" | "artifacts";
 
 const errText = (e: unknown) => (e instanceof ApiError ? e.detail : e instanceof Error ? e.message : String(e));
 
@@ -37,6 +42,8 @@ function RunDetailView({ id }: { id: string }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const [tab, setTab] = useState<TabKey>("metrics");
+  const [config, setConfig] = useState<{ yaml: string } | { error: string } | null>(null);
 
   const refresh = useCallback(async () => {
     const r = await getRun(id);
@@ -151,130 +158,160 @@ function RunDetailView({ id }: { id: string }) {
 
   const series = useMemo(() => metricsToSeries(metrics), [metrics]);
 
+  // The recipe version this run used, loaded once when the Config tab is first opened.
+  const recipeName = run?.recipe.name;
+  const recipeNumber = run?.recipe.number;
+  useEffect(() => {
+    if (tab !== "config" || config || !recipeName || recipeNumber === undefined) return;
+    getRecipeVersion(recipeName, recipeNumber)
+      .then((v) => setConfig({ yaml: v.yaml }))
+      .catch((e) => setConfig({ error: errText(e) }));
+  }, [tab, config, recipeName, recipeNumber]);
+
   if (!run) {
     return loadError ? (
-      <div role="alert" className="rounded-md border border-red-500/50 bg-red-500/10 px-3 py-2 text-sm">
-        Cannot load run ({loadError})
+      <div className="space-y-4">
+        <PageHeader title={id} />
+        <ErrorNotice>Cannot load run ({loadError})</ErrorNotice>
       </div>
     ) : (
-      <p className="text-sm text-muted-foreground">Loading run...</p>
+      <PageHeader title={<span className="font-mono">{id}</span>}>Loading run…</PageHeader>
     );
   }
 
   const status = run.status;
-  const pct = status?.total_steps ? Math.min(100, (status.step / status.total_steps) * 100) : null;
   const elapsed = run.started_at
     ? formatDuration(((run.finished_at ? Date.parse(run.finished_at) : now) - Date.parse(run.started_at)) / 1000)
     : null;
   const canCancel = !terminal;
   const canResume = run.state === "failed" || run.state === "cancelled";
+  const progress = run.state === "done" ? 1 : terminal ? undefined : runProgress(status);
+  const evalCount = run.eval ? Object.keys(run.eval.metrics).length : 0;
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center gap-3">
-        <h1 className="font-mono text-lg font-semibold">{run.id}</h1>
-        <Badge className={cn(stateColor(run.state))}>{run.state}</Badge>
-        <span className="text-sm text-muted-foreground">attempt {run.attempt}</span>
-        <Badge variant={run.commercial_ok ? "secondary" : "outline"}>
-          {run.commercial_ok ? "commercial OK" : "non-commercial"}
-        </Badge>
-        <span className="text-sm text-muted-foreground">
-          {run.recipe.name} v{run.recipe.number}
-          {elapsed && ` · ${elapsed}`}
-        </span>
-        <div className="ml-auto flex gap-2">
-          {canCancel && (
-            <Button variant="destructive" disabled={busy} onClick={onCancel}>
-              {run.cancel_requested ? "Cancelling..." : "Cancel"}
-            </Button>
-          )}
-          {canResume && (
-            <Button disabled={busy} onClick={onResume}>Resume</Button>
-          )}
-          {run.state === "done" && (
-            <Button disabled={busy} onClick={onPromote}>Promote</Button>
-          )}
+    <div className="space-y-5">
+      <PageHeader
+        title={<span className="font-mono text-[22px]">{run.id}</span>}
+        progress={progress}
+        actions={
+          <>
+            {canCancel && (
+              <Button variant="destructive" size="lg" className="px-3" disabled={busy} onClick={onCancel}>
+                {run.cancel_requested ? "Cancelling…" : "Cancel"}
+              </Button>
+            )}
+            {canResume && <Button size="lg" className="px-3" disabled={busy} onClick={onResume}>Resume</Button>}
+            {run.state === "done" && <Button size="lg" className="px-3" disabled={busy} onClick={onPromote}>Promote to registry</Button>}
+          </>
+        }
+      >
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <StatusBadge state={run.state} />
+          <Link href={`/recipes/${encodeURIComponent(run.recipe.name)}`} className="hover:text-saffron">
+            {run.recipe.name} <span className="font-mono">v{run.recipe.number}</span>
+          </Link>
+          <span>attempt <span className="font-mono">{run.attempt}</span></span>
+          <span className={run.commercial_ok ? "text-status-done" : "text-status-failed"}>
+            {run.commercial_ok ? "commercial OK" : "non-commercial"}
+          </span>
+          {elapsed && <span className="font-mono">{elapsed}</span>}
         </div>
-      </div>
+      </PageHeader>
 
-      {(actionError || loadError) && (
-        <div role="alert" className="rounded-md border border-red-500/50 bg-red-500/10 px-3 py-2 text-sm">
-          {actionError ?? loadError}
-        </div>
-      )}
-      {run.error && (
-        <div role="alert" className="whitespace-pre-wrap rounded-md border border-red-500/50 bg-red-500/10 px-3 py-2 font-mono text-xs">
-          {run.error}
-        </div>
-      )}
-      {run.oom_hint && (
-        <div role="status" className="rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm">
-          {run.oom_hint}
-        </div>
-      )}
+      {(actionError || loadError) && <ErrorNotice>{actionError ?? loadError}</ErrorNotice>}
+      {run.error && <ErrorNotice className="font-mono text-xs whitespace-pre-wrap">{run.error}</ErrorNotice>}
+      {run.oom_hint && <WarningNotice>{run.oom_hint}</WarningNotice>}
 
       <PhaseTimeline phase={status?.phase} state={run.state} />
 
       {status && (
-        <div className="space-y-1">
-          <div className="flex justify-between text-sm">
-            <span>
-              {status.total_steps ? `${status.step} / ${status.total_steps} steps` : `${status.step} steps`}
-              {status.message && <span className="ml-2 text-muted-foreground">{status.message}</span>}
-            </span>
-            {status.eta_s != null && !terminal && <span>ETA {formatDuration(status.eta_s)}</span>}
-          </div>
-          {pct != null && <Progress value={pct} aria-label="Progress" />}
+        <div className="flex flex-wrap justify-between gap-2 text-sm">
+          <span>
+            <span className="font-mono">{status.total_steps ? `${status.step} / ${status.total_steps}` : status.step}</span> steps
+            {status.message && <span className="ml-2 text-muted-foreground">{status.message}</span>}
+          </span>
+          {status.eta_s != null && !terminal && <span>ETA <span className="font-mono">{formatDuration(status.eta_s)}</span></span>}
         </div>
       )}
 
-      <section className="space-y-2">
-        <h2 className="font-semibold">Metrics</h2>
-        <MetricCharts series={series} />
-      </section>
-
-      <section className="space-y-2">
-        <h2 className="font-semibold">Logs</h2>
-        <LogView stdout={logs.stdout} stderr={logs.stderr} />
-      </section>
-
-      {run.eval && (
-        <section className="space-y-2">
-          <h2 className="font-semibold">Eval metrics</h2>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Metric</TableHead>
-                <TableHead>Value</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {Object.entries(run.eval.metrics).map(([k, v]) => (
-                <TableRow key={k}>
-                  <TableCell className="font-mono">{k}</TableCell>
-                  <TableCell>{Number.isInteger(v) ? v : v.toFixed(4)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </section>
-      )}
-
-      {run.exports.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="font-semibold">Exports</h2>
-          <ul className="space-y-1 text-sm">
-            {run.exports.map((x) => (
-              <li key={x.path} className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline">{x.format}</Badge>
-                <a href={runExportFileUrl(run.id, x.path)} download className="font-mono underline">{x.path}</a>
-                <span className="text-muted-foreground">{formatBytes(x.size_bytes)}</span>
-                {x.serve_with && <span className="text-muted-foreground">serve with {x.serve_with}</span>}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      <Tabs<TabKey>
+        label="Run details"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { key: "metrics", label: "Metrics" },
+          { key: "logs", label: "Logs" },
+          { key: "config", label: "Config" },
+          { key: "eval", label: <>Eval {evalCount > 0 && <span className="font-mono text-[12px] text-muted-foreground">{evalCount}</span>}</> },
+          { key: "artifacts", label: <>Artifacts {run.exports.length > 0 && <span className="font-mono text-[12px] text-muted-foreground">{run.exports.length}</span>}</> },
+        ]}
+      >
+        {tab === "metrics" && <MetricCharts series={series} />}
+        {tab === "logs" && <LogView stdout={logs.stdout} stderr={logs.stderr} />}
+        {tab === "config" && (
+          <Panel title={`${run.recipe.name} v${run.recipe.number}`}>
+            {config === null && <p className="text-sm text-muted-foreground">Loading recipe…</p>}
+            {config && "error" in config && <ErrorNotice>Cannot load the recipe version ({config.error})</ErrorNotice>}
+            {config && "yaml" in config && (
+              <pre aria-label="Recipe YAML" className="overflow-auto rounded-md bg-ink p-3 font-mono text-[13px] leading-relaxed">{config.yaml}</pre>
+            )}
+          </Panel>
+        )}
+        {tab === "eval" &&
+          (run.eval ? (
+            <Panel title="Eval metrics">
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Metric</TableHead>
+                    <TableHead>Value</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {Object.entries(run.eval.metrics).map(([k, v]) => (
+                    <TableRow key={k}>
+                      <TableCell className="font-mono">{k}</TableCell>
+                      <TableCell className="font-mono">{Number.isInteger(v) ? v : v.toFixed(4)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Panel>
+          ) : (
+            <p className="text-sm text-muted-foreground">No eval results yet. They appear after the eval phase finishes.</p>
+          ))}
+        {tab === "artifacts" && (
+          <div className="space-y-4">
+            <Panel title="Exports">
+              {run.exports.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No exports yet. They appear after the export phase finishes.</p>
+              ) : (
+                <ul className="space-y-2 text-sm">
+                  {run.exports.map((x) => (
+                    <li key={x.path} className="flex min-w-0 flex-wrap items-center gap-2">
+                      <span className="rounded-md bg-raised px-2 py-0.5 font-mono text-[13px]">{x.format}</span>
+                      <a href={runExportFileUrl(run.id, x.path)} download className="min-w-0 truncate font-mono underline" title={x.path}>{x.path}</a>
+                      <span className="font-mono text-muted-foreground">{formatBytes(x.size_bytes)}</span>
+                      {x.serve_with && <span className="text-muted-foreground">serve with {x.serve_with}</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Panel>
+            <Panel title="Provenance">
+              <dl className="grid gap-3 text-sm sm:grid-cols-2">
+                <div className="min-w-0"><dt className="text-[13px] text-muted-foreground">Run directory</dt><dd className="font-mono text-[13px] break-all">{run.run_dir}</dd></div>
+                <div className="min-w-0"><dt className="text-[13px] text-muted-foreground">Git commit</dt><dd className="font-mono text-[13px] break-all">{run.git_sha ?? "unknown"}</dd></div>
+                <div className="min-w-0"><dt className="text-[13px] text-muted-foreground">Lockfile hash</dt><dd className="font-mono text-[13px] break-all">{run.lock_hash ?? "unknown"}</dd></div>
+                <div className="min-w-0"><dt className="text-[13px] text-muted-foreground">MLflow run</dt><dd className="font-mono text-[13px] break-all">{run.mlflow_run_id ?? "not logged"}</dd></div>
+                {Object.entries(run.dataset_hashes).map(([k, v]) => (
+                  <div key={k} className="min-w-0"><dt className="text-[13px] text-muted-foreground">Dataset {k}</dt><dd className="font-mono text-[13px] break-all">{v}</dd></div>
+                ))}
+              </dl>
+            </Panel>
+          </div>
+        )}
+      </Tabs>
     </div>
   );
 }
