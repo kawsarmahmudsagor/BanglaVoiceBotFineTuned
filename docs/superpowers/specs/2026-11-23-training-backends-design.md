@@ -22,6 +22,7 @@ This sub-project replaces build-order items 2–4 of the parent spec (§13) with
 | `hf` | tts | `indic-parler-tts` | `full` |
 | `nemo` | asr | `indicconformer`, `bangla-conformer`, `nemotron-3-5-asr-streaming` | `full` |
 | `f5` | tts | `indicf5` | `full` |
+| `cosyvoice` | tts | `cosyvoice3` (experimental for Bangla, §16) | `full` |
 
 Also in scope:
 - the shared prepare contract
@@ -354,7 +355,7 @@ Method combinations:
 | `full` | `lora`/`qlora` | load source full weights as the base, add a new adapter |
 | `full` | `full` | load source full weights |
 | `adapter` (MMS) | `adapter` | load base model, load the source `ben` adapter weights |
-| `full` (nemo, f5, hf) | `full` | load source weights |
+| `full` (nemo, f5, hf, cosyvoice) | `full` | load source weights |
 
 Any other combination is rejected at validation.
 
@@ -543,3 +544,48 @@ A split that ends up with 0 rows is allowed only if its ratio is 0. Otherwise th
 - `iter_rows` with a `SplitConfig`.
 - The cache key differs when only the ratios differ.
 - UI: toggle and ratio inputs, sum validation, YAML round-trip.
+
+## 16. CosyVoice 3 backend (experimental for Bangla)
+
+Added 2026-11-23 at the user's request.
+
+### 16.1 Model and status
+
+- Model: Fun-CosyVoice3-0.5B (FunAudioLLM, Apache-2.0, `commercial_ok: true`). Catalog id `cosyvoice3`, backend `cosyvoice`, task `tts`, method `full`.
+- CosyVoice 3 officially covers 9 languages (zh, en, ja, ko, de, es, fr, it, ru), not Bangla. Its LLM tokenizer is byte-level BPE, so Bangla text can be encoded, but whether fine-tuning teaches it a new language is unproven. The catalog entry carries the note `Experimental: Bangla is not a pretrained language; needs many hours of clean single-language TTS data.`
+- The exact Hugging Face repo id, upstream git commit and checkpoint file names are pinned in Task 33 after the VM install check. Spec values here are names, not guarantees.
+
+### 16.2 Dependencies
+
+- CosyVoice is not a pip package. The backend's venv installs the upstream repo pinned to one commit, plus its `third_party/Matcha-TTS`, and puts both on `sys.path` via a `.pth` file written by the scaffold.
+- Torch stays `2.7.1+cu128` (RTX 5090, sm_120). Upstream pins an older torch; the backend overrides it. If the VM install check fails on this, the backend is recorded as skipped (VM Gates rule) and the plan continues.
+- `onnxruntime-gpu` runs the two frozen helper models: the CAM++ speaker embedder and the speech tokenizer.
+
+### 16.3 Prepare (`cosyvoice` family)
+
+Input columns: `file`, `text`, `speaker`. Steps per split:
+1. Audio resampled to 16 kHz for the tokenizer and embedder; `bn_normalize(mode="tts")` text.
+2. Kaldi-style lists: `wav.scp`, `text`, `utt2spk`, `spk2utt`.
+3. Speaker embeddings (utterance and per-speaker mean) with CAM++.
+4. Speech tokens with the CosyVoice 3 speech tokenizer.
+5. Parquet shards plus `data.list`, the format the upstream trainer reads.
+6. One reference clip per speaker (median length, ties by `sample_id`), as for F5 (§4). The picker moves to `app.core.tts_refs.pick_reference` so both backends share it.
+
+Steps 3 and 4 need the GPU and are the slow part. They are cached like every prepare output (§4).
+
+### 16.4 Train
+
+- Components: hparam `components`, default `["llm", "flow"]`. Allowed values: `llm`, `flow`, `hifigan`. The vocoder (`hifigan`) is frozen by default, as in published CosyVoice 3 fine-tunes.
+- Each component trains in turn with the upstream trainer (`cosyvoice/bin/train.py` logic called in-process, single GPU, no DeepSpeed), using the upstream `cosyvoice3.yaml` with learning rate, epochs, batch size (dynamic, `max_frames_in_batch`), grad accumulation and warmup overridden from hparams.
+- Progress, NaN guard and SIGTERM go through `backend_kit` (a hook around the upstream executor's per-step logging). Checkpoints: `checkpoints/<component>-epoch-<n>/`, each marked complete. Resume continues the component that was running.
+- `checkpoints/final/` holds `llm.pt`, `flow.pt`, `hift.pt` (copied base weights when not trained), the model config and tokenizer files, plus `init_meta.json` with format `cosyvoice-pt`.
+
+### 16.5 Eval and export
+
+- Eval: `eval_loss` per trained component (`eval_loss_llm`, `eval_loss_flow`), plus TTS `rtf` over up to 20 sentences synthesized zero-shot (`inference_zero_shot`) with the speaker's reference clip. The baseline uses the untouched base model.
+- Export `cosyvoice-dir`: the `final/` model directory plus `refs/` and `serve_with: "cosyvoice"`.
+
+### 16.6 Warm start
+
+- Init format `cosyvoice-pt`: load `llm.pt`, `flow.pt` and `hift.pt` from the init path in place of the base weights.
+- Allowed pair: `full` → `full` (§14.2 row "full (nemo, f5, hf)" gains `cosyvoice`).

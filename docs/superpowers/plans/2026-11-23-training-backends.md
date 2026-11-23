@@ -27,7 +27,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-23-training-backends-design.md` (parent: `docs/superpowers/specs/2026-11-23-bangla-voice-mlops-design.md`)
 
-**Execution order:** Tasks 1–9, then 31–32 (per-run splits, spec §15), then 28–30 (warm start, spec §14), then 10–27. Backend tasks carry **Warm start** lines that implement spec §14.2–14.7 for that backend.
+**Execution order:** Tasks 1–9, then 31–32 (per-run splits, spec §15), then 28–30 (warm start, spec §14), then 10–25, then 33–35 (CosyVoice 3, spec §16), then 26–27. Backend tasks carry **Warm start** lines that implement spec §14.2–14.7 for that backend.
 
 ## Global Constraints
 
@@ -1036,7 +1036,7 @@ As Task 10:
 **Files:**
 - Create: `backend/workers/backends/f5/mlops_backend/prepare/f5.py`:
   - `extend_vocab(base: list[str], texts: Iterable[str]) -> list[str]`: `base` unchanged, then new characters in first-seen order
-  - `pick_reference(rows) -> dict[speaker, row]`: median `duration_s` per speaker; ties broken by `sample_id`
+  - `pick_reference`: import from `app.core.tts_refs` (Task 34 creates it; if Task 34 has not run, create `app.core.tts_refs.pick_reference` here: median `duration_s` per speaker, ties broken by `sample_id`)
   - `build_f5(base_vocab: list[str]) -> build fn`:
     - `<out>/wavs/<sample_id>.wav` at 24 kHz
     - `<out>/<split>/raw.arrow` via pyarrow, columns `audio_path`, `text`, `duration`; `bn_normalize(mode="tts")` text
@@ -1093,6 +1093,7 @@ def test_build_writes_24k_audio_and_duration_json(tiny_tts_ds, tmp_path): ...
 | conformers | `[nemo]` |
 | parler | `[safetensors]` |
 | indicf5 | `[f5-ckpt]` |
+| cosyvoice3 | `[cosyvoice-dir]` (new catalog entry: tts, Apache-2.0, `commercial_ok: true`, experimental note from spec §16.1) |
 
   Whisper templates use backend `hf` with method `full`, matching their current `method`. Out-of-scope entries keep `backend: null`.
 - Modify: `backend/tests/core/test_repo_catalog.py`: add `test_recipe_templates_validate_against_backend_schemas`. For each entry with `recipe_template.backend` set, load that backend's `capabilities.json` and validate `{base_model: hf_repo, method, hparams, export}` with `jsonschema`. Assert that the export formats are listed and the method is in `methods`.
@@ -1103,7 +1104,7 @@ def test_build_writes_24k_audio_and_duration_json(tiny_tts_ds, tmp_path): ...
 
 **Files:**
 - Create: `scripts/smoke/fixtures/llm.jsonl` (16 Bangla conversations), `scripts/smoke/make_audio_fixtures.py` (generates `asr.zip`/`tts.zip` with 16 sine-tone clips + `metadata.csv` at run time; nothing binary committed)
-- Create: `scripts/smoke_backends.sh [backend...]` (default: all four). For each backend:
+- Create: `scripts/smoke_backends.sh [backend...]` (default: all five; a backend skipped at its VM gate is skipped here too). For each backend:
   1. ingest the matching fixture via `POST /api/datasets/ingest` with provenance `source=smoke, license=internal, consent=true, commercial_ok=false`
   2. poll the ingest
   3. save a recipe from the backend's first model with `hparams.max_steps=20`, `eval.max_samples=4`
@@ -1380,3 +1381,85 @@ def test_normalize_split_unknown(): ...   # "hold" -> ValueError
   - the dataset page shows both summary variants
 
 - [ ] **Step 1: Failing tests. Step 2: FAIL. Step 3: Implement. Step 4: PASS + `npm run typecheck` + `npm run build`** (run from an upper-case `C:\` cwd). **Step 5: Commit** `feat(web): data splits fields in recipe form; dataset split summary`
+
+---
+
+## Part I — `cosyvoice` backend (spec §16). Execute after Task 25, before Task 26.
+
+Registry: `{"<pinned CosyVoice 3 repo id>": ModelInfo("tts", "cosyvoice", False)}`. Task 33 pins the id.
+
+### Task 33: cosyvoice scaffold + VM install check
+
+As Task 10, with these values:
+- name `mlops-backend-cosyvoice`
+- deps:
+  - `bangla-voice-backend[prepare,audio]`, `torch==2.7.1`, `torchaudio==2.7.1`, `onnxruntime-gpu`, `huggingface_hub`
+  - the upstream runtime deps of CosyVoice (`hyperpyyaml`, `conformer`, `diffusers`, `lightning`, `x-transformers`, `transformers`, `librosa`, `pyarrow`, `omegaconf`, `inflect`, `wget`, `openai-whisper`). Use upstream's `requirements.txt` with `torch*`, `deepspeed`, `tensorrt*` and `vllm` removed.
+- upstream code: `scripts/setup_venvs.sh` clones `https://github.com/FunAudioLLM/CosyVoice` with submodules at the commit recorded in `backend/workers/backends/cosyvoice/UPSTREAM_COMMIT` into `backend/workers/backends/cosyvoice/.upstream/` (git-ignored). It writes `cosyvoice_upstream.pth` into the venv's site-packages listing `.upstream` and `.upstream/third_party/Matcha-TTS`.
+- capabilities: `tts` / `full` / export `cosyvoice-dir`
+- hparams:
+  - `components` (array of `llm`/`flow`/`hifigan`, default `["llm","flow"]`, min 1)
+  - `learning_rate` (default 1e-5)
+  - `epochs` (default 10)
+  - `max_frames_in_batch` (default 2000)
+  - `grad_accum` (default 2)
+  - `warmup_steps` (default 2500)
+  - `max_steps`, `seed`, `eval`, `prepare`
+- `mlops_backend.check` additionally prints the upstream commit and `import cosyvoice` success, and loads the model config without weights.
+- Pin decisions, recorded in the task report and `UPSTREAM_COMMIT`:
+  - the upstream commit: the newest commit whose `examples/libritts/cosyvoice3` recipe exists
+  - the HF repo id of Fun-CosyVoice3-0.5B
+  - the checkpoint file names (`llm.pt`, `flow.pt`, `hift.pt`, the speech tokenizer and CAM++ ONNX files)
+
+- [ ] Steps 1–4. **Step 5: Commit** `feat(cosyvoice): backend scaffold`
+- [ ] **Step 6: VM GATE**: `bash scripts/setup_venvs.sh cosyvoice && bash scripts/check_backend.sh cosyvoice`. If torch 2.7.1 cannot run upstream, record the error and skip Part I (VM Gates rule).
+
+### Task 34: `cosyvoice` converter
+
+**Files:**
+- Create: `backend/app/core/tts_refs.py`: `pick_reference(rows: Iterable[dict]) -> dict[str, dict]`, which picks the median `duration_s` clip per speaker, with ties broken by `sample_id`. Pure Python. Task 24 imports this instead of defining its own. If Task 24 has already landed, move its function here and re-export it.
+- Create: `backend/workers/backends/cosyvoice/mlops_backend/prepare/cosyvoice.py`:
+  - `write_kaldi_lists(rows, out: Path) -> None`: writes `wav.scp`, `text`, `utt2spk`, `spk2utt`, sorted by `sample_id`, using `bn_normalize(mode="tts")` text
+  - `build_cosyvoice(model_dir: Path) -> build fn`, with this output per split:
+    - `<out>/wavs/<sample_id>.wav` at 16 kHz
+    - Kaldi lists
+    - `utt2embedding.pt` / `spk2embedding.pt` via the CAM++ ONNX
+    - `utt2speech_token.pt` via the speech-tokenizer ONNX
+    - parquet shards via upstream `tools/make_parquet_list.py` logic, called in-process
+    - `data.list`
+    - `<out>/refs/<speaker>.wav` + `.txt`
+  - `prepare_cosyvoice`: `check_hf_access`, `snapshot_download` the model dir into `HF_HOME`, then `ensure_prepared`. `PrepSpec.params` includes the upstream commit and the model revision.
+- Test:
+  - light: `test_kaldi_lists_sorted_and_normalized`
+  - light: `test_pick_reference_median_per_speaker` (in `backend/tests/core/test_tts_refs.py`)
+  - heavy: `test_build_writes_tokens_embeddings_and_parquet` (tiny 4-clip set on the VM)
+
+- [ ] Steps 1–4. **Step 5: Commit** `feat(cosyvoice): converter (kaldi lists, speech tokens, speaker embeddings, parquet)`
+
+### Task 35: CosyVoice training / eval / export
+
+**Warm start:** init format `cosyvoice-pt`. Load `llm.pt`/`flow.pt`/`hift.pt` from `<init path>` in place of the base weights. Every complete checkpoint gets `write_init_meta(format="cosyvoice-pt")`.
+
+**Files:**
+- Create: `backend/workers/backends/cosyvoice/mlops_backend/train.py`:
+  - `train_component(name, cfg, rd, reporter, stop)`:
+    - builds the upstream model from `cosyvoice3.yaml` (hyperpyyaml) with the hparam overrides
+    - loads the base or init weights
+    - runs the upstream `Executor` epoch loop single-GPU, without DDP or DeepSpeed, through a thin adapter that disables `torch.distributed` calls
+  - Hook the executor's per-step log to call `Reporter.step`, `NanGuard` and `StopFlag`. On stop, save and exit 143.
+  - Save `checkpoints/<component>-epoch-<n>/model.pt`, write init meta, then mark it complete.
+  - Components run in order `llm`, `flow`, `hifigan` (only those listed).
+  - Resume: skip components whose `<component>-final` is complete, and resume the running one from its latest epoch.
+  - Assemble `checkpoints/final/`: trained component weights, plus base weights for untrained ones, plus config and tokenizer files. Then mark it complete.
+- Create: `.../eval.py`:
+  - `eval_loss_<component>` from the upstream cross-validation pass on the val split
+  - `synthesize(text, row)`: `CosyVoice3(model_dir).inference_zero_shot(text, ref_text, ref_wav)`, returning `(audio, sample_rate)`
+  - `run_tts_eval`, with the baseline from the untouched base model
+- Create: `.../export.py`: `cosyvoice-dir` = `final/` copied with `refs/` and `serve.json` `{"serve_with": "cosyvoice"}`.
+- Test:
+  - light: `test_component_order_and_resume_skip` (pure function `plan_components(requested, completed) -> list[str]`)
+  - light: `test_final_dir_fills_untrained_from_base`, using fake small files
+  - heavy: `test_cosyvoice_20_steps_llm_and_synthesize`
+
+- [ ] Steps 1–4. **Step 5: Commit** `feat(cosyvoice): fine-tune (llm/flow), eval and export`
+- [ ] **Step 6: VM GATE**: `bash scripts/test_backend.sh cosyvoice --heavy`
