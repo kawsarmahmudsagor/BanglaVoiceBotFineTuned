@@ -37,6 +37,12 @@ async def _for_run(session: AsyncSession, run_id: str) -> ModelVersion | None:
     return (await session.execute(select(ModelVersion).where(ModelVersion.run_id == run_id))).scalar_one_or_none()
 
 
+async def _next_number(session: AsyncSession, name: str) -> int:
+    top = (await session.execute(select(func.max(ModelVersion.number)).where(ModelVersion.name == name))
+           ).scalar_one()
+    return (top or 0) + 1
+
+
 @router.post("/runs/{run_id}/promote", status_code=201, response_model=None)
 async def promote(run_id: str, session: AsyncSession = Depends(get_session)):
     run = await get_run(session, run_id)
@@ -48,21 +54,28 @@ async def promote(run_id: str, session: AsyncSession = Depends(get_session)):
     recipe, rv = await run_recipe(session, run)
     rd = RunDir(Path(run.run_dir))
     results, manifest = read_eval_results(rd), read_export_manifest(rd)
-    top = (await session.execute(select(func.max(ModelVersion.number)).where(ModelVersion.name == recipe.name))
-           ).scalar_one()
-    m = ModelVersion(
-        name=recipe.name, number=(top or 0) + 1, run_id=run.id, task=rv.spec["task"],
-        base_model=rv.spec["base_model"], metrics=results.metrics if results else {},
-        exports=[a.model_dump(mode="json") for a in manifest.artifacts] if manifest else [],
-        commercial_ok=run.commercial_ok,
-    )
-    session.add(m)
-    try:
-        await session.commit()
-    except IntegrityError:  # concurrent promote of the same run
-        await session.rollback()
-        return JSONResponse(_out(await _for_run(session, run_id)), status_code=200)
-    return _out(m)
+    # copy plain values: a rollback expires ORM instances
+    name, task, base = recipe.name, rv.spec["task"], rv.spec["base_model"]
+    commercial = run.commercial_ok
+    for attempt in (1, 2):
+        m = ModelVersion(
+            name=name, number=await _next_number(session, name), run_id=run_id,
+            task=task, base_model=base,
+            metrics=results.metrics if results else {},
+            exports=[a.model_dump(mode="json") for a in manifest.artifacts] if manifest else [],
+            commercial_ok=commercial,
+        )
+        session.add(m)
+        try:
+            await session.commit()
+            return _out(m)
+        except IntegrityError:
+            await session.rollback()
+            existing = await _for_run(session, run_id)  # concurrent promote of this same run
+            if existing is not None:
+                return JSONResponse(_out(existing), status_code=200)
+            if attempt == 2:  # another run of this recipe took the number twice
+                raise
 
 
 @router.get("/models")

@@ -105,6 +105,7 @@ class Run(Base):
 
 class ModelVersion(Base):
     __tablename__ = "model_version"
+    __table_args__ = (UniqueConstraint("name", "number"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String)
     number: Mapped[int] = mapped_column()

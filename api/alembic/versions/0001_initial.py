@@ -139,6 +139,7 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.ForeignKeyConstraint(['run_id'], ['run.id'], ),
     sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('name', 'number'),
     sa.UniqueConstraint('run_id')
     )
 

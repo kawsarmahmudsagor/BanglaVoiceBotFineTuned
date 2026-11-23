@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
@@ -139,10 +139,16 @@ async def cancel_run(run_id: str, session: AsyncSession = Depends(get_session)):
     if run.state in TERMINAL:
         raise HTTPException(409, f"run is already {run.state}")
     if run.state == "queued":
-        run.state = "cancelled"
-        run.finished_at = dt.datetime.now(dt.timezone.utc)
+        # conditional: the worker may claim the run (queued -> preparing) between our read and write
+        res = await session.execute(
+            update(Run).where(Run.id == run_id, Run.state == "queued")
+            .values(state="cancelled", finished_at=dt.datetime.now(dt.timezone.utc)))
         await session.commit()
-        return {"state": "cancelled"}
+        if res.rowcount:
+            return {"state": "cancelled"}
+        await session.refresh(run)
+        if run.state in TERMINAL:
+            raise HTTPException(409, f"run is already {run.state}")
     run.cancel_requested = True
     await session.commit()
     return JSONResponse({"state": run.state, "cancel_requested": True}, status_code=202)
@@ -156,6 +162,7 @@ async def resume_run(run_id: str, request: Request, session: AsyncSession = Depe
     _check_disk(request)
     run.state, run.resume, run.attempt = "queued", True, run.attempt + 1
     run.cancel_requested, run.error, run.oom = False, None, False
+    run.finished_at = None
     await session.commit()
     return {"state": run.state, "attempt": run.attempt}
 
@@ -182,15 +189,15 @@ async def run_logs(run_id: str, tail: int = 200, session: AsyncSession = Depends
     return {"stdout": _tail(logs / "stdout.log", tail), "stderr": _tail(logs / "stderr.log", tail)}
 
 
-def _new_lines(path: Path, offset: int) -> tuple[list[str], int]:
-    """Complete lines appended after byte `offset`."""
+def _new_lines(path: Path, offset: int, final: bool = False) -> tuple[list[str], int]:
+    """Complete lines appended after byte `offset`; `final` also returns an unterminated last line."""
     try:
         with path.open("rb") as f:
             f.seek(offset)
             data = f.read()
     except FileNotFoundError:
         return [], offset
-    end = data.rfind(b"\n") + 1
+    end = len(data) if final else data.rfind(b"\n") + 1
     lines = data[:end].decode("utf-8", errors="replace").splitlines()
     return lines, offset + end
 
@@ -224,7 +231,7 @@ async def _stream(request: Request, run_id: str) -> AsyncIterator[dict]:
         for m in metrics:
             yield _event("metric", m.model_dump(mode="json"))
         for stream in ("stdout", "stderr"):
-            lines, log_off[stream] = _new_lines(rd.logs_dir / f"{stream}.log", log_off[stream])
+            lines, log_off[stream] = _new_lines(rd.logs_dir / f"{stream}.log", log_off[stream], terminal)
             for line in lines:
                 yield _event("log", {"stream": stream, "line": line})
         if terminal:
@@ -234,8 +241,11 @@ async def _stream(request: Request, run_id: str) -> AsyncIterator[dict]:
 
 
 @router.get("/runs/{run_id}/events")
-async def run_events(run_id: str, request: Request, session: AsyncSession = Depends(get_session)):
-    await get_run(session, run_id)
+async def run_events(run_id: str, request: Request):
+    # own short-lived session: a dependency session would stay open (pinning a pooled connection)
+    # for the whole stream
+    async with request.app.state.sessionmaker() as session:
+        await get_run(session, run_id)
     return EventSourceResponse(_stream(request, run_id))
 
 

@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 from sqlalchemy import select
@@ -105,6 +106,74 @@ async def test_resume_only_from_failed_or_cancelled(client, session, session_fac
     settings.disk_min_gb = 0
     assert (await client.post(f"/api/runs/{rid}/resume")).status_code == 200
     assert (await client.post("/api/runs/r-nope/resume")).status_code == 404
+
+
+async def test_resume_clears_finished_at(client, session, session_factory):
+    import datetime as dt
+    rid = await make_run(client, session)
+    await set_state(session_factory, rid, state="failed", finished_at=dt.datetime.now(dt.timezone.utc))
+    assert (await client.post(f"/api/runs/{rid}/resume")).status_code == 200
+    assert (await client.get(f"/api/runs/{rid}")).json()["finished_at"] is None
+
+
+async def test_cancel_loses_race_to_worker_claim(client, session, session_factory, monkeypatch):
+    rid = await make_run(client, session)
+    orig = runs_router.get_run
+
+    async def stale_get(sess, run_id):
+        run = await orig(sess, run_id)
+        await set_state(session_factory, run_id, state="preparing")  # worker claim lands after our read
+        return run
+
+    monkeypatch.setattr(runs_router, "get_run", stale_get)
+    r = await client.post(f"/api/runs/{rid}/cancel")
+    assert r.status_code == 202
+    monkeypatch.undo()
+    d = (await client.get(f"/api/runs/{rid}")).json()
+    assert d["state"] == "preparing" and d["cancel_requested"] is True and d["finished_at"] is None
+
+
+async def test_events_release_db_session_while_streaming(client, session, session_factory, monkeypatch):
+    monkeypatch.setattr(runs_router, "EVENTS_POLL_S", 0.02)
+    rid = await make_run(client, session)
+    app = client._transport.app
+    real = app.state.sessionmaker
+    open_count = {"n": 0}
+
+    class Tracked:
+        def __init__(self):
+            self.cm = real()
+
+        async def __aenter__(self):
+            open_count["n"] += 1
+            return await self.cm.__aenter__()
+
+        async def __aexit__(self, *a):
+            try:
+                return await self.cm.__aexit__(*a)
+            finally:
+                open_count["n"] -= 1
+
+    app.state.sessionmaker = Tracked
+    task = asyncio.create_task(client.get(f"/api/runs/{rid}/events"))
+    await asyncio.sleep(0.3)
+    assert not task.done()
+    assert open_count["n"] == 0
+    await set_state(session_factory, rid, state="done")
+    r = await asyncio.wait_for(task, 5)
+    assert r.status_code == 200
+
+
+async def test_events_flush_last_line_without_newline(client, session, session_factory, monkeypatch):
+    monkeypatch.setattr(runs_router, "EVENTS_POLL_S", 0.01)
+    rid = await make_run(client, session)
+    rd = RunDir((await client.get(f"/api/runs/{rid}")).json()["run_dir"])
+    rd.ensure()
+    (rd.logs_dir / "stdout.log").write_text("a\nlast", encoding="utf-8")
+    await set_state(session_factory, rid, state="failed")
+    events = parse_sse((await client.get(f"/api/runs/{rid}/events")).text)
+    lines = [d["line"] for e, d in events if e == "log"]
+    assert lines == ["a", "last"] and events[-1][0] == "state"
 
 
 async def test_metrics_with_offset(client, session):

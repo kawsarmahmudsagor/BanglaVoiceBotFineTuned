@@ -1,6 +1,9 @@
+import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from mlops_api.models import ModelVersion
+from mlops_api.routers import models as models_router
 from runs_helpers import finish_files, make_run, set_state
 
 
@@ -67,3 +70,28 @@ async def test_export_download(client, session, session_factory):
     assert r.status_code == 200 and r.content == b"weights"
     assert (await client.get(f"/api/models/{mid}/exports/5")).status_code == 404
     assert (await client.get("/api/models/999/exports/0")).status_code == 404
+
+
+async def test_name_number_is_unique(client, session, session_factory):
+    rid = await done_run(client, session, session_factory)
+    other = await done_run(client, session, session_factory)
+    await client.post(f"/api/runs/{rid}/promote")
+    session.add(ModelVersion(name="r1", number=1, run_id=other, task="llm-sft", base_model="m"))
+    with pytest.raises(IntegrityError):
+        await session.commit()
+
+
+async def test_promote_retries_number_on_conflict(client, session, session_factory, monkeypatch):
+    a = await done_run(client, session, session_factory)
+    b = await done_run(client, session, session_factory)
+    await client.post(f"/api/runs/{a}/promote")
+    orig = models_router._next_number
+    calls = []
+
+    async def stale(sess, name):
+        calls.append(1)
+        return 1 if len(calls) == 1 else await orig(sess, name)
+
+    monkeypatch.setattr(models_router, "_next_number", stale)
+    r = await client.post(f"/api/runs/{b}/promote")
+    assert r.status_code == 201 and r.json()["number"] == 2 and len(calls) == 2
