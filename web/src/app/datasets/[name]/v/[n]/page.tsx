@@ -5,9 +5,10 @@ import { useParams, usePathname, useRouter, useSearchParams } from "next/navigat
 import { Suspense, useEffect, useState } from "react";
 import { ReportView } from "@/components/report-view";
 import { SampleTable } from "@/components/sample-table";
-import { Badge } from "@/components/ui/badge";
+import { X } from "lucide-react";
+import { PageHeader, Panel } from "@/components/matra";
+import { ErrorNotice } from "@/components/notice";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { editTranscript, getSamples, getVersion } from "@/lib/api";
 import type { SamplesPage, VersionDetail } from "@/lib/types";
 
@@ -70,30 +71,22 @@ function VersionView() {
 
   return (
     <div className="space-y-5">
-      <h1 className="text-lg font-semibold">
-        <Link href={`/datasets/${enc}`} className="underline">{name}</Link> v{n}
-        {version && <span className="ml-2 font-mono text-sm text-muted-foreground">{version.task}</span>}
-      </h1>
-      {error && (
-        <div role="alert" className="rounded-md border border-red-500/50 bg-red-500/10 px-3 py-2 text-sm">
-          {error}
-        </div>
-      )}
+      <PageHeader title={<><Link href={`/datasets/${enc}`} className="hover:text-saffron">{name}</Link> <span className="font-mono">v{n}</span></>}>
+        {version && <span className="font-mono">{version.task}</span>}
+      </PageHeader>
+      {error && <ErrorNotice>{error}</ErrorNotice>}
 
       {version && (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <Card size="sm">
-            <CardHeader>
-              <CardTitle>Provenance</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-1 text-sm">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Panel title="Provenance">
+            <div className="space-y-1 text-sm">
               {prov ? (
                 <>
-                  <div className="flex gap-2">
-                    <Badge variant="outline">{prov.license || "no license"}</Badge>
-                    <Badge variant={prov.commercial_ok ? "secondary" : "destructive"}>
+                  <div className="flex flex-wrap gap-2">
+                    <span className="rounded-md border border-border px-2 py-0.5 font-mono text-[13px]">{prov.license || "no license"}</span>
+                    <span className={prov.commercial_ok ? "text-status-done" : "text-status-failed"}>
                       {prov.commercial_ok ? "commercial OK" : "non-commercial"}
-                    </Badge>
+                    </span>
                   </div>
                   <div>Source: {prov.source}</div>
                   <div>Consent: {prov.consent}</div>
@@ -110,40 +103,36 @@ function VersionView() {
                   </Link>
                 </div>
               )}
-            </CardContent>
-          </Card>
-          <Card size="sm">
-            <CardHeader>
-              <CardTitle>Splits</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-1 text-sm">
+            </div>
+          </Panel>
+          <Panel title="Splits">
+            <div className="space-y-1 text-sm">
               {Object.entries(version.splits).map(([k, v]) => (
                 <div key={k}>
-                  <span className="font-mono">{k}</span>: {v}
+                  <span className="font-mono">{k}</span>: <span className="font-mono">{v}</span>
                 </div>
               ))}
-              <div className="text-muted-foreground">{version.n_samples} samples total</div>
-            </CardContent>
-          </Card>
+              <div className="text-muted-foreground"><span className="font-mono">{version.n_samples}</span> samples total</div>
+            </div>
+          </Panel>
         </div>
       )}
 
       {version && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-semibold">Validation report</h2>
+        <Panel title="Validation report">
           <ReportView report={version.report} dataset={name} version={n} />
-        </section>
+        </Panel>
       )}
 
-      <section className="space-y-2">
+      <Panel title="Samples">
+        <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-3 text-sm">
-          <h2 className="font-semibold">Samples</h2>
-          <label className="flex items-center gap-1">
+          <label className="flex items-center gap-2">
             Split
             <select
               value={split}
               onChange={(e) => setQuery({ split: e.target.value || null, page: null })}
-              className="h-8 rounded-md border bg-transparent px-2"
+              className="h-9 rounded-md border border-border bg-card px-2"
             >
               <option value="">all</option>
               {SPLITS.map((s) => (
@@ -152,12 +141,16 @@ function VersionView() {
             </select>
           </label>
           {warning && (
-            <Badge variant="outline">
-              warning: {warning}
-              <button aria-label="Clear warning filter" onClick={() => setQuery({ warning: null, page: null })}>
-                x
+            <span className="inline-flex items-center gap-1 rounded-md border border-saffron/60 px-2 py-0.5 text-[13px]">
+              warning: <span className="font-mono">{warning}</span>
+              <button
+                aria-label="Clear warning filter"
+                className="inline-flex size-6 items-center justify-center rounded hover:bg-raised"
+                onClick={() => setQuery({ warning: null, page: null })}
+              >
+                <X className="size-3.5" aria-hidden />
               </button>
-            </Badge>
+            </span>
           )}
         </div>
         {version && samples && (
@@ -173,14 +166,15 @@ function VersionView() {
           <Button size="sm" variant="outline" disabled={page === 0} onClick={() => setQuery({ page: page > 1 ? String(page - 1) : null })}>
             Previous
           </Button>
-          <span>
+          <span className="font-mono">
             {total === 0 ? "0" : `${page * PAGE + 1}-${Math.min((page + 1) * PAGE, total)}`} of {total}
           </span>
           <Button size="sm" variant="outline" disabled={(page + 1) * PAGE >= total} onClick={() => setQuery({ page: String(page + 1) })}>
             Next
           </Button>
         </div>
-      </section>
+        </div>
+      </Panel>
     </div>
   );
 }

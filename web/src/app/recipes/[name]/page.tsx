@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Badge } from "@/components/ui/badge";
+import { PageHeader, Panel } from "@/components/matra";
+import { ErrorNotice } from "@/components/notice";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cloneRecipe, createRun, getRecipe, getRecipeVersion } from "@/lib/api";
@@ -11,12 +12,6 @@ import { cn } from "@/lib/utils";
 import type { RecipeDetail, RecipeVersionDetail } from "@/lib/types";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
-function Alert({ msg }: { msg: string }) {
-  return (
-    <div role="alert" className="rounded-md border border-red-500/50 bg-red-500/10 px-3 py-2 text-sm">{msg}</div>
-  );
-}
 
 export default function RecipePage() {
   const { name: rawName } = useParams<{ name: string }>();
@@ -80,52 +75,60 @@ export default function RecipePage() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">{name}</h1>
-        <div className="flex gap-2">
-          <Link href={`/recipes/new?from=${encodeURIComponent(name)}`} className={cn(buttonVariants({ variant: "outline" }))}>
-            Edit as new
-          </Link>
-          <Button variant="outline" onClick={() => setCloning((c) => !c)}>Clone</Button>
-          <Button onClick={() => void startRun()} disabled={starting || selected === null}>Start run</Button>
-        </div>
-      </div>
-      {error && <Alert msg={error} />}
+    <div className="space-y-5">
+      <PageHeader
+        title={name}
+        actions={
+          <>
+            <Link href={`/recipes/new?from=${encodeURIComponent(name)}`} className={cn(buttonVariants({ variant: "outline", size: "lg" }), "px-3")}>
+              Edit as new
+            </Link>
+            <Button variant="outline" size="lg" className="px-3" aria-expanded={cloning} onClick={() => setCloning((c) => !c)}>Clone</Button>
+            <Button size="lg" className="px-3" onClick={() => void startRun()} disabled={starting || selected === null}>
+              {starting ? "Starting…" : "Start run"}
+            </Button>
+          </>
+        }
+      />
+      {error && <ErrorNotice>{error}</ErrorNotice>}
       {cloning && (
-        <div className="space-y-2">
-          <div className="flex max-w-md gap-2">
-            <Input aria-label="New recipe name" placeholder="new-recipe-name" value={newName} onChange={(e) => setNewName(e.target.value)} />
+        <Panel title="Clone recipe">
+          <div className="flex max-w-md flex-wrap gap-2">
+            <Input aria-label="New recipe name" placeholder="new-recipe-name" value={newName} onChange={(e) => setNewName(e.target.value)} className="min-w-0 flex-1" />
             <Button onClick={() => void clone()} disabled={!newName.trim()}>Create clone</Button>
           </div>
-          {cloneError && <Alert msg={cloneError} />}
-        </div>
+          {cloneError && <ErrorNotice className="mt-2">{cloneError}</ErrorNotice>}
+        </Panel>
       )}
-      <div className="grid gap-4 md:grid-cols-[12rem_1fr]">
-        <ul aria-label="Versions" className="space-y-1">
-          {recipe?.versions
-            .slice()
-            .sort((a, b) => b.number - a.number)
-            .map((v) => (
-              <li key={v.number}>
-                <button
-                  type="button"
-                  aria-current={selected === v.number ? "true" : undefined}
-                  onClick={() => setSelected(v.number)}
-                  className={cn(
-                    "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted",
-                    selected === v.number && "bg-muted font-medium",
-                  )}
-                >
-                  <span>v{v.number}</span>
-                  {v.frozen && <Badge variant="secondary">frozen</Badge>}
-                </button>
-              </li>
-            ))}
-        </ul>
-        <pre aria-label="Recipe YAML" className="overflow-auto rounded-md bg-muted p-3 font-mono text-xs">
-          {version?.yaml ?? ""}
-        </pre>
+      <div className="grid gap-4 md:grid-cols-[12rem_minmax(0,1fr)]">
+        <Panel title="Versions">
+          <ul aria-label="Versions" className="space-y-1">
+            {recipe?.versions
+              .slice()
+              .sort((a, b) => b.number - a.number)
+              .map((v) => (
+                <li key={v.number}>
+                  <button
+                    type="button"
+                    aria-current={selected === v.number ? "true" : undefined}
+                    onClick={() => setSelected(v.number)}
+                    className={cn(
+                      "flex h-9 w-full items-center justify-between rounded-md px-2 text-left text-sm hover:bg-raised",
+                      selected === v.number && "bg-raised font-medium",
+                    )}
+                  >
+                    <span className="font-mono">v{v.number}</span>
+                    {v.frozen && <span className="text-[13px] text-muted-foreground">frozen</span>}
+                  </button>
+                </li>
+              ))}
+          </ul>
+        </Panel>
+        <Panel title={selected ? `v${selected} YAML` : "YAML"}>
+          <pre aria-label="Recipe YAML" className="overflow-auto rounded-md bg-ink p-3 font-mono text-[13px] leading-relaxed">
+            {version?.yaml ?? ""}
+          </pre>
+        </Panel>
       </div>
     </div>
   );

@@ -1,0 +1,68 @@
+id: piper-vits
+task: tts
+name: Piper VITS (medium checkpoint)
+hf_repo: rhasspy/piper-checkpoints
+params: 15M-30M
+role: comparison
+license:
+  id: gpl-3.0
+  commercial_ok: false
+  url: https://github.com/OHF-Voice/piper1-gpl
+  notes: |
+    The piper1-gpl training code is GPL-3.0. A voice's license follows the dataset of the checkpoint you start from;
+    check that checkpoint's model card before shipping a fine-tune. Marked not cleared until a commercially usable base is chosen.
+bangla:
+  status: none
+  evidence: No Bengali Piper voice found. espeak-ng, Piper's phonemiser, does have a Bengali voice.
+  url: https://github.com/OHF-Voice/piper1-gpl/blob/main/docs/TRAINING.md
+runtime:
+  engine: PiperEngine
+  convert: onnx
+  streaming: true
+description: |
+  Piper is a fast VITS-based TTS that runs on CPU and exports to ONNX. Fine-tuning a medium-quality checkpoint (22,050 Hz)
+  on a new voice is well documented and works with little data, because VITS learns quickly once the phonemes are right.
+dataset:
+  format: tts
+  required_fields: [file, text, speaker]
+  optional_fields: [style]
+  example: "clips/0001.wav,আপনার অর্ডারটি আগামীকাল বিকেলের মধ্যে পৌঁছে যাবে।,speaker_01"
+  recommended:
+    hours: "5-20"
+    speakers: "1"
+    sample_rate: "22050"
+    clip_seconds: "2-15"
+  notes: |
+    Studio-quality, single-microphone recordings with no music or background noise. Transcripts must match the audio
+    exactly, in Bangla script, Unicode NFC, with numbers, dates and prices written out as spoken. Record only voices
+    whose owners gave written consent for cloning and commercial use.
+finetune:
+  methods: [full]
+  frameworks: [piper-train, pytorch-lightning]
+  targets:
+    - "Run `python3 -m piper.train fit` with `--data.espeak_voice` set to espeak-ng's Bengali voice (check the name with `espeak-ng --voices`) and `--ckpt_path` set to a medium checkpoint."
+    - "Use `--model.warmstart_ckpt` instead of `--ckpt_path` to copy weights but start a fresh schedule."
+    - "Metadata is `file|text` with a `|` delimiter; the platform converts from its upload format."
+    - "Export the result to ONNX for RealtimeTTS's `PiperEngine`."
+  hyperparams:
+    sample_rate: 22050
+    batch_size: 32
+    max_epochs: 2000
+  metrics: [mos, cer_via_asr, rtf]
+  pitfalls:
+    - "Only medium checkpoints work without changing other settings."
+    - "`--ckpt_path` restores the checkpoint's hyperparameters, overriding your `--model.*` flags."
+    - "espeak-ng's Bengali rules are basic; check pronunciation of conjuncts and English loanwords early."
+recipe_template:
+  method: {type: full}
+  hparams:
+    sample_rate: 22050
+    batch_size: 32
+    max_epochs: 2000
+  export: [onnx]
+sources:
+  - title: piper1-gpl training guide
+    url: https://github.com/OHF-Voice/piper1-gpl/blob/main/docs/TRAINING.md
+  - title: Piper checkpoints
+    url: https://huggingface.co/rhasspy/piper-checkpoints
+verified: 2026-11-23

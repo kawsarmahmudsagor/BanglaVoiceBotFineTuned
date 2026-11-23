@@ -1,0 +1,60 @@
+id: xtts-v2
+task: tts
+name: XTTS v2
+hf_repo: coqui/XTTS-v2
+params: 467M
+role: benchmark
+license:
+  id: coqui-public-model-license
+  commercial_ok: false
+  url: https://coqui.ai/cpml
+  notes: The Coqui Public Model License is non-commercial, and Coqui has shut down, so no commercial license can be bought.
+bangla:
+  status: related
+  evidence: Supports 17 languages including Hindi, but not Bengali.
+  url: https://huggingface.co/coqui/XTTS-v2
+runtime:
+  engine: CoquiEngine
+  streaming: true
+description: |
+  Coqui's zero-shot voice-cloning model (24 kHz). The BnTTS paper built Bangla on it, but needed about 3,850 hours of
+  continued pretraining. Listed only as a quality benchmark.
+dataset:
+  format: tts
+  required_fields: [file, text, speaker]
+  optional_fields: [style]
+  example: "clips/0001.wav,আপনার অর্ডারটি আগামীকাল বিকেলের মধ্যে পৌঁছে যাবে।,speaker_01"
+  recommended:
+    hours: "100-500"
+    speakers: "10+"
+    sample_rate: "24000"
+    clip_seconds: "2-15"
+  notes: |
+    Studio-quality, single-microphone recordings with no music or background noise. Transcripts must match the audio
+    exactly, in Bangla script, Unicode NFC, with numbers, dates and prices written out as spoken. Record only voices
+    whose owners gave written consent for cloning and commercial use.
+finetune:
+  methods: [full]
+  frameworks: [coqui-tts]
+  targets:
+    - "Fine-tune the GPT part with the Coqui TTS XTTS recipe; add Bengali to the tokenizer's language list."
+  hyperparams:
+    learning_rate: 5.0e-6
+    epochs: 10
+    batch_size: 4
+  metrics: [mos, cer_via_asr, speaker_similarity, rtf]
+  pitfalls:
+    - "Non-commercial license: a fine-tune cannot ship."
+    - "A new language needs thousands of hours to reach BnTTS quality."
+recipe_template:
+  method: {type: full}
+  hparams:
+    learning_rate: 5.0e-6
+    epochs: 10
+  export: []
+sources:
+  - title: XTTS-v2 model card
+    url: https://huggingface.co/coqui/XTTS-v2
+  - title: BnTTS paper
+    url: https://arxiv.org/html/2502.05729v1
+verified: 2026-11-23

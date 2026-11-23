@@ -20,3 +20,10 @@ export function keyMetrics(metrics: Record<string, number>, max = 3): [string, n
 export function formatMetric(v: number): string {
   return String(Number(v.toPrecision(4)));
 }
+
+/** A registry lane: the champion first, then the newest versions. */
+export function laneOrder(models: ModelVersion[]): ModelVersion[] {
+  return [...models].sort(
+    (a, b) => Number(b.champion) - Number(a.champion) || (b.created_at ?? "").localeCompare(a.created_at ?? ""),
+  );
+}

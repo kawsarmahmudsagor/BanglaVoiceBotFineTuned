@@ -3,6 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import * as tus from "tus-js-client";
+import { ErrorNotice } from "@/components/notice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
@@ -18,12 +19,18 @@ const ACCEPT: Record<Task, string> = { "llm-sft": ".jsonl", asr: ".zip", tts: ".
 const TASKS: Task[] = ["llm-sft", "asr", "tts"];
 
 const field = "space-y-1 text-sm";
-const label = "block font-medium";
+const label = "block text-[13px] text-muted-foreground";
 
-export function UploadForm() {
+export interface UploadStatus {
+  busy: boolean;
+  phase: "idle" | "uploading" | "ingesting" | "done";
+  progress: number | null;
+}
+
+export function UploadForm({ defaultTask, onStatus }: { defaultTask?: Task; onStatus?: (s: UploadStatus) => void } = {}) {
   const router = useRouter();
   const params = useSearchParams();
-  const initialTask = params.get("task");
+  const initialTask = defaultTask ?? params.get("task");
   const [task, setTask] = useState<Task>(TASKS.includes(initialTask as Task) ? (initialTask as Task) : "llm-sft");
   const [name, setName] = useState(params.get("name") ?? "");
   const [evalOnly, setEvalOnly] = useState(false);
@@ -40,6 +47,8 @@ export function UploadForm() {
   const upload = useRef<tus.Upload | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const alive = useRef(true);
+  const report = useRef(onStatus);
+  report.current = onStatus;
 
   useEffect(() => {
     alive.current = true;
@@ -65,6 +74,7 @@ export function UploadForm() {
         if (outcome === "continue") return;
         if (timer.current) clearInterval(timer.current);
         if (outcome === "done" && st.version) {
+          report.current?.({ busy: false, phase: "done", progress: 100 });
           router.push(`/datasets/${encodeURIComponent(st.dataset)}/v/${st.version.number}`);
         } else if (outcome === "failed") {
           setPhase("idle");
@@ -129,13 +139,13 @@ export function UploadForm() {
 
   const busy = phase !== "idle";
 
+  useEffect(() => {
+    report.current?.({ busy, phase, progress });
+  }, [busy, phase, progress]);
+
   return (
     <form onSubmit={submit} className="max-w-2xl space-y-4">
-      {error && (
-        <div role="alert" className="whitespace-pre-wrap rounded-md border border-red-500/50 bg-red-500/10 px-3 py-2 text-sm">
-          {error}
-        </div>
-      )}
+      {error && <ErrorNotice className="whitespace-pre-wrap">{error}</ErrorNotice>}
 
       <div className={field}>
         <label htmlFor="task" className={label}>Task</label>
@@ -147,7 +157,7 @@ export function UploadForm() {
             setTask(e.target.value as Task);
             setFile(null);
           }}
-          className="h-8 rounded-md border bg-transparent px-2"
+          className="h-9 w-full rounded-md border border-border bg-card px-2"
         >
           {TASKS.map((t) => (
             <option key={t} value={t}>{t}</option>
@@ -166,21 +176,22 @@ export function UploadForm() {
           accept={ACCEPT[task]}
           disabled={busy}
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          className="block w-full text-sm file:mr-3 file:h-9 file:rounded-md file:border file:border-border file:bg-raised file:px-3 file:text-sm file:text-foreground"
         />
       </div>
 
       <div className={field}>
         <label htmlFor="name" className={label}>Dataset name</label>
         <Input id="name" value={name} disabled={busy} onChange={(e) => setName(e.target.value)} aria-invalid={!!nameError} />
-        {nameError && <p className="text-xs text-red-700 dark:text-red-300">{nameError}</p>}
+        {nameError && <p className="text-[13px] text-status-failed">{nameError}</p>}
       </div>
 
       <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={evalOnly} disabled={busy} onChange={(e) => setEvalOnly(e.target.checked)} />
+        <input type="checkbox" className="size-4 accent-[var(--saffron)]" checked={evalOnly} disabled={busy} onChange={(e) => setEvalOnly(e.target.checked)} />
         Eval only (never used for training)
       </label>
 
-      <fieldset className="space-y-3 rounded-md border p-3">
+      <fieldset className="space-y-3 rounded-md border border-border p-3">
         <legend className="px-1 text-sm font-semibold">Provenance</legend>
         <div className={field}>
           <label htmlFor="source" className={label}>Source</label>
@@ -195,7 +206,7 @@ export function UploadForm() {
           <Input id="consent" value={consent} disabled={busy} onChange={(e) => setConsent(e.target.value)} />
         </div>
         <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={commercialOk} disabled={busy} onChange={(e) => setCommercialOk(e.target.checked)} />
+          <input type="checkbox" className="size-4 accent-[var(--saffron)]" checked={commercialOk} disabled={busy} onChange={(e) => setCommercialOk(e.target.checked)} />
           Commercial use allowed
         </label>
         <div className={field}>
@@ -207,7 +218,7 @@ export function UploadForm() {
       {phase === "uploading" && progress !== null && (
         <div className="space-y-1 text-sm">
           <Progress value={progress} aria-label="Upload progress" />
-          <div className="text-muted-foreground">Uploading {progress.toFixed(0)}%</div>
+          <div className="text-muted-foreground">Uploading <span className="font-mono">{progress.toFixed(0)}%</span>. You can close this panel; the upload continues.</div>
         </div>
       )}
       {phase === "ingesting" && (
@@ -216,7 +227,7 @@ export function UploadForm() {
         </div>
       )}
 
-      <Button type="submit" disabled={!ready || busy}>
+      <Button type="submit" size="lg" className="px-4" disabled={!ready || busy}>
         Upload and ingest
       </Button>
 

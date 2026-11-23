@@ -1,17 +1,21 @@
 "use client";
 
 import Link from "next/link";
+import { Upload } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import { buttonVariants } from "@/components/ui/button";
+import { PageHeader, Panel } from "@/components/matra";
+import { EmptyState, ErrorNotice } from "@/components/notice";
+import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useUploadDrawer } from "@/components/upload-drawer";
 import { listDatasets } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { sectionForTask } from "@/lib/catalog";
 import type { DatasetListItem } from "@/lib/types";
 
 export default function DatasetsPage() {
   const [items, setItems] = useState<DatasetListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { openUpload } = useUploadDrawer();
 
   useEffect(() => {
     let active = true;
@@ -24,49 +28,58 @@ export default function DatasetsPage() {
   }, []);
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Datasets</h1>
-        <Link href="/datasets/new" className={cn(buttonVariants())}>
-          Upload dataset
-        </Link>
-      </div>
-      {error && (
-        <div role="alert" className="rounded-md border border-red-500/50 bg-red-500/10 px-3 py-2 text-sm">
-          Cannot load datasets ({error})
-        </div>
-      )}
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead>Task</TableHead>
-            <TableHead>Latest</TableHead>
-            <TableHead>Samples</TableHead>
-            <TableHead>Commercial</TableHead>
-            <TableHead>Flags</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {items?.length === 0 && (
-            <TableRow>
-              <TableCell colSpan={6} className="text-muted-foreground">No datasets yet</TableCell>
-            </TableRow>
-          )}
-          {items?.map((d) => (
-            <TableRow key={d.id}>
-              <TableCell>
-                <Link href={`/datasets/${encodeURIComponent(d.name)}`} className="underline">{d.name}</Link>
-              </TableCell>
-              <TableCell className="font-mono">{d.task}</TableCell>
-              <TableCell>{d.latest ? `v${d.latest.number}` : ""}</TableCell>
-              <TableCell>{d.latest?.n_samples ?? ""}</TableCell>
-              <TableCell>{d.latest ? (d.latest.commercial_ok ? "OK" : "No") : ""}</TableCell>
-              <TableCell>{d.eval_only && <Badge variant="outline">eval only</Badge>}</TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+    <div className="space-y-5">
+      <PageHeader
+        title="Datasets"
+        actions={
+          <Button size="lg" className="gap-2 px-3" onClick={() => openUpload()}>
+            <Upload className="size-4" aria-hidden />
+            Upload dataset
+          </Button>
+        }
+      >
+        Versioned training and eval data. Each upload is validated and becomes a new immutable version.
+      </PageHeader>
+      {error && <ErrorNotice>Cannot load datasets ({error})</ErrorNotice>}
+      <Panel>
+        {items?.length === 0 ? (
+          <EmptyState>
+            No datasets yet. Check a model&apos;s training-data format in the{" "}
+            <Link href="/catalog" className="text-saffron underline">catalog</Link>, then upload.
+          </EmptyState>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Name</TableHead>
+                <TableHead>Task</TableHead>
+                <TableHead>Latest</TableHead>
+                <TableHead>Samples</TableHead>
+                <TableHead>License</TableHead>
+                <TableHead>Use</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items?.map((d) => (
+                <TableRow key={d.id}>
+                  <TableCell className="max-w-64">
+                    <Link href={`/datasets/${encodeURIComponent(d.name)}`} className="block truncate font-medium hover:text-saffron" title={d.name}>{d.name}</Link>
+                  </TableCell>
+                  <TableCell>
+                    {sectionForTask(d.task).label} <span className="font-mono text-[13px] text-muted-foreground">{d.task}</span>
+                  </TableCell>
+                  <TableCell className="font-mono">{d.latest ? `v${d.latest.number}` : ""}</TableCell>
+                  <TableCell className="font-mono">{d.latest?.n_samples ?? ""}</TableCell>
+                  <TableCell className={d.latest ? (d.latest.commercial_ok ? "text-status-done" : "text-status-failed") : ""}>
+                    {d.latest ? (d.latest.commercial_ok ? "commercial OK" : "non-commercial") : ""}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{d.eval_only ? "Eval only" : "Train and eval"}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </Panel>
     </div>
   );
 }

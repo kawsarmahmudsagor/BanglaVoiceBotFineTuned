@@ -2,44 +2,64 @@
 
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
+import { PageHeader } from "@/components/matra";
+import { ErrorNotice } from "@/components/notice";
 import { RecipeEditor } from "@/components/recipe-editor";
-import { getRecipe, getRecipeVersion } from "@/lib/api";
+import { getCatalogEntry, getRecipe, getRecipeVersion, listBackends } from "@/lib/api";
+import { backendNotice, catalogToSpec } from "@/lib/catalog-prefill";
+
+type Spec = Record<string, unknown>;
+
+const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 function NewRecipe() {
-  const from = useSearchParams().get("from");
-  const [initial, setInitial] = useState<Record<string, unknown> | undefined>();
-  const [ready, setReady] = useState(!from);
+  const params = useSearchParams();
+  const from = params.get("from");
+  const catalog = params.get("catalog");
+  const [initial, setInitial] = useState<Spec | undefined>();
+  const [notice, setNotice] = useState<string | null>(null);
+  const [title, setTitle] = useState("New recipe");
+  const [ready, setReady] = useState(!from && !catalog);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!from) return;
+    if (!from && !catalog) return;
     let active = true;
-    getRecipe(from)
-      .then((r) => getRecipeVersion(from, Math.max(...r.versions.map((v) => v.number))))
-      .then((v) => {
+    const load = async () => {
+      if (catalog) {
+        const entry = await getCatalogEntry(catalog);
+        const spec = catalogToSpec(entry);
+        const backends = (await listBackends()) as { name?: unknown }[];
+        const installed = backends.map((b) => String(b.name ?? ""));
+        return { spec, title: `New recipe (from catalog: ${entry.name})`, notice: backendNotice(String(spec.backend), installed) };
+      }
+      const r = await getRecipe(from!);
+      const v = await getRecipeVersion(from!, Math.max(...r.versions.map((x) => x.number)));
+      return { spec: { ...v.spec, name: "" }, title: `New recipe (from ${from})`, notice: null };
+    };
+    load()
+      .then((r) => {
         if (!active) return;
-        setInitial({ ...v.spec, name: "" });
+        setInitial(r.spec);
+        setTitle(r.title);
+        setNotice(r.notice);
         setReady(true);
       })
       .catch((e) => {
         if (!active) return;
-        setError(e instanceof Error ? e.message : String(e));
+        setError(errMsg(e));
         setReady(true);
       });
     return () => {
       active = false;
     };
-  }, [from]);
+  }, [from, catalog]);
 
   return (
     <div className="space-y-4">
-      <h1 className="text-lg font-semibold">New recipe{from ? ` (from ${from})` : ""}</h1>
-      {error && (
-        <div role="alert" className="rounded-md border border-red-500/50 bg-red-500/10 px-3 py-2 text-sm">
-          Cannot preload {from} ({error})
-        </div>
-      )}
-      {ready && <RecipeEditor initial={initial} />}
+      <PageHeader title={title} />
+      {error && <ErrorNotice>Cannot preload {catalog ?? from} ({error})</ErrorNotice>}
+      {ready && <RecipeEditor initial={initial} notice={notice} />}
     </div>
   );
 }

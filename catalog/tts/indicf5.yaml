@@ -1,0 +1,71 @@
+id: indicf5
+task: tts
+name: IndicF5
+hf_repo: ai4bharat/IndicF5
+params: 400M
+role: primary
+license:
+  id: mit
+  commercial_ok: true
+  url: https://huggingface.co/ai4bharat/IndicF5
+  notes: Gated on Hugging Face. The terms require explicit permission from any speaker whose voice you clone.
+bangla:
+  status: native
+  evidence: The card lists Bengali among the 11 Indian languages IndicF5 supports.
+  url: https://huggingface.co/ai4bharat/IndicF5
+runtime:
+  engine: custom
+  streaming: false
+description: |
+  AI4Bharat's F5-TTS (flow matching) model for 11 Indian languages, outputting 24 kHz audio. It clones a voice from a
+  short reference clip plus its transcript, and gives the most natural Bangla of the open models.
+
+  There is no RealtimeTTS engine for it, and it does not stream: it generates whole sentences, so the voice stack
+  must synthesise sentence by sentence.
+dataset:
+  format: tts
+  required_fields: [file, text, speaker]
+  optional_fields: [style]
+  example: "clips/0001.wav,আপনার অর্ডারটি আগামীকাল বিকেলের মধ্যে পৌঁছে যাবে।,speaker_01"
+  recommended:
+    hours: "1-10"
+    speakers: "1-5"
+    sample_rate: "24000"
+    clip_seconds: "2-15"
+  notes: |
+    Studio-quality, single-microphone recordings with no music or background noise. Transcripts must match the audio
+    exactly, in Bangla script, Unicode NFC, with numbers, dates and prices written out as spoken. Record only voices
+    whose owners gave written consent for cloning and commercial use.
+finetune:
+  methods: [full]
+  frameworks: [f5-tts]
+  targets:
+    - "Fine-tune with the upstream F5-TTS training code (`f5-tts_finetune-cli` or the Gradio fine-tune app) from the IndicF5 checkpoint; the IndicF5 repo has inference code only."
+    - "Prepare pairs of audio and exact transcript; keep the IndicF5 vocabulary so Bengali characters map to the same ids."
+    - "At inference, pass a reference clip and its transcript from the target speaker."
+  hyperparams:
+    learning_rate: 1.0e-5
+    epochs: 50
+    batch_size_per_gpu: 3200
+    batch_size_type: frame
+    warmup_updates: 1000
+  metrics: [mos, cer_via_asr, speaker_similarity, rtf]
+  pitfalls:
+    - "A vocabulary that differs from the checkpoint's breaks the text embedding; extend, never replace it."
+    - "Reference clips with noise or a wrong transcript produce mumbling or skipped words."
+    - "No streaming: first-audio latency equals one sentence's synthesis time."
+recipe_template:
+  method: {type: full}
+  hparams:
+    learning_rate: 1.0e-5
+    epochs: 50
+    warmup_updates: 1000
+  export: []
+sources:
+  - title: IndicF5 model card
+    url: https://huggingface.co/ai4bharat/IndicF5
+  - title: IndicF5 repository
+    url: https://github.com/ai4bharat/IndicF5
+  - title: F5-TTS training and fine-tuning
+    url: https://github.com/SWivid/F5-TTS
+verified: 2026-11-23

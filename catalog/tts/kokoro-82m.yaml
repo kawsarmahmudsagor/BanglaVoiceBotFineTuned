@@ -1,0 +1,64 @@
+id: kokoro-82m
+task: tts
+name: Kokoro-82M
+hf_repo: hexgrad/Kokoro-82M
+params: 82M
+role: comparison
+license:
+  id: apache-2.0
+  commercial_ok: true
+  url: https://huggingface.co/hexgrad/Kokoro-82M
+bangla:
+  status: related
+  evidence: >-
+    Eight languages and 54 voices, including Hindi, but no Bengali. Its G2P (misaki) has no Bengali support.
+  url: https://huggingface.co/hexgrad/Kokoro-82M
+runtime:
+  engine: KokoroEngine
+  streaming: true
+description: |
+  A very small StyleTTS2-based model (82M parameters, 24 kHz) that is fast enough for CPU. It works on phonemes, so a
+  new language needs a grapheme-to-phoneme step first. There is no official training code; community recipes exist,
+  with Indic precedents (a Kannada fine-tune on about 11 hours).
+dataset:
+  format: tts
+  required_fields: [file, text, speaker]
+  optional_fields: [style]
+  example: "clips/0001.wav,আপনার অর্ডারটি আগামীকাল বিকেলের মধ্যে পৌঁছে যাবে।,speaker_01"
+  recommended:
+    hours: "20-50"
+    speakers: "1"
+    sample_rate: "24000"
+    clip_seconds: "2-15"
+  notes: |
+    Studio-quality, single-microphone recordings with no music or background noise. Transcripts must match the audio
+    exactly, in Bangla script, Unicode NFC, with numbers, dates and prices written out as spoken. Record only voices
+    whose owners gave written consent for cloning and commercial use.
+finetune:
+  methods: [full]
+  frameworks: [styletts2]
+  targets:
+    - "Add a Bangla G2P (espeak-ng `bn` or a dedicated Bangla phonemiser) that emits phonemes in Kokoro's symbol set."
+    - "Fine-tune with a community StyleTTS2-based Kokoro trainer from the released weights; train a new voice-style vector for the speaker."
+  hyperparams:
+    learning_rate: 1.0e-4
+    epochs: 50
+    batch_size: 8
+  metrics: [mos, cer_via_asr, speaker_similarity, rtf]
+  pitfalls:
+    - "Phonemes outside Kokoro's symbol set are dropped silently; map every Bangla phoneme first."
+    - "At 82M parameters, adding a language can degrade the existing ones."
+recipe_template:
+  method: {type: full}
+  hparams:
+    learning_rate: 1.0e-4
+    epochs: 50
+  export: [onnx]
+sources:
+  - title: Kokoro-82M model card
+    url: https://huggingface.co/hexgrad/Kokoro-82M
+  - title: Kokoro fine-tuning discussion
+    url: https://huggingface.co/hexgrad/Kokoro-82M/discussions/10
+  - title: Kokoro Kannada fine-tune
+    url: https://huggingface.co/Sammy-Mohan/Kokoro-82M-Kannada
+verified: 2026-11-23

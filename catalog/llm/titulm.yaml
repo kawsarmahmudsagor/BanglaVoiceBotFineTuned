@@ -1,0 +1,85 @@
+id: titulm
+task: llm-sft
+name: TituLM Llama 3.2 3B v2.0
+hf_repo: hishab/titulm-llama-3.2-3b-v2.0
+derived_from: meta-llama/Llama-3.2-3B
+params: 3B
+role: comparison
+license:
+  id: llama3.2
+  commercial_ok: true
+  url: https://huggingface.co/meta-llama/Llama-3.2-3B/blob/main/LICENSE.txt
+  notes: |
+    Llama 3.2 Community License: commercial use is allowed, with "Built with Llama" attribution, the Acceptable Use Policy,
+    and a separate license needed above 700 million monthly active users.
+bangla:
+  status: native
+  evidence: >-
+    Continually pretrained by Hishab on about 37B tokens from a 268 GB curated Bangla corpus, with 42k Bangla tokens added
+    to the tokenizer (vocabulary 170K). The card notes it underperforms Llama 3.2 3B on English benchmarks.
+  url: https://huggingface.co/hishab/titulm-llama-3.2-3b-v2.0
+runtime:
+  engine: llama-server
+  convert: gguf
+  streaming: true
+description: |
+  A Bangla-first model from Hishab's TituLM family, built on Llama 3.2 3B with an extended Bangla tokenizer, so Bangla
+  text costs far fewer tokens than in the base Llama. Context length is 4096 tokens.
+
+  This entry is the pretrained v2.0 checkpoint. Hishab also publishes instruct variants
+  (`hishab/titulm-llama-3.2-3b-v2.0-Instruct-v1.0`); start from that one if you want less SFT data.
+dataset:
+  format: llm-sft
+  required_fields: [messages]
+  optional_fields: [tools, tags]
+  example: >-
+    {"messages": [{"role": "system", "content": "তুমি একটি অনলাইন দোকানের সহকারী।"},
+    {"role": "user", "content": "আমার অর্ডার কবে আসবে? অর্ডার নম্বর ১২৩৪৫।"},
+    {"role": "assistant", "content": "আপনার অর্ডার ১২৩৪৫ আগামীকাল বিকেলের মধ্যে পৌঁছে যাবে।"}]}
+  recommended:
+    conversations: "2k-20k"
+    turns: "1-8"
+    language: "bn (Bangla script), code-mixed allowed"
+  notes: |
+    Normalise Bangla text to Unicode NFC and use one digit style (Bangla or Latin) consistently.
+    Replies are spoken by TTS, so assistant turns must be plain text: no markdown, lists or emoji.
+finetune:
+  methods: [lora, qlora, full]
+  frameworks: [unsloth, transformers]
+  targets:
+    - "LoRA adapters on all attention and MLP projections (`q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, `down_proj`), rank 16-32."
+    - "Compute the loss on assistant turns only; mask system and user tokens."
+    - "Keep the model's own chat template, and serve with the same template after GGUF export."
+    - "Measure tokenizer efficiency on Bangla (tokens per word) before training; it sets the usable context and latency."
+  hyperparams:
+    learning_rate: 2.0e-4
+    epochs: 2
+    max_seq_len: 2048
+    lora_r: 16
+    lora_alpha: 32
+    lora_dropout: 0.05
+    per_device_batch_size: 4
+    grad_accum: 4
+    warmup_ratio: 0.03
+  metrics: [eval_loss, judge_score, refusal_rate]
+  pitfalls:
+    - "Catastrophic forgetting of instruction following when epochs or learning rate are too high; keep 10-20% general instruction data in the mix."
+    - "Chat-template mismatch between training and `llama-server` serving produces broken or looping replies."
+    - "Markdown leaking into replies, which TTS then reads aloud. Filter it out of training data."
+recipe_template:
+  method: {type: qlora}
+  hparams:
+    learning_rate: 2.0e-4
+    epochs: 2
+    max_seq_len: 2048
+    lora_r: 16
+    lora_alpha: 32
+  export: [gguf]
+sources:
+  - title: TituLM Llama 3.2 3B v2.0 model card
+    url: https://huggingface.co/hishab/titulm-llama-3.2-3b-v2.0
+  - title: Hishab models on Hugging Face
+    url: https://huggingface.co/hishab
+  - title: "TituLLMs: A Family of Bangla LLMs with Comprehensive Benchmarking"
+    url: https://arxiv.org/abs/2502.11187
+verified: 2026-11-23

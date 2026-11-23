@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatMetric, groupByTask, keyMetrics } from "./models";
+import { formatMetric, groupByTask, keyMetrics, laneOrder } from "./models";
 import type { ModelVersion } from "./types";
 
 const mv = (id: number, task: ModelVersion["task"], name = "m", number = 1): ModelVersion => ({
@@ -31,5 +31,18 @@ describe("formatMetric", () => {
     expect(formatMetric(0.123456)).toBe("0.1235");
     expect(formatMetric(12.5)).toBe("12.5");
     expect(formatMetric(3)).toBe("3");
+  });
+});
+
+describe("laneOrder", () => {
+  it("puts the champion first, then newest first", () => {
+    const at = (id: number, created_at: string, champion = false): ModelVersion => ({ ...mv(id, "asr"), created_at, champion });
+    const out = laneOrder([at(1, "2026-11-01T00:00:00Z"), at(2, "2026-11-03T00:00:00Z"), at(3, "2026-11-02T00:00:00Z", true)]);
+    expect(out.map((m) => m.id)).toEqual([3, 2, 1]);
+  });
+  it("does not mutate its input", () => {
+    const input = [mv(1, "asr"), mv(2, "asr")];
+    laneOrder(input);
+    expect(input.map((m) => m.id)).toEqual([1, 2]);
   });
 });

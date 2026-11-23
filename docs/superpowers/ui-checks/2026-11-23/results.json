@@ -1,0 +1,618 @@
+[
+  {
+    "page": "overview",
+    "url": "/",
+    "theme": "dark",
+    "viewport": "1440",
+    "file": "overview-dark-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "catalog",
+    "url": "/catalog",
+    "theme": "dark",
+    "viewport": "1440",
+    "file": "catalog-dark-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "catalog-detail",
+    "url": "/catalog/whisper-large-v3-turbo-bn",
+    "theme": "dark",
+    "viewport": "1440",
+    "file": "catalog-detail-dark-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "datasets",
+    "url": "/datasets",
+    "theme": "dark",
+    "viewport": "1440",
+    "file": "datasets-dark-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "dataset-version",
+    "url": "/datasets/bn-ecommerce-chat/v/1",
+    "theme": "dark",
+    "viewport": "1440",
+    "file": "dataset-version-dark-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "recipe-from-catalog",
+    "url": "/recipes/new?catalog=qwen3-4b-instruct-2507",
+    "theme": "dark",
+    "viewport": "1440",
+    "file": "recipe-from-catalog-dark-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "runs",
+    "url": "/runs",
+    "theme": "dark",
+    "viewport": "1440",
+    "file": "runs-dark-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "run",
+    "url": "/runs/r-8b856411",
+    "theme": "dark",
+    "viewport": "1440",
+    "file": "run-dark-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "compare",
+    "url": "/runs/compare?ids=r-8b856411,r-3b19c700",
+    "theme": "dark",
+    "viewport": "1440",
+    "file": "compare-dark-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "registry",
+    "url": "/registry",
+    "theme": "dark",
+    "viewport": "1440",
+    "file": "registry-dark-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "focus-and-palette",
+    "theme": "dark",
+    "viewport": "1440",
+    "focus": [
+      {
+        "tag": "A",
+        "outline": "solid 2px",
+        "ring": false
+      },
+      {
+        "tag": "A",
+        "outline": "solid 2px",
+        "ring": false
+      },
+      {
+        "tag": "A",
+        "outline": "solid 2px",
+        "ring": false
+      },
+      {
+        "tag": "A",
+        "outline": "solid 2px",
+        "ring": false
+      },
+      {
+        "tag": "A",
+        "outline": "solid 2px",
+        "ring": false
+      },
+      {
+        "tag": "A",
+        "outline": "solid 2px",
+        "ring": false
+      },
+      {
+        "tag": "A",
+        "outline": "solid 2px",
+        "ring": false
+      },
+      {
+        "tag": "A",
+        "outline": "solid 2px",
+        "ring": false
+      }
+    ],
+    "paletteFocused": true
+  },
+  {
+    "page": "overview",
+    "url": "/",
+    "theme": "dark",
+    "viewport": "375",
+    "file": "overview-dark-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "catalog",
+    "url": "/catalog",
+    "theme": "dark",
+    "viewport": "375",
+    "file": "catalog-dark-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "catalog-detail",
+    "url": "/catalog/whisper-large-v3-turbo-bn",
+    "theme": "dark",
+    "viewport": "375",
+    "file": "catalog-detail-dark-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "datasets",
+    "url": "/datasets",
+    "theme": "dark",
+    "viewport": "375",
+    "file": "datasets-dark-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "dataset-version",
+    "url": "/datasets/bn-ecommerce-chat/v/1",
+    "theme": "dark",
+    "viewport": "375",
+    "file": "dataset-version-dark-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "recipe-from-catalog",
+    "url": "/recipes/new?catalog=qwen3-4b-instruct-2507",
+    "theme": "dark",
+    "viewport": "375",
+    "file": "recipe-from-catalog-dark-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "runs",
+    "url": "/runs",
+    "theme": "dark",
+    "viewport": "375",
+    "file": "runs-dark-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "run",
+    "url": "/runs/r-8b856411",
+    "theme": "dark",
+    "viewport": "375",
+    "file": "run-dark-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "compare",
+    "url": "/runs/compare?ids=r-8b856411,r-3b19c700",
+    "theme": "dark",
+    "viewport": "375",
+    "file": "compare-dark-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "registry",
+    "url": "/registry",
+    "theme": "dark",
+    "viewport": "375",
+    "file": "registry-dark-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": true,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "overview",
+    "url": "/",
+    "theme": "light",
+    "viewport": "1440",
+    "file": "overview-light-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "catalog",
+    "url": "/catalog",
+    "theme": "light",
+    "viewport": "1440",
+    "file": "catalog-light-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "catalog-detail",
+    "url": "/catalog/whisper-large-v3-turbo-bn",
+    "theme": "light",
+    "viewport": "1440",
+    "file": "catalog-detail-light-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "datasets",
+    "url": "/datasets",
+    "theme": "light",
+    "viewport": "1440",
+    "file": "datasets-light-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "dataset-version",
+    "url": "/datasets/bn-ecommerce-chat/v/1",
+    "theme": "light",
+    "viewport": "1440",
+    "file": "dataset-version-light-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "recipe-from-catalog",
+    "url": "/recipes/new?catalog=qwen3-4b-instruct-2507",
+    "theme": "light",
+    "viewport": "1440",
+    "file": "recipe-from-catalog-light-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "runs",
+    "url": "/runs",
+    "theme": "light",
+    "viewport": "1440",
+    "file": "runs-light-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "run",
+    "url": "/runs/r-8b856411",
+    "theme": "light",
+    "viewport": "1440",
+    "file": "run-light-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "compare",
+    "url": "/runs/compare?ids=r-8b856411,r-3b19c700",
+    "theme": "light",
+    "viewport": "1440",
+    "file": "compare-light-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "registry",
+    "url": "/registry",
+    "theme": "light",
+    "viewport": "1440",
+    "file": "registry-light-1440.png",
+    "scrollWidth": 1440,
+    "clientWidth": 1440,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "focus-and-palette",
+    "theme": "light",
+    "viewport": "1440",
+    "focus": [
+      {
+        "tag": "A",
+        "outline": "solid 2px",
+        "ring": false
+      },
+      {
+        "tag": "A",
+        "outline": "solid 2px",
+        "ring": false
+      },
+      {
+        "tag": "A",
+        "outline": "solid 2px",
+        "ring": false
+      },
+      {
+        "tag": "A",
+        "outline": "solid 2px",
+        "ring": false
+      },
+      {
+        "tag": "A",
+        "outline": "solid 2px",
+        "ring": false
+      },
+      {
+        "tag": "A",
+        "outline": "solid 2px",
+        "ring": false
+      },
+      {
+        "tag": "A",
+        "outline": "solid 2px",
+        "ring": false
+      },
+      {
+        "tag": "A",
+        "outline": "solid 2px",
+        "ring": false
+      }
+    ],
+    "paletteFocused": true
+  },
+  {
+    "page": "overview",
+    "url": "/",
+    "theme": "light",
+    "viewport": "375",
+    "file": "overview-light-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "catalog",
+    "url": "/catalog",
+    "theme": "light",
+    "viewport": "375",
+    "file": "catalog-light-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "catalog-detail",
+    "url": "/catalog/whisper-large-v3-turbo-bn",
+    "theme": "light",
+    "viewport": "375",
+    "file": "catalog-detail-light-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "datasets",
+    "url": "/datasets",
+    "theme": "light",
+    "viewport": "375",
+    "file": "datasets-light-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "dataset-version",
+    "url": "/datasets/bn-ecommerce-chat/v/1",
+    "theme": "light",
+    "viewport": "375",
+    "file": "dataset-version-light-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "recipe-from-catalog",
+    "url": "/recipes/new?catalog=qwen3-4b-instruct-2507",
+    "theme": "light",
+    "viewport": "375",
+    "file": "recipe-from-catalog-light-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "runs",
+    "url": "/runs",
+    "theme": "light",
+    "viewport": "375",
+    "file": "runs-light-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "run",
+    "url": "/runs/r-8b856411",
+    "theme": "light",
+    "viewport": "375",
+    "file": "run-light-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "compare",
+    "url": "/runs/compare?ids=r-8b856411,r-3b19c700",
+    "theme": "light",
+    "viewport": "375",
+    "file": "compare-light-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  },
+  {
+    "page": "registry",
+    "url": "/registry",
+    "theme": "light",
+    "viewport": "375",
+    "file": "registry-light-375.png",
+    "scrollWidth": 375,
+    "clientWidth": 375,
+    "unnamed": [],
+    "dark": false,
+    "anims": 0,
+    "errors": []
+  }
+]

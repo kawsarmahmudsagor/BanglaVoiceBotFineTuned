@@ -1,0 +1,70 @@
+id: whisper-large-v3-turbo
+task: asr
+name: Whisper large-v3-turbo
+hf_repo: openai/whisper-large-v3-turbo
+params: 809M
+role: comparison
+license:
+  id: mit
+  commercial_ok: true
+  url: https://huggingface.co/openai/whisper-large-v3-turbo
+bangla:
+  status: native
+  evidence: >-
+    Bengali is one of Whisper's languages, but zero-shot quality is poor: normalised WER 78.8% on Common Voice Bengali
+    as measured by mozilla-ai before their fine-tune.
+  url: https://huggingface.co/mozilla-ai/whisper-large-v3-turbo-bn
+runtime:
+  engine: faster_whisper
+  convert: ct2
+  streaming: false
+description: |
+  OpenAI's pruned Whisper large-v3 with 4 decoder layers: close to large-v3 quality at several times the speed.
+  It is the upstream of the Bangla fine-tune. Fine-tune from here only to reproduce or beat that fine-tune
+  with your own data; otherwise start from `whisper-large-v3-turbo-bn`.
+dataset:
+  format: asr
+  required_fields: [file, text]
+  optional_fields: [region, channel, noise, speaker]
+  example: "clips/0001.wav,আমার অর্ডারটা কবে পৌঁছাবে জানাবেন?"
+  recommended:
+    hours: "100-500"
+    sample_rate: "16000"
+    clip_seconds: "1-30"
+    speakers: "100+ for speaker variety"
+  notes: |
+    Upload as a zip with `metadata.csv` (columns `file,text`) and the audio files. Transcripts in Bangla script,
+    Unicode NFC, with numbers written the way they are spoken (for example "১২৩" as "একশো তেইশ") if the model
+    should output words. Keep phone-call audio (8 kHz upsampled) in the mix if the bot serves calls.
+finetune:
+  methods: [full, lora]
+  frameworks: [transformers, unsloth]
+  targets:
+    - "Full fine-tune of the decoder plus the top encoder layers; Bengali already has a language token (`<|bn|>`)."
+    - "Whisper's byte-level BPE covers Bengali script, so no tokenizer change is needed, but Bengali costs many tokens per word."
+    - "Export to CTranslate2 for RealtimeSTT's `faster_whisper` engine."
+  hyperparams:
+    learning_rate: 1.0e-5
+    warmup_steps: 500
+    max_steps: 10000
+    per_device_batch_size: 16
+    grad_accum: 2
+    fp16: true
+  metrics: [wer, cer]
+  pitfalls:
+    - "Starting from 79% WER needs far more data than continuing from the Bengali fine-tune."
+    - "Hallucination on silence; add non-speech clips and keep VAD on."
+recipe_template:
+  method: {type: full}
+  hparams:
+    learning_rate: 1.0e-5
+    warmup_steps: 500
+    max_steps: 10000
+    language: bn
+  export: [ct2]
+sources:
+  - title: openai/whisper-large-v3-turbo model card
+    url: https://huggingface.co/openai/whisper-large-v3-turbo
+  - title: Baseline WER in mozilla-ai/whisper-large-v3-turbo-bn
+    url: https://huggingface.co/mozilla-ai/whisper-large-v3-turbo-bn
+verified: 2026-11-23

@@ -64,6 +64,7 @@ async def test_list_runs_reports_the_runs_own_recipe_version_and_backend(client,
     (item,) = [i for i in (await client.get("/api/runs")).json() if i["id"] == rid]
     assert item["recipe_number"] == 1
     assert item["backend"] == "fake"
+    assert item["task"] == "llm-sft"
 
 
 async def test_detail_404_and_oom_hint(client, session, session_factory):

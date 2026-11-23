@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Badge } from "@/components/ui/badge";
+import { PageHeader, Panel } from "@/components/matra";
+import { EmptyState, ErrorNotice } from "@/components/notice";
 import { buttonVariants } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { listRecipes } from "@/lib/api";
@@ -24,51 +25,58 @@ export default function RecipesPage() {
   }, []);
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Recipes</h1>
-        <Link href="/recipes/new" className={cn(buttonVariants())}>New recipe</Link>
-      </div>
-      {error && (
-        <div role="alert" className="rounded-md border border-red-500/50 bg-red-500/10 px-3 py-2 text-sm">
-          Cannot load recipes ({error})
-        </div>
-      )}
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead>Latest</TableHead>
-            <TableHead>Task</TableHead>
-            <TableHead>Backend</TableHead>
-            <TableHead>Base model</TableHead>
-            <TableHead>Updated</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {items?.length === 0 && (
-            <TableRow>
-              <TableCell colSpan={6} className="text-muted-foreground">No recipes yet</TableCell>
-            </TableRow>
-          )}
-          {items?.map((r) => (
-            <TableRow key={r.name}>
-              <TableCell>
-                <Link href={`/recipes/${encodeURIComponent(r.name)}`} className="underline">{r.name}</Link>
-              </TableCell>
-              <TableCell>
-                v{r.latest.number} {r.latest.frozen && <Badge variant="secondary">frozen</Badge>}
-              </TableCell>
-              <TableCell className="font-mono">{r.latest.task}</TableCell>
-              <TableCell>{r.latest.backend}</TableCell>
-              <TableCell>{r.latest.base_model}</TableCell>
-              <TableCell className="text-muted-foreground">
-                {r.latest.updated_at ? new Date(r.latest.updated_at).toLocaleString() : ""}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+    <div className="space-y-5">
+      <PageHeader
+        title="Recipes"
+        actions={
+          <>
+            <Link href="/catalog" className={cn(buttonVariants({ variant: "outline", size: "lg" }), "px-3")}>Start from catalog</Link>
+            <Link href="/recipes/new" className={cn(buttonVariants({ size: "lg" }), "px-3")}>New recipe</Link>
+          </>
+        }
+      >
+        A recipe pins the base model, dataset versions, method and hyperparameters for a training run.
+      </PageHeader>
+      {error && <ErrorNotice>Cannot load recipes ({error})</ErrorNotice>}
+      <Panel>
+        {items?.length === 0 ? (
+          <EmptyState>
+            No recipes yet. <Link href="/catalog" className="text-saffron underline">Pick a model in the catalog</Link> to start one.
+          </EmptyState>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Name</TableHead>
+                <TableHead>Latest</TableHead>
+                <TableHead>Task</TableHead>
+                <TableHead>Backend</TableHead>
+                <TableHead>Base model</TableHead>
+                <TableHead>Updated</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items?.map((r) => (
+                <TableRow key={r.name}>
+                  <TableCell className="max-w-56">
+                    <Link href={`/recipes/${encodeURIComponent(r.name)}`} className="block truncate font-medium hover:text-saffron" title={r.name}>{r.name}</Link>
+                  </TableCell>
+                  <TableCell>
+                    <span className="font-mono">v{r.latest.number}</span>
+                    {r.latest.frozen && <span className="ml-2 text-[13px] text-muted-foreground">frozen</span>}
+                  </TableCell>
+                  <TableCell className="font-mono">{r.latest.task}</TableCell>
+                  <TableCell className="font-mono">{r.latest.backend}</TableCell>
+                  <TableCell className="max-w-64 truncate font-mono text-[13px]" title={r.latest.base_model}>{r.latest.base_model}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {r.latest.updated_at ? new Date(r.latest.updated_at).toLocaleString() : ""}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </Panel>
     </div>
   );
 }

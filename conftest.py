@@ -25,6 +25,7 @@ def settings(tmp_path, monkeypatch) -> Settings:
         data_root=data_root,
         backends_root=REPO / "backends",
         recipes_dir=tmp_path / "recipes",
+        catalog_dir=tmp_path / "catalog",
     )
 
 

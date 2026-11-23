@@ -1,0 +1,67 @@
+id: omnilingual-asr
+task: asr
+name: Omnilingual ASR CTC 1B
+hf_repo: facebook/omniASR-CTC-1B
+params: 1B
+role: comparison
+license:
+  id: apache-2.0
+  commercial_ok: true
+  url: https://github.com/facebookresearch/omnilingual-asr
+  notes: Code and models are Apache-2.0; the released training corpus is CC-BY-4.0.
+bangla:
+  status: native
+  evidence: "`ben_Beng` is in the model's language list (also Assamese, Chittagonian and Manipuri in Bengali script)."
+  url: https://github.com/facebookresearch/omnilingual-asr/blob/main/src/omnilingual_asr/models/wav2vec2_llama/lang_ids.py
+runtime:
+  engine: omnilingual_asr
+  streaming: false
+description: |
+  Meta's 1,600+-language ASR family. Sizes are CTC 300M, 1B, 3B and 7B, plus LLM-decoder variants. This entry
+  lists CTC 1B: it fits the VM GPU beside the other models and is fast; try the 3B or LLM variants if accuracy matters more.
+
+  Inference accepts clips under 40 seconds. RealtimeSTT's `omnilingual_asr` engine needs Linux or WSL and Python 3.11.
+dataset:
+  format: asr
+  required_fields: [file, text]
+  optional_fields: [region, channel, noise, speaker]
+  example: "clips/0001.wav,আমার অর্ডারটা কবে পৌঁছাবে জানাবেন?"
+  recommended:
+    hours: "10-100"
+    sample_rate: "16000"
+    clip_seconds: "1-30"
+    speakers: "100+ for speaker variety"
+  notes: |
+    Upload as a zip with `metadata.csv` (columns `file,text`) and the audio files. Transcripts in Bangla script,
+    Unicode NFC, with numbers written the way they are spoken (for example "১২৩" as "একশো তেইশ") if the model
+    should output words. Keep phone-call audio (8 kHz upsampled) in the mix if the bot serves calls.
+finetune:
+  methods: [full]
+  frameworks: [fairseq2]
+  targets:
+    - "Use the repo's fairseq2 recipe: `python -m workflows.recipes.wav2vec2.asr $OUTPUT_DIR --config-file workflows/recipes/wav2vec2/asr/configs/ctc-finetune.yaml`."
+    - "Prepare data with the repo's `workflows/dataprep` guide; train with language id `ben_Beng`."
+    - "Fine-tune the whole model at a low learning rate; the CTC vocabulary already covers Bengali characters."
+  hyperparams:
+    learning_rate: 1.0e-5
+    num_steps: 5000
+    max_audio_len: 960000
+  metrics: [wer, cer]
+  pitfalls:
+    - "Meta's presets assume many GPUs (32 for 300M, 64 for 1B); on one GPU, lower the batch size and raise gradient accumulation."
+    - "Clips over 40 seconds fail at inference; segment long audio."
+recipe_template:
+  method: {type: full}
+  hparams:
+    learning_rate: 1.0e-5
+    num_steps: 5000
+    lang: ben_Beng
+  export: []
+sources:
+  - title: omniASR-CTC-1B model card
+    url: https://huggingface.co/facebook/omniASR-CTC-1B
+  - title: omnilingual-asr repository and model table
+    url: https://github.com/facebookresearch/omnilingual-asr
+  - title: Fine-tuning recipe README
+    url: https://github.com/facebookresearch/omnilingual-asr/blob/main/workflows/recipes/wav2vec2/asr/README.md
+verified: 2026-11-23

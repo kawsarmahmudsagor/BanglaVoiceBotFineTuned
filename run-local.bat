@@ -22,6 +22,7 @@ rem ---- Local settings (override .env, which holds the VM values) ----
 set "DATA_ROOT=%ROOT%\var"
 set "BACKENDS_ROOT=%ROOT%\backends"
 set "RECIPES_DIR=%ROOT%\recipes"
+set "CATALOG_DIR=%ROOT%\catalog"
 set "WEB_ORIGIN=http://localhost:3000"
 set "NEXT_PUBLIC_API_URL=http://localhost:8000"
 set "DISK_WARN_GB=5"

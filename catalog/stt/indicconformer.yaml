@@ -1,0 +1,64 @@
+id: indicconformer
+task: asr
+name: IndicConformer Bengali (hybrid CTC-RNNT)
+hf_repo: ai4bharat/indicconformer_stt_bn_hybrid_ctc_rnnt_large
+params: 120M
+role: primary
+license:
+  id: mit
+  commercial_ok: true
+  url: https://huggingface.co/ai4bharat/indicconformer_stt_bn_hybrid_ctc_rnnt_large
+  notes: Gated on Hugging Face (agree to share contact details). A 600M multilingual version (22 languages, MIT) is ai4bharat/indic-conformer-600m-multilingual.
+bangla:
+  status: native
+  evidence: AI4Bharat's Bengali-only Conformer, trained on Bengali speech; the card's language is Bengali.
+  url: https://huggingface.co/ai4bharat/indicconformer_stt_bn_hybrid_ctc_rnnt_large
+runtime:
+  engine: custom
+  convert: onnx
+  streaming: false
+description: |
+  A 120M Conformer with both CTC and RNN-T decoders, trained by AI4Bharat for Bengali. It takes 16 kHz mono audio.
+  It is small and fast, so it suits a GPU shared with the LLM and TTS. There is no RealtimeSTT engine for it yet (`custom`).
+dataset:
+  format: asr
+  required_fields: [file, text]
+  optional_fields: [region, channel, noise, speaker]
+  example: "clips/0001.wav,আমার অর্ডারটা কবে পৌঁছাবে জানাবেন?"
+  recommended:
+    hours: "10-100"
+    sample_rate: "16000"
+    clip_seconds: "1-30"
+    speakers: "100+ for speaker variety"
+  notes: |
+    Upload as a zip with `metadata.csv` (columns `file,text`) and the audio files. Transcripts in Bangla script,
+    Unicode NFC, with numbers written the way they are spoken (for example "১২৩" as "একশো তেইশ") if the model
+    should output words. Keep phone-call audio (8 kHz upsampled) in the mix if the bot serves calls.
+finetune:
+  methods: [full]
+  frameworks: [nemo]
+  targets:
+    - "Fine-tune with AI4Bharat's NeMo fork (`https://github.com/AI4Bharat/NeMo`, branch `nemo-v2`), as the card requires."
+    - "Keep the existing Bengali tokenizer; train both the CTC and RNN-T heads (hybrid loss)."
+    - "Train the whole model at first; with under 10 h of data, freeze the lower half of the encoder."
+  hyperparams:
+    learning_rate: 1.0e-4
+    max_epochs: 20
+    batch_size: 16
+    ctc_loss_weight: 0.3
+  metrics: [wer, cer]
+  pitfalls:
+    - "Upstream NeMo may not load the checkpoint; use the AI4Bharat fork the card names."
+    - "The card's sample code names a different repo id (`..._hybrid_rnnt_large`); use the repo id above."
+recipe_template:
+  method: {type: full}
+  hparams:
+    learning_rate: 1.0e-4
+    max_epochs: 20
+  export: [onnx]
+sources:
+  - title: IndicConformer Bengali model card
+    url: https://huggingface.co/ai4bharat/indicconformer_stt_bn_hybrid_ctc_rnnt_large
+  - title: IndicConformer 600M multilingual model card
+    url: https://huggingface.co/ai4bharat/indic-conformer-600m-multilingual
+verified: 2026-11-23

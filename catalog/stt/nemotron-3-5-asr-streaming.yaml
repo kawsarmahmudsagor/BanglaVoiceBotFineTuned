@@ -1,0 +1,68 @@
+id: nemotron-3-5-asr-streaming
+task: asr
+name: Nemotron 3.5 ASR streaming 0.6B
+hf_repo: nvidia/nemotron-3.5-asr-streaming-0.6b
+params: 600M
+role: comparison
+license:
+  id: openmdw-1.1
+  commercial_ok: true
+  url: https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b
+  notes: The card states "This model is ready for commercial use."
+bangla:
+  status: related
+  evidence: Bengali is not among its 40 language-locales; Hindi (hi-IN) is.
+  url: https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b
+runtime:
+  engine: sherpa_onnx_nemotron
+  convert: onnx
+  streaming: true
+description: |
+  NVIDIA's cache-aware streaming FastConformer transducer, with selectable chunk sizes of 80, 160, 320, 560 and 1120 ms.
+  It already runs in RealtimeSTT through sherpa-onnx. Bangla would be a new language, so this is a second track for
+  very low-latency streaming, not a first choice.
+dataset:
+  format: asr
+  required_fields: [file, text]
+  optional_fields: [region, channel, noise, speaker]
+  example: "clips/0001.wav,আমার অর্ডারটা কবে পৌঁছাবে জানাবেন?"
+  recommended:
+    hours: "500-1000"
+    sample_rate: "16000"
+    clip_seconds: "1-30"
+    speakers: "100+ for speaker variety"
+  notes: |
+    Upload as a zip with `metadata.csv` (columns `file,text`) and the audio files. Transcripts in Bangla script,
+    Unicode NFC, with numbers written the way they are spoken (for example "১২৩" as "একশো তেইশ") if the model
+    should output words. Keep phone-call audio (8 kHz upsampled) in the mix if the bot serves calls.
+finetune:
+  methods: [full]
+  frameworks: [nemo]
+  targets:
+    - "Fine-tune the NeMo checkpoint (`.nemo`), not the int8 ONNX bundle; re-export to ONNX afterwards."
+    - "Bengali script is not in its tokenizer: train a new SentencePiece tokenizer on Bengali text and swap it in (NeMo `change_vocabulary`). This re-initialises the decoder and joint network."
+    - "Keep the cache-aware streaming config (`att_context_size`) so the model still streams."
+  hyperparams:
+    learning_rate: 5.0e-4
+    max_steps: 50000
+    batch_size: 32
+    tokenizer_vocab_size: 1024
+  metrics: [wer, cer, rtf]
+  pitfalls:
+    - "A tokenizer swap with too little data can collapse (a community Malay run did); budget hundreds of hours."
+    - "Training with full context but serving with a short chunk raises WER; train with the chunk sizes you serve."
+recipe_template:
+  method: {type: full}
+  hparams:
+    learning_rate: 5.0e-4
+    max_steps: 50000
+    new_tokenizer: true
+  export: [onnx]
+sources:
+  - title: Nemotron 3.5 ASR streaming model card
+    url: https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b
+  - title: Fine-tuning Nemotron 3.5 ASR (NVIDIA blog)
+    url: https://huggingface.co/blog/nvidia/fine-tuning-nemotron-35-asr
+  - title: Failed Malay tokenizer swap (cautionary example)
+    url: https://huggingface.co/Kim-el/failed-swapped-to-malay-tokenizer
+verified: 2026-11-23
