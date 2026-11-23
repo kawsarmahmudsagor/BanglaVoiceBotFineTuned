@@ -7,7 +7,7 @@ import secrets
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select, update
@@ -29,6 +29,7 @@ router = APIRouter(prefix="/api")
 EVENTS_POLL_S = 1.0
 TERMINAL = ("done", "failed", "cancelled")
 OOM_HINT = "CUDA out of memory: lower batch_size or enable gradient checkpointing"
+LOG_WINDOW_BYTES = 256 * 1024  # first read of a log only looks at its end
 
 
 class CreateRun(BaseModel):
@@ -98,11 +99,14 @@ async def create_run(body: CreateRun, request: Request, session: AsyncSession = 
 
 
 @router.get("/runs")
-async def list_runs(state: str | None = None, session: AsyncSession = Depends(get_session)) -> list[dict]:
+async def list_runs(state: str | None = None, limit: int | None = Query(None, ge=1, le=500),
+                    session: AsyncSession = Depends(get_session)) -> list[dict]:
     q = (select(Run, Recipe.name, RecipeVersion).join(RecipeVersion, RecipeVersion.id == Run.recipe_version_id)
          .join(Recipe, Recipe.id == RecipeVersion.recipe_id).order_by(Run.created_at.desc(), Run.id.desc()))
     if state:
         q = q.where(Run.state == state)
+    if limit is not None:
+        q = q.limit(limit)
     return [
         {"id": r.id, "recipe": name, "recipe_number": rv.number, "backend": rv.spec.get("backend"), "state": r.state, "commercial_ok": r.commercial_ok,
          "created_at": iso(r.created_at), "started_at": iso(r.started_at), "finished_at": iso(r.finished_at)}
@@ -174,12 +178,29 @@ async def run_metrics(run_id: str, offset: int = 0, session: AsyncSession = Depe
     return {"items": [m.model_dump(mode="json") for m in items], "next_offset": next_offset}
 
 
+def _tail_start(f, size: int) -> int:
+    """Byte offset of the first complete line within the last LOG_WINDOW_BYTES of an open file."""
+    start = max(0, size - LOG_WINDOW_BYTES)
+    if start == 0:
+        return 0
+    f.seek(start - 1)
+    if f.read(1) == b"\n":  # the window starts exactly at a line boundary
+        return start
+    nl = f.read(LOG_WINDOW_BYTES).find(b"\n")
+    return size if nl < 0 else start + nl + 1
+
+
 def _tail(path: Path, n: int) -> list[str]:
+    if n <= 0:
+        return []
     try:
-        text = path.read_bytes().decode("utf-8", errors="replace")
+        with path.open("rb") as f:
+            size = f.seek(0, 2)
+            f.seek(_tail_start(f, size))
+            text = f.read().decode("utf-8", errors="replace")
     except FileNotFoundError:
         return []
-    return text.splitlines()[-n:] if n > 0 else []
+    return text.splitlines()[-n:]
 
 
 @router.get("/runs/{run_id}/logs")
@@ -189,10 +210,14 @@ async def run_logs(run_id: str, tail: int = 200, session: AsyncSession = Depends
     return {"stdout": _tail(logs / "stdout.log", tail), "stderr": _tail(logs / "stderr.log", tail)}
 
 
-def _new_lines(path: Path, offset: int, final: bool = False) -> tuple[list[str], int]:
-    """Complete lines appended after byte `offset`; `final` also returns an unterminated last line."""
+def _new_lines(path: Path, offset: int | None, final: bool = False) -> tuple[list[str], int | None]:
+    """Complete lines appended after byte `offset`; `final` also returns an unterminated last line.
+
+    `offset=None` is the first read: start at the first whole line of the last LOG_WINDOW_BYTES."""
     try:
         with path.open("rb") as f:
+            if offset is None:
+                offset = _tail_start(f, f.seek(0, 2))
             f.seek(offset)
             data = f.read()
     except FileNotFoundError:
@@ -211,7 +236,7 @@ async def _stream(request: Request, run_id: str) -> AsyncIterator[dict]:
     last_state: str | None = None
     last_status: str | None = None
     metric_off = 0
-    log_off = {"stdout": 0, "stderr": 0}
+    log_off: dict[str, int | None] = {"stdout": None, "stderr": None}  # None: first read (tail window)
     while True:
         async with sessionmaker() as session:
             run = await session.get(Run, run_id)

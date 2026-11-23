@@ -79,6 +79,8 @@ describe("requests", () => {
     expect(fn.mock.calls[0][0]).toBe(`${API_URL}/api/runs?state=failed`);
     expect(fn.mock.calls[1][0]).toBe(`${API_URL}/api/models`);
     expect(fn.mock.calls[2][0]).toBe(`${API_URL}/api/datasets/ds/versions/2/samples?offset=10&split=val`);
+    await listRuns(undefined, 10);
+    expect(fn.mock.calls[3][0]).toBe(`${API_URL}/api/runs?limit=10`);
   });
 });
 

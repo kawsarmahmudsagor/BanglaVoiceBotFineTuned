@@ -98,7 +98,8 @@ export const cloneRecipe = (name: string, newName: string) =>
 
 // runs
 export const createRun = (body: CreateRunBody) => apiPost<{ id: string }>("/api/runs", body);
-export const listRuns = (state?: string) => apiGet<RunListItem[]>(`/api/runs${qs({ state })}`);
+export const listRuns = (state?: string, limit?: number) =>
+  apiGet<RunListItem[]>(`/api/runs${qs({ state, limit })}`);
 export const getRun = (id: string) => apiGet<RunDetail>(`/api/runs/${enc(id)}`);
 export const cancelRun = (id: string) => apiPost<CancelResult>(`/api/runs/${enc(id)}/cancel`);
 export const resumeRun = (id: string) => apiPost<ResumeResult>(`/api/runs/${enc(id)}/resume`);

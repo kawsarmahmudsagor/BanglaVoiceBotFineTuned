@@ -115,10 +115,10 @@ export default function Dashboard() {
   useEffect(() => {
     let active = true;
     const refresh = async () => {
-      const [sys, rs, ms] = await Promise.allSettled([getSystem(), listRuns(), listModels()]);
+      const [sys, rs, ms] = await Promise.allSettled([getSystem(), listRuns(undefined, 10), listModels()]);
       if (!active) return;
       if (sys.status === "fulfilled") setSystem(sys.value);
-      if (rs.status === "fulfilled") setRuns(rs.value.slice(0, 10));
+      if (rs.status === "fulfilled") setRuns(rs.value);
       if (ms.status === "fulfilled") setModels(ms.value.filter((m) => m.champion));
       const failed = [sys, rs, ms].find((r) => r.status === "rejected");
       setError(

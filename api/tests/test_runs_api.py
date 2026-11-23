@@ -282,3 +282,52 @@ async def test_events_stream_ends_on_terminal_state(client, session, session_fac
 
 async def test_events_unknown_run_is_404(client):
     assert (await client.get("/api/runs/r-nope/events")).status_code == 404
+
+
+def _big_log(path, n=4000):
+    # 100-byte lines, 400 KB total: well over the 256 KiB first-read window
+    lines = [f"line-{i:05d} " + "x" * 88 for i in range(n)]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return lines
+
+
+def _complete(line: str) -> bool:
+    return len(line) == 99 and line.startswith("line-")
+
+
+async def test_logs_tail_reads_only_the_last_256k_of_a_big_log(client, session):
+    rid = await make_run(client, session)
+    rd = RunDir((await client.get(f"/api/runs/{rid}")).json()["run_dir"])
+    rd.ensure()
+    lines = _big_log(rd.logs_dir / "stdout.log")
+    out = (await client.get(f"/api/runs/{rid}/logs?tail=100000")).json()["stdout"]
+    assert 2000 < len(out) < len(lines)
+    assert all(_complete(ln) for ln in out)  # mid-file start: the partial first line is dropped
+    assert out == lines[-len(out):]
+
+
+async def test_events_first_log_read_is_bounded_metrics_replay_from_zero(client, session, session_factory, monkeypatch):
+    monkeypatch.setattr(runs_router, "EVENTS_POLL_S", 0.01)
+    rid = await make_run(client, session)
+    rd = RunDir((await client.get(f"/api/runs/{rid}")).json()["run_dir"])
+    rd.ensure()
+    for i in range(3):
+        append_metric(rd, Metric(step=i, split="train", name="loss", value=0.5, ts=float(i)))
+    lines = _big_log(rd.logs_dir / "stdout.log")
+    await set_state(session_factory, rid, state="done")
+    events = parse_sse((await client.get(f"/api/runs/{rid}/events")).text)
+    got = [d["line"] for e, d in events if e == "log" and d["stream"] == "stdout"]
+    assert 2000 < len(got) < len(lines)
+    assert all(_complete(ln) for ln in got)
+    assert got == lines[-len(got):]
+    assert [d["step"] for e, d in events if e == "metric"] == [0, 1, 2]
+
+
+async def test_list_runs_limit(client, session):
+    a = await make_run(client, session)
+    b = await make_run(client, session)
+    assert [i["id"] for i in (await client.get("/api/runs")).json()] == [b, a]
+    assert [i["id"] for i in (await client.get("/api/runs?limit=1")).json()] == [b]
+    assert (await client.get("/api/runs?limit=500")).status_code == 200
+    assert (await client.get("/api/runs?limit=501")).status_code == 422
+    assert (await client.get("/api/runs?limit=0")).status_code == 422

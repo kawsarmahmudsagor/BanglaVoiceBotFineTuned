@@ -41,6 +41,9 @@ describe("Dashboard", () => {
     expect(screen.getByTestId("disk-card").className).toContain("amber");
     const systemCalls = () => fn.mock.calls.filter(([u]) => String(u).endsWith("/api/system")).length;
     expect(systemCalls()).toBe(1);
+    const runCalls = fn.mock.calls.map(([u]) => String(u)).filter((u) => u.includes("/api/runs"));
+    expect(runCalls).toHaveLength(1);
+    expect(new URL(runCalls[0]).searchParams.get("limit")).toBe("10");
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     expect(systemCalls()).toBe(2);
     unmount();
