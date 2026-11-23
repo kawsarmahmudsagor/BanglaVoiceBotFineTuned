@@ -160,3 +160,35 @@ async def test_main_recovers_orphaned_run(env):
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+
+
+async def test_raising_forwarder_factory_does_not_wedge_gpu(env):
+    def bad_factory(settings):
+        raise RuntimeError("mlflow unreachable")
+
+    run = await seed_queued_run(env, {"steps": 2})
+    assert await gpu_tick(env.sf, env.settings, bad_factory) is True
+    async with env.sf() as s:
+        assert (await get_run(s, run.id)).state == "done"
+        assert (await current(s)).holder_kind is None
+
+
+async def test_cancelling_main_mid_run_records_interruption(env):
+    env.settings.cancel_grace_s = 5
+    run = await seed_queued_run(env, {"steps": 200, "step_sleep_s": 0.05})
+    task = asyncio.create_task(main(env.settings, forwarder_factory=lambda s: env.fwd, install_signals=False))
+    for _ in range(200):
+        async with env.sf() as s:
+            if (await get_run(s, run.id)).state == "training":
+                break
+        await asyncio.sleep(0.05)
+    else:
+        task.cancel()
+        pytest.fail("run never reached training")
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    async with env.sf() as s:
+        r = await get_run(s, run.id)
+        assert r.state == "failed" and r.error == "worker interrupted"
+        assert (await current(s)).holder_kind is None
