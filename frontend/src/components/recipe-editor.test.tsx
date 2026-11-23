@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
   getVersion: vi.fn(),
   saveRecipe: vi.fn(),
   validateRecipe: vi.fn(),
+  getInitSources: vi.fn(),
 }));
 vi.mock("@/lib/api", () => api);
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
@@ -33,6 +34,7 @@ beforeEach(() => {
   api.getDataset.mockResolvedValue({ name: "ds", versions: [{ number: 1 }, { number: 2 }] });
   api.getVersion.mockResolvedValue(VERSION);
   api.validateRecipe.mockResolvedValue({ errors: [], spec: null });
+  api.getInitSources.mockResolvedValue({ runs: [], model_versions: [] });
 });
 
 describe("RecipeEditor data splits", () => {
@@ -72,5 +74,21 @@ describe("RecipeEditor data splits", () => {
     };
     render(<RecipeEditor initial={spec} />);
     await waitFor(() => expect(screen.getByRole("button", { name: "Save training config" })).toBeEnabled());
+  });
+});
+
+describe("RecipeEditor start from", () => {
+  it("renders the picker and writes init_from into the YAML", async () => {
+    api.getInitSources.mockResolvedValue({
+      runs: [{ id: "r-1", recipe: "c", state: "done", finished_at: null, checkpoints: [{ name: "final", step: 9, complete: true, init_meta: null }] }],
+      model_versions: [],
+    });
+    render(<RecipeEditor initial={SPEC} />);
+    await screen.findByRole("option", { name: "r-1 · final · step 9" });
+    fireEvent.change(screen.getByLabelText("Start from"), { target: { value: "run|r-1|final" } });
+    const yaml = screen.getByLabelText("Training config YAML") as HTMLTextAreaElement;
+    await waitFor(() => expect(yaml.value).toMatch(/init_from:\s+run: r-1\s+checkpoint: final/));
+    fireEvent.change(screen.getByLabelText("Start from"), { target: { value: "" } });
+    await waitFor(() => expect(yaml.value).not.toMatch(/init_from/));
   });
 });

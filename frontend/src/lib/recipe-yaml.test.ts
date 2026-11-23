@@ -39,3 +39,12 @@ describe("recipe yaml datasets.split", () => {
     expect(yamlToSpec(specToYaml(spec))).toEqual({ ok: true, spec });
   });
 });
+
+describe("recipe yaml init_from", () => {
+  it("round-trips a run checkpoint and a model version", () => {
+    for (const init_from of [{ run: "r-1", checkpoint: 300 }, { run: "r-1", checkpoint: "final" }, { model_version: "m@v2" }]) {
+      const spec = { ...SPEC, init_from };
+      expect(yamlToSpec(specToYaml(spec))).toEqual({ ok: true, spec });
+    }
+  });
+});

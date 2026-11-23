@@ -6,13 +6,14 @@ import { Panel } from "@/components/matra";
 import { ErrorNotice, WarningNotice } from "@/components/notice";
 import { SchemaFields, type JsonSchema } from "@/components/schema-fields";
 import { SplitFields, type SplitDataset } from "@/components/split-fields";
+import { StartFromPicker } from "@/components/start-from-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getDataset, getVersion, listBackends, listDatasets, saveRecipe, validateRecipe } from "@/lib/api";
 import { groupErrors, type RecipeField } from "@/lib/recipe-errors";
 import { DEFAULT_SPLIT, ratiosValid } from "@/lib/splits";
 import { specToYaml, yamlToSpec } from "@/lib/recipe-yaml";
-import type { DatasetDetail, DatasetListItem, RecipeBody, SplitConfig, Task } from "@/lib/types";
+import type { DatasetDetail, DatasetListItem, InitFrom, RecipeBody, SplitConfig, Task } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Spec = Record<string, unknown>;
@@ -305,6 +306,18 @@ export function RecipeEditor({ initial, notice }: { initial?: Spec; notice?: str
             <Field label="Base model" errors={err("base_model")}>
               {(p) => <Input {...p} className="font-mono" value={str(spec.base_model)} onChange={(e) => setField("base_model", e.target.value)} />}
             </Field>
+            <StartFromPicker
+              task={task}
+              backend={str(spec.backend)}
+              baseModel={str(spec.base_model)}
+              value={(spec.init_from as InitFrom | undefined) ?? null}
+              onChange={(v) =>
+                updateSpec((s) => {
+                  const { init_from: _drop, ...rest } = s;
+                  return v ? { ...rest, init_from: v } : rest;
+                })
+              }
+            />
             <div className="grid grid-cols-[1fr_auto] items-start gap-3">
               <Field label="Base model license" errors={err("license")}>
                 {(p) => <Input {...p} className="font-mono" value={str(metaObj.license)} onChange={(e) => setField("base_model_meta", { ...metaObj, license: e.target.value })} />}

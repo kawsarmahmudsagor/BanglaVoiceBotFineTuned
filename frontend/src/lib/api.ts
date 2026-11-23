@@ -1,6 +1,6 @@
 import type {
   Backend, CancelResult, CatalogEntry, CatalogList, CreateRunBody, DatasetDetail, DatasetListItem, Dataset, IngestRequest,
-  EvalSamplesPage, IngestStatus, ModelVersion, PreparedRef, RecipeBody, RecipeDetail, RecipeListItem, RecipeVersionDetail,
+  EvalSamplesPage, CheckpointItem, InitSources, IngestStatus, ModelVersion, PreparedRef, RecipeBody, RecipeDetail, RecipeListItem, RecipeVersionDetail,
   ResumeResult, RunDetail, RunListItem, RunLogs, RunMetrics, SamplesPage, SamplesQuery, SavedRecipe,
   SystemInfo, Task, ValidateResult, VersionDetail, VersionSummary,
 } from "./types";
@@ -114,6 +114,10 @@ export const getPrepared = (id: string) => apiGet<{ refs: PreparedRef[] }>(`/api
 export const getEvalSamples = (id: string, offset = 0, limit = 50) =>
   apiGet<EvalSamplesPage>(`/api/runs/${enc(id)}/eval/samples${qs({ offset, limit })}`);
 export const evalAudioUrl = (id: string, name: string) => `${API_URL}/api/runs/${enc(id)}/eval/audio/${enc(name)}`;
+export const getCheckpoints = (id: string) =>
+  apiGet<{ items: CheckpointItem[] }>(`/api/runs/${enc(id)}/checkpoints`);
+export const getInitSources = (q: { task: string; backend: string; base_model: string }) =>
+  apiGet<InitSources>(`/api/init-sources${qs(q)}`);
 export const promoteRun = (id: string) => apiPost<ModelVersion>(`/api/runs/${enc(id)}/promote`);
 
 // models

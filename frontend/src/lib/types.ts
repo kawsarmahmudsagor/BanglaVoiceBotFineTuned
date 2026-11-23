@@ -226,6 +226,29 @@ export interface RunDetail {
   eval: EvalResults | null;
   exports: ExportArtifact[];
   oom_hint: string | null;
+  parent_run_id?: string | null;
+  parent_checkpoint?: string | null;
+}
+// warm start (spec 14)
+export type InitFrom =
+  | { run: string; checkpoint: "final" | "latest" | number }
+  | { model_version: string };
+export interface CheckpointItem {
+  name: string;
+  step: number;
+  complete: boolean;
+  init_meta: Record<string, unknown> | null;
+}
+export interface InitSourceRun {
+  id: string;
+  recipe: string;
+  state: RunState;
+  finished_at: string | null;
+  checkpoints: CheckpointItem[];
+}
+export interface InitSources {
+  runs: InitSourceRun[];
+  model_versions: { ref: string; run_id: string; metrics: Record<string, number> }[];
 }
 export interface RunMetric {
   step: number;

@@ -3,6 +3,7 @@
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { CheckpointsPanel } from "@/components/checkpoints-panel";
 import { EvalSamples } from "@/components/eval-samples";
 import { LogView } from "@/components/log-view";
 import { PageHeader, Panel } from "@/components/matra";
@@ -25,7 +26,7 @@ import type { PreparedRef, RunDetail, RunMetric, RunState, RunStatus } from "@/l
 const TERMINAL: RunState[] = ["done", "failed", "cancelled"];
 const isTerminal = (s: RunState) => TERMINAL.includes(s);
 
-type TabKey = "metrics" | "logs" | "config" | "eval" | "artifacts";
+type TabKey = "metrics" | "logs" | "config" | "eval" | "checkpoints" | "artifacts";
 
 const fmtMetric = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(4));
 
@@ -228,6 +229,13 @@ function RunDetailView({ id }: { id: string }) {
           <Link href={`/train/${encodeURIComponent(run.recipe.name)}`} className="hover:text-saffron">
             {run.recipe.name} <span className="font-mono">v{run.recipe.number}</span>
           </Link>
+          {run.parent_run_id && (
+            <span>
+              Started from{" "}
+              <Link href={`/runs/${encodeURIComponent(run.parent_run_id)}`} className="font-mono hover:text-saffron">{run.parent_run_id}</Link>
+              {run.parent_checkpoint && <> · <span className="font-mono">{run.parent_checkpoint}</span></>}
+            </span>
+          )}
           <span>attempt <span className="font-mono">{run.attempt}</span></span>
           <span className={run.commercial_ok ? "text-status-done" : "text-status-failed"}>
             {run.commercial_ok ? "commercial OK" : "non-commercial"}
@@ -261,6 +269,7 @@ function RunDetailView({ id }: { id: string }) {
           { key: "logs", label: "Logs" },
           { key: "config", label: "Config" },
           { key: "eval", label: <>Eval {evalCount > 0 && <span className="font-mono text-[12px] text-muted-foreground">{evalCount}</span>}</> },
+          { key: "checkpoints", label: "Checkpoints" },
           { key: "artifacts", label: <>Artifacts {run.exports.length > 0 && <span className="font-mono text-[12px] text-muted-foreground">{run.exports.length}</span>}</> },
         ]}
       >
@@ -309,6 +318,7 @@ function RunDetailView({ id }: { id: string }) {
           ) : (
             <p className="text-sm text-muted-foreground">No eval results yet. They appear after the eval phase finishes.</p>
           ))}
+        {tab === "checkpoints" && <CheckpointsPanel runId={run.id} />}
         {tab === "artifacts" && (
           <div className="space-y-4">
             <Panel title="Exports">
