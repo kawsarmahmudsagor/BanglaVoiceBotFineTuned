@@ -1,0 +1,162 @@
+{
+  "name": "fake",
+  "label": "Fake (pipeline test)",
+  "tasks": {
+    "llm-sft": {
+      "methods": [
+        "none"
+      ],
+      "export_formats": [
+        "dummy"
+      ],
+      "serve_formats": [],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "object"
+          },
+          "hparams": {
+            "type": "object",
+            "properties": {
+              "steps": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "step_sleep_s": {
+                "type": "number",
+                "minimum": 0
+              },
+              "fail_phase": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "prepare",
+                  "train",
+                  "eval",
+                  "export",
+                  null
+                ]
+              },
+              "ignore_sigterm": {
+                "type": "boolean"
+              },
+              "oom": {
+                "type": "boolean"
+              },
+              "seed": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    "asr": {
+      "methods": [
+        "none"
+      ],
+      "export_formats": [
+        "dummy"
+      ],
+      "serve_formats": [],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "object"
+          },
+          "hparams": {
+            "type": "object",
+            "properties": {
+              "steps": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "step_sleep_s": {
+                "type": "number",
+                "minimum": 0
+              },
+              "fail_phase": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "prepare",
+                  "train",
+                  "eval",
+                  "export",
+                  null
+                ]
+              },
+              "ignore_sigterm": {
+                "type": "boolean"
+              },
+              "oom": {
+                "type": "boolean"
+              },
+              "seed": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    "tts": {
+      "methods": [
+        "none"
+      ],
+      "export_formats": [
+        "dummy"
+      ],
+      "serve_formats": [],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "object"
+          },
+          "hparams": {
+            "type": "object",
+            "properties": {
+              "steps": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "step_sleep_s": {
+                "type": "number",
+                "minimum": 0
+              },
+              "fail_phase": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "prepare",
+                  "train",
+                  "eval",
+                  "export",
+                  null
+                ]
+              },
+              "ignore_sigterm": {
+                "type": "boolean"
+              },
+              "oom": {
+                "type": "boolean"
+              },
+              "seed": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
