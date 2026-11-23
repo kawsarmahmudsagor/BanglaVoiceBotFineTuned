@@ -4,6 +4,7 @@ import { Menu, Moon, Sun } from "lucide-react";
 import type { Theme } from "@/lib/theme";
 import type { SystemInfo } from "@/lib/types";
 import { Breadcrumbs } from "./breadcrumbs";
+import { UploadChip } from "@/components/upload-drawer";
 import { CommandPalette } from "./command-palette";
 import { StatusChips } from "./status-chips";
 
@@ -34,6 +35,7 @@ export function TopBar({
       <div className="min-w-0 flex-1">
         <Breadcrumbs />
       </div>
+      <UploadChip />
       <StatusChips system={system} error={error} history={history} />
       <CommandPalette />
       <button type="button" onClick={onToggleTheme} aria-label={`Switch to ${next} theme`} className={ICON_BUTTON}>

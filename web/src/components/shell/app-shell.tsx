@@ -3,6 +3,7 @@
 import { X } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { UploadDrawerProvider } from "@/components/upload-drawer";
 import { getSystem } from "@/lib/api";
 import { pushSample } from "@/lib/gpu-history";
 import { applyTheme, readTheme, writeTheme, type Theme } from "@/lib/theme";
@@ -95,6 +96,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [theme]);
 
   return (
+    <UploadDrawerProvider>
     <div className="flex min-h-screen">
       <Sidebar collapsed={collapsed} onToggle={toggleRail} />
       {menuOpen && (
@@ -131,5 +133,6 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main className="min-w-0 flex-1 px-4 py-6 md:px-6">{children}</main>
       </div>
     </div>
+    </UploadDrawerProvider>
   );
 }

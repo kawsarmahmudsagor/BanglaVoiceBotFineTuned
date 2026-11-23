@@ -21,7 +21,13 @@ const TASKS: Task[] = ["llm-sft", "asr", "tts"];
 const field = "space-y-1 text-sm";
 const label = "block text-[13px] text-muted-foreground";
 
-export function UploadForm({ defaultTask }: { defaultTask?: Task } = {}) {
+export interface UploadStatus {
+  busy: boolean;
+  phase: "idle" | "uploading" | "ingesting" | "done";
+  progress: number | null;
+}
+
+export function UploadForm({ defaultTask, onStatus }: { defaultTask?: Task; onStatus?: (s: UploadStatus) => void } = {}) {
   const router = useRouter();
   const params = useSearchParams();
   const initialTask = defaultTask ?? params.get("task");
@@ -41,6 +47,8 @@ export function UploadForm({ defaultTask }: { defaultTask?: Task } = {}) {
   const upload = useRef<tus.Upload | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const alive = useRef(true);
+  const report = useRef(onStatus);
+  report.current = onStatus;
 
   useEffect(() => {
     alive.current = true;
@@ -66,6 +74,7 @@ export function UploadForm({ defaultTask }: { defaultTask?: Task } = {}) {
         if (outcome === "continue") return;
         if (timer.current) clearInterval(timer.current);
         if (outcome === "done" && st.version) {
+          report.current?.({ busy: false, phase: "done", progress: 100 });
           router.push(`/datasets/${encodeURIComponent(st.dataset)}/v/${st.version.number}`);
         } else if (outcome === "failed") {
           setPhase("idle");
@@ -129,6 +138,10 @@ export function UploadForm({ defaultTask }: { defaultTask?: Task } = {}) {
   }
 
   const busy = phase !== "idle";
+
+  useEffect(() => {
+    report.current?.({ busy, phase, progress });
+  }, [busy, phase, progress]);
 
   return (
     <form onSubmit={submit} className="max-w-2xl space-y-4">

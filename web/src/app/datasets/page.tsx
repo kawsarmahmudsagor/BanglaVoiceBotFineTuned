@@ -2,13 +2,12 @@
 
 import Link from "next/link";
 import { Upload } from "lucide-react";
-import { Suspense, useEffect, useState } from "react";
-import { Drawer } from "@/components/drawer";
+import { useEffect, useState } from "react";
 import { PageHeader, Panel } from "@/components/matra";
 import { EmptyState, ErrorNotice } from "@/components/notice";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { UploadForm } from "@/components/upload-form";
+import { useUploadDrawer } from "@/components/upload-drawer";
 import { listDatasets } from "@/lib/api";
 import { sectionForTask } from "@/lib/catalog";
 import type { DatasetListItem } from "@/lib/types";
@@ -16,7 +15,7 @@ import type { DatasetListItem } from "@/lib/types";
 export default function DatasetsPage() {
   const [items, setItems] = useState<DatasetListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
+  const { openUpload } = useUploadDrawer();
 
   useEffect(() => {
     let active = true;
@@ -33,7 +32,7 @@ export default function DatasetsPage() {
       <PageHeader
         title="Datasets"
         actions={
-          <Button size="lg" className="gap-2 px-3" onClick={() => setOpen(true)}>
+          <Button size="lg" className="gap-2 px-3" onClick={() => openUpload()}>
             <Upload className="size-4" aria-hidden />
             Upload dataset
           </Button>
@@ -81,11 +80,6 @@ export default function DatasetsPage() {
           </Table>
         )}
       </Panel>
-      <Drawer open={open} onOpenChange={setOpen} title="Upload dataset">
-        <Suspense fallback={null}>
-          <UploadForm />
-        </Suspense>
-      </Drawer>
     </div>
   );
 }

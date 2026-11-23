@@ -37,6 +37,13 @@ describe("breadcrumbs", () => {
   it("is Overview on the root", () => {
     expect(breadcrumbs("/")).toEqual([{ href: "/", label: "Overview" }]);
   });
+  it("folds the v segment of a dataset version into one crumb, so no crumb points at a missing page", () => {
+    expect(breadcrumbs("/datasets/bn-chat/v/3")).toEqual([
+      { href: "/datasets", label: "Datasets" },
+      { href: "/datasets/bn-chat", label: "bn-chat" },
+      { href: "/datasets/bn-chat/v/3", label: "v3" },
+    ]);
+  });
   it("labels nested known segments", () => {
     expect(breadcrumbs("/runs/compare")).toEqual([
       { href: "/runs", label: "Runs" },
