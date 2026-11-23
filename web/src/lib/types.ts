@@ -166,6 +166,7 @@ export interface RunListItem {
   recipe: string;
   recipe_number: number;
   backend: string | null;
+  task: Task | null;
   state: RunState;
   commercial_ok: boolean;
   created_at: string | null;
@@ -250,4 +251,33 @@ export interface ModelVersion {
   commercial_ok: boolean;
   champion: boolean;
   created_at: string | null;
+}
+
+// catalog
+export type CatalogRole = "primary" | "comparison" | "benchmark";
+export type BanglaStatus = "native" | "finetuned" | "related" | "none";
+export interface CatalogLicense {
+  id: string;
+  commercial_ok: boolean;
+  url: string;
+  notes?: string | null;
+}
+export interface CatalogSummary {
+  id: string;
+  task: Task;
+  name: string;
+  hf_repo: string;
+  params: string;
+  role: CatalogRole;
+  license: CatalogLicense;
+  bangla_status: BanglaStatus;
+  streaming: boolean;
+}
+export interface CatalogLoadError {
+  file: string;
+  message: string;
+}
+export interface CatalogList {
+  entries: CatalogSummary[];
+  errors: CatalogLoadError[];
 }

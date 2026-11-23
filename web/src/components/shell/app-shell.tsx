@@ -57,7 +57,7 @@ function useSystem() {
   return { system, error, history };
 }
 
-export function AppShell({ children, palette }: { children: ReactNode; palette?: ReactNode }) {
+export function AppShell({ children }: { children: ReactNode }) {
   const { system, error, history } = useSystem();
   const [collapsed, setCollapsed] = useState(false);
   const [theme, setTheme] = useState<Theme>("dark");
@@ -127,7 +127,6 @@ export function AppShell({ children, palette }: { children: ReactNode; palette?:
           theme={theme}
           onToggleTheme={toggleTheme}
           onOpenMenu={() => setMenuOpen(true)}
-          palette={palette}
         />
         <main className="min-w-0 flex-1 px-4 py-6 md:px-6">{children}</main>
       </div>

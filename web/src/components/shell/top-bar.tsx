@@ -1,10 +1,10 @@
 "use client";
 
 import { Menu, Moon, Sun } from "lucide-react";
-import type { ReactNode } from "react";
 import type { Theme } from "@/lib/theme";
 import type { SystemInfo } from "@/lib/types";
 import { Breadcrumbs } from "./breadcrumbs";
+import { CommandPalette } from "./command-palette";
 import { StatusChips } from "./status-chips";
 
 export const ICON_BUTTON =
@@ -17,7 +17,6 @@ export function TopBar({
   theme,
   onToggleTheme,
   onOpenMenu,
-  palette,
 }: {
   system: SystemInfo | null;
   error: string | null;
@@ -25,7 +24,6 @@ export function TopBar({
   theme: Theme;
   onToggleTheme: () => void;
   onOpenMenu: () => void;
-  palette?: ReactNode;
 }) {
   const next = theme === "dark" ? "light" : "dark";
   return (
@@ -37,7 +35,7 @@ export function TopBar({
         <Breadcrumbs />
       </div>
       <StatusChips system={system} error={error} history={history} />
-      {palette}
+      <CommandPalette />
       <button type="button" onClick={onToggleTheme} aria-label={`Switch to ${next} theme`} className={ICON_BUTTON}>
         {theme === "dark" ? <Sun className="size-4" aria-hidden /> : <Moon className="size-4" aria-hidden />}
       </button>
