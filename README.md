@@ -41,12 +41,13 @@ Run this once after setup to confirm the whole platform works end to end. It use
 9. While it is training, click Cancel. Success: the run ends in `cancelled`.
 10. Click Resume. Success: the run goes back to `queued`, then trains again.
 11. Let it finish. Success: the state is `done` and the run page shows eval metrics and an export.
-12. Click Promote. Success: you land on or can open a model under Models.
+12. Click Promote. Success: the page navigates to the new model's page under Models.
 13. Models > open the model > Set champion. Success: the champion badge appears and the star shows in the list.
-14. Dashboard: while a run is training, success is the GPU card showing your GPU and the GPU lock card showing the run as holder. When no run is active, the lock shows no holder.
-15. Open `http://localhost:5000` (MLflow, through the tunnel). Success: the run appears with its metrics.
+14. Dashboard, active run: while a run is training (repeat step 8 if needed), the GPU card shows your GPU and the GPU lock card shows the run id as holder.
+15. Dashboard, idle: with no run active, the GPU lock card shows the lock as free.
+16. Open `http://localhost:5000` (MLflow, through the tunnel). Success: the run appears with its metrics.
 
-Sample `smoke.jsonl` (each line is one chat; make 5 to 10 distinct lines so the split is not empty):
+Sample `smoke.jsonl` (each line is one chat; these 5 lines are enough for the smoke check, since the fake backend does not read the data and small val/test splits are fine):
 
 ```
 {"messages": [{"role": "user", "content": "আজকের আবহাওয়া কেমন?"}, {"role": "assistant", "content": "আজ আকাশ মেঘলা, বিকেলে বৃষ্টি হতে পারে।"}]}
