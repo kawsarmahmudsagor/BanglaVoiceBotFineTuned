@@ -36,6 +36,7 @@ export function previewCounts(given: Record<string, number>, n: number, cfg: Spl
 
 /** Mirrors the backend rules (ratios are fractions). Returns an error message, or null when valid. */
 export function ratiosValid(r: SplitRatios): string | null {
+  if (![r.train, r.val, r.test].every((x) => typeof x === "number" && Number.isFinite(x))) return "Ratios must add up to 100%";
   if (r.train <= 0) return "Train must be above 0%";
   if (r.val < 0 || r.test < 0) return "Ratios cannot be negative";
   if (Math.abs(r.train + r.val + r.test - 1) > 1e-6) return "Ratios must add up to 100%";

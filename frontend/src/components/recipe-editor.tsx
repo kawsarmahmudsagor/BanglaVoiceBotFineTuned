@@ -157,7 +157,10 @@ export function RecipeEditor({ initial, notice }: { initial?: Spec; notice?: str
   // The chosen train dataset's split info feeds the "Data splits" group.
   const trainRef = str(datasetsObj.train);
   const [splitDataset, setSplitDataset] = useState<SplitDataset | null>(null);
+  const [splitLoadError, setSplitLoadError] = useState<string | null>(null);
   useEffect(() => {
+    setSplitDataset(null);
+    setSplitLoadError(null);
     const m = /^(.+)@v(\d+)$/.exec(trainRef);
     if (!m) {
       setSplitDataset(null);
@@ -166,7 +169,7 @@ export function RecipeEditor({ initial, notice }: { initial?: Spec; notice?: str
     let active = true;
     getVersion(m[1], Number(m[2]))
       .then((v) => active && setSplitDataset({ split_source: v.split_source, given_splits: v.given_splits, n_samples: v.n_samples }))
-      .catch(() => active && setSplitDataset(null));
+      .catch((e) => active && setSplitLoadError(errMsg(e)));
     return () => {
       active = false;
     };
@@ -370,6 +373,7 @@ export function RecipeEditor({ initial, notice }: { initial?: Spec; notice?: str
             <SplitFields
               value={splitValue}
               dataset={splitDataset}
+              loadError={splitLoadError}
               onChange={(v) => setField("datasets", { ...datasetsObj, split: v })}
             />
           </div>

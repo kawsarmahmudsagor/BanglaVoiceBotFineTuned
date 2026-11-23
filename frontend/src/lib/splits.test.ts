@@ -47,3 +47,10 @@ describe("percent helpers", () => {
     expect(fromPct(5)).toBe(0.05);
   });
 });
+
+describe("ratiosValid non-finite", () => {
+  it("rejects NaN ratios", () => {
+    expect(ratiosValid({ train: 0.9, val: NaN, test: 0.05 })).toBe("Ratios must add up to 100%");
+    expect(ratiosValid({ train: NaN, val: 0.05, test: 0.05 })).toBe("Ratios must add up to 100%");
+  });
+});
