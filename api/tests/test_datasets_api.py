@@ -221,3 +221,46 @@ async def test_patch_eval_only(client, session_factory, settings):
 
 async def test_ingest_unknown_id_is_404(client):
     assert (await client.get("/api/ingests/999")).status_code == 404
+
+
+async def test_edit_remaps_report_sample_ids(client, session_factory, settings):
+    await asr_dataset(client, session_factory, settings)
+    v1 = (await client.get("/api/datasets/stt-a/versions/1")).json()
+    old = next(w["sample_id"] for w in v1["report"]["warnings"] if w["code"] == "duration_out_of_range")
+    r = await client.post("/api/datasets/stt-a/versions/1/edits", json={"sample_id": old, "text": "চার"})
+    assert r.status_code == 201
+    got = (await client.get("/api/datasets/stt-a/versions/2/samples?warning=duration_out_of_range")).json()
+    assert got["total"] == 1 and got["rows"][0]["text"] == "চার"
+    v2 = (await client.get("/api/datasets/stt-a/versions/2")).json()
+    assert old not in [w["sample_id"] for w in v2["report"]["warnings"]]
+    # parent report untouched
+    assert old in [w["sample_id"] for w in (await client.get("/api/datasets/stt-a/versions/1")).json()["report"]["warnings"]]
+
+
+async def test_run_ingest_falls_back_to_fresh_session_when_fail_breaks(client, session_factory, settings, monkeypatch):
+    import mlops_api.datasets.versions as vs
+
+    def boom(*a, **k):
+        raise RuntimeError("kaboom")
+
+    real_fail = vs._fail
+    calls = {"n": 0}
+
+    async def flaky_fail(session, ingest_id, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("db hiccup")
+        return await real_fail(session, ingest_id, **kw)
+
+    monkeypatch.setattr(vs, "ingest", boom)
+    monkeypatch.setattr(vs, "_fail", flaky_fail)
+    iid = await ingest_via_api(client, session_factory, settings, "a.jsonl", jsonl_bytes(1), "flaky")
+    body = (await client.get(f"/api/ingests/{iid}")).json()
+    assert body["state"] == "failed" and body["error"] == "kaboom"
+
+
+async def test_run_ingest_on_done_ingest_is_noop(client, session_factory, settings):
+    iid = await ingest_via_api(client, session_factory, settings, "a.jsonl", jsonl_bytes(1), "once")
+    await run_ingest_now(session_factory, iid, settings)
+    assert [v["number"] for v in (await client.get("/api/datasets/once")).json()["versions"]] == [1]
+    assert (await client.get(f"/api/ingests/{iid}")).json()["state"] == "done"

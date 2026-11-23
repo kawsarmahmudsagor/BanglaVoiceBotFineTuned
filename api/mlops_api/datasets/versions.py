@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
 import shutil
 import uuid
@@ -11,12 +12,14 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Dataset, DatasetVersion, Ingest
 from .ingest import _version_hash, ingest
 from .validate_audio import _sha256_file
 
 SPLIT_RATIOS = [0.9, 0.05, 0.05]
+log = logging.getLogger(__name__)
 
 
 def read_manifest(version_dir: str | Path) -> list[dict]:
@@ -39,7 +42,7 @@ async def run_ingest(session, ingest_id: int, settings) -> None:
     """Execute one ingest request. Never raises: failures are recorded on the ingest row."""
     try:
         row = await session.get(Ingest, ingest_id)
-        if row is None:
+        if row is None or row.state not in ("pending", "running"):
             return
         row.state = "running"
         await session.commit()
@@ -82,10 +85,16 @@ async def run_ingest(session, ingest_id: int, settings) -> None:
         row.version_id = version.id
         await session.commit()
     except Exception as exc:  # noqa: BLE001 - run_ingest must never raise
+        log.exception("ingest %s failed", ingest_id)
         try:
             await _fail(session, ingest_id, error=str(exc))
         except Exception:  # noqa: BLE001
-            pass
+            log.exception("could not record failure of ingest %s on the session; retrying with a fresh one", ingest_id)
+            try:
+                async with AsyncSession(bind=session.bind, expire_on_commit=False) as fresh:
+                    await _fail(fresh, ingest_id, error=str(exc))
+            except Exception:  # noqa: BLE001
+                log.exception("ingest %s is stuck in 'running': fresh-session failure update also failed", ingest_id)
 
 
 class SampleNotFound(Exception):
@@ -102,6 +111,13 @@ def _link_or_copy(src: Path, dst: Path) -> None:
         os.link(src, dst)
     except OSError:
         shutil.copy2(src, dst)
+
+
+def _remap_report(report: dict | None, old: str, new: str) -> dict:
+    out = {k: v for k, v in (report or {}).items()}
+    for key in ("errors", "warnings"):
+        out[key] = [{**i, "sample_id": new} if i.get("sample_id") == old else i for i in out.get(key, [])]
+    return out
 
 
 async def edit_transcript(session, version: DatasetVersion, sample_id: str, text: str, settings) -> DatasetVersion:
@@ -150,7 +166,7 @@ async def edit_transcript(session, version: DatasetVersion, sample_id: str, text
         hash=vhash,
         path=str(final),
         n_samples=len(rows),
-        report=version.report,
+        report=_remap_report(version.report, sample_id, row["sample_id"]),
         provenance=version.provenance,
         split_ratios=version.split_ratios,
         parent_version_id=version.id,
