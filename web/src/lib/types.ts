@@ -164,6 +164,8 @@ export interface CreateRunBody {
 export interface RunListItem {
   id: string;
   recipe: string;
+  recipe_number: number;
+  backend: string | null;
   state: RunState;
   commercial_ok: boolean;
   created_at: string | null;

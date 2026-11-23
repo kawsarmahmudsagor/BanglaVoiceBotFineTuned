@@ -99,14 +99,14 @@ async def create_run(body: CreateRun, request: Request, session: AsyncSession = 
 
 @router.get("/runs")
 async def list_runs(state: str | None = None, session: AsyncSession = Depends(get_session)) -> list[dict]:
-    q = (select(Run, Recipe.name).join(RecipeVersion, RecipeVersion.id == Run.recipe_version_id)
+    q = (select(Run, Recipe.name, RecipeVersion).join(RecipeVersion, RecipeVersion.id == Run.recipe_version_id)
          .join(Recipe, Recipe.id == RecipeVersion.recipe_id).order_by(Run.created_at.desc(), Run.id.desc()))
     if state:
         q = q.where(Run.state == state)
     return [
-        {"id": r.id, "recipe": name, "state": r.state, "commercial_ok": r.commercial_ok,
+        {"id": r.id, "recipe": name, "recipe_number": rv.number, "backend": rv.spec.get("backend"), "state": r.state, "commercial_ok": r.commercial_ok,
          "created_at": iso(r.created_at), "started_at": iso(r.started_at), "finished_at": iso(r.finished_at)}
-        for r, name in (await session.execute(q)).all()
+        for r, name, rv in (await session.execute(q)).all()
     ]
 
 

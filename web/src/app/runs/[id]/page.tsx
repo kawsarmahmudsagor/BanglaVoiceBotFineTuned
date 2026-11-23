@@ -24,6 +24,11 @@ const errText = (e: unknown) => (e instanceof ApiError ? e.detail : e instanceof
 
 export default function RunDetailPage() {
   const { id } = useParams<{ id: string }>();
+  // keyed by id so run/metrics/logs state never leaks across routes
+  return <RunDetailView key={id} id={id} />;
+}
+
+function RunDetailView({ id }: { id: string }) {
   const router = useRouter();
   const [run, setRun] = useState<RunDetail | null>(null);
   const [metrics, setMetrics] = useState<RunMetric[]>([]);

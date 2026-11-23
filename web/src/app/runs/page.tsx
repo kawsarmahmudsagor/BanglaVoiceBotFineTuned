@@ -5,7 +5,7 @@ import { Suspense, useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { listRecipes, listRuns } from "@/lib/api";
+import { listRuns } from "@/lib/api";
 import { formatDuration, stateColor } from "@/lib/format";
 import { RUN_STATES, type RunListItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -24,7 +24,6 @@ function RunsList() {
   const params = useSearchParams();
   const state = params.get("state") ?? "";
   const [items, setItems] = useState<RunListItem[] | null>(null);
-  const [backends, setBackends] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
@@ -47,17 +46,6 @@ function RunsList() {
       clearInterval(tick);
     };
   }, [state]);
-
-  // The list endpoint carries no backend; use each recipe's latest version's backend.
-  useEffect(() => {
-    let active = true;
-    listRecipes()
-      .then((rs) => active && setBackends(Object.fromEntries(rs.map((r) => [r.name, r.latest.backend]))))
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, []);
 
   const onFilter = (value: string) =>
     router.replace(value ? `${pathname}?state=${encodeURIComponent(value)}` : pathname);
@@ -110,8 +98,8 @@ function RunsList() {
                 <Link href={`/runs/${encodeURIComponent(r.id)}`} className="font-mono underline">{r.id}</Link>
               </TableCell>
               <TableCell><Badge className={cn(stateColor(r.state))}>{r.state}</Badge></TableCell>
-              <TableCell>{r.recipe}</TableCell>
-              <TableCell className="font-mono">{backends[r.recipe] ?? ""}</TableCell>
+              <TableCell>{r.recipe} v{r.recipe_number}</TableCell>
+              <TableCell className="font-mono">{r.backend ?? ""}</TableCell>
               <TableCell>
                 <Badge variant={r.commercial_ok ? "secondary" : "outline"}>
                   {r.commercial_ok ? "commercial OK" : "non-commercial"}

@@ -3,7 +3,7 @@ import json
 
 from sqlalchemy import select
 
-from mlops_api.models import Dataset, Run
+from mlops_api.models import Dataset, Recipe, RecipeVersion, Run
 from mlops_api.routers import runs as runs_router
 from mlops_shared.contract import Metric, RunDir, Status, append_metric, write_status
 from runs_helpers import finish_files, make_run, set_state
@@ -52,6 +52,17 @@ async def test_list_runs_newest_first_and_filter(client, session, session_factor
     assert items[0]["recipe"] == "r1" and "commercial_ok" in items[0] and "created_at" in items[0]
     only = (await client.get("/api/runs?state=failed")).json()
     assert [i["id"] for i in only] == [a]
+
+
+async def test_list_runs_reports_the_runs_own_recipe_version_and_backend(client, session):
+    rid = await make_run(client, session)
+    recipe = (await session.execute(select(Recipe).where(Recipe.name == "r1"))).scalar_one()
+    v1 = (await session.execute(select(RecipeVersion).where(RecipeVersion.recipe_id == recipe.id))).scalar_one()
+    session.add(RecipeVersion(recipe_id=recipe.id, number=2, yaml="", spec={**v1.spec, "backend": "other"}))
+    await session.commit()
+    (item,) = [i for i in (await client.get("/api/runs")).json() if i["id"] == rid]
+    assert item["recipe_number"] == 1
+    assert item["backend"] == "fake"
 
 
 async def test_detail_404_and_oom_hint(client, session, session_factory):
