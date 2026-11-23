@@ -58,7 +58,7 @@ def run_dir(tmp_path):
 
         root = tmp_path / "dataset"
         root.mkdir(exist_ok=True)
-        splits = ["train", "train", "valid", "test"]
+        splits = ["train", "train", "val", "test"]
         rows = []
         if task == "llm-sft":
             for i, sp in enumerate(splits):
@@ -76,7 +76,7 @@ def run_dir(tmp_path):
         manifest = root / "manifest.parquet"
         pq.write_table(pa.Table.from_pylist(rows), manifest)
         ref = DatasetRef(name="tiny", version=1, hash="h" * 16, root=str(root),
-                         manifest=str(manifest), splits=["train", "valid", "test"])
+                         manifest=str(manifest), splits=["train", "val", "test"])
         fields = dict(
             run_id="r1", attempt=1, resume=False, task=task, backend="test", base_model=base_model,
             method={"type": "lora"}, hparams=hparams or {}, export=[], seed=1,

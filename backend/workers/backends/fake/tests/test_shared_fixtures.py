@@ -13,7 +13,7 @@ def test_run_dir_llm(run_dir):
 
 def test_run_dir_asr_audio(run_dir):
     cfg = read_config(run_dir("asr", "m"))
-    rows = list(iter_rows(cfg.datasets["train"], "valid"))
+    rows = list(iter_rows(cfg.datasets["train"], "val"))
     assert sf.info(rows[0]["audio_path"]).samplerate == 16000
 
 
