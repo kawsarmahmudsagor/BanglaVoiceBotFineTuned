@@ -103,10 +103,11 @@ async def _cancel_requested(session_factory, run_id: str) -> bool:
         return bool((await s.execute(select(Run.cancel_requested).where(Run.id == run_id))).scalar_one())
 
 
-def _git_sha(repo_root: Path) -> str | None:
+def _git_sha(path: Path) -> str | None:
+    """HEAD commit of the git checkout that contains `path` (any directory inside it)."""
     try:
         out = subprocess.run(
-            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            ["git", "-C", str(path), "rev-parse", "HEAD"],
             capture_output=True, text=True, timeout=10, check=True,
         )
         return out.stdout.strip() or None

@@ -4,6 +4,8 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # backend/app/settings.py -> repo root; the worker and API read `<repo>/.env` regardless of cwd.
+# In the API image the code lives at /app/app, so this resolves to `/`: there is no /.env and
+# compose sets every path (DATA_ROOT, BACKENDS_ROOT, RECIPES_DIR, CATALOG_DIR) explicitly.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
