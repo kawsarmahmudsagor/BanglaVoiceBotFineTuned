@@ -1,0 +1,61 @@
+id: mms-1b-all
+task: asr
+name: MMS-1B-all
+hf_repo: facebook/mms-1b-all
+params: 1B
+role: benchmark
+license:
+  id: cc-by-nc-4.0
+  commercial_ok: false
+  url: https://huggingface.co/facebook/mms-1b-all
+  notes: Non-commercial license. Use only as a benchmark, never in production.
+bangla:
+  status: native
+  evidence: "`ben` is in the supported-language list (1,000+ languages through per-language adapters)."
+  url: https://huggingface.co/facebook/mms-1b-all
+runtime:
+  engine: custom
+  streaming: false
+description: |
+  Meta's Massively Multilingual Speech model: one 1B wav2vec2 encoder with a small adapter per language.
+  Load Bengali with `processor.tokenizer.set_target_lang("ben")` and `model.load_adapter("ben")`.
+  Useful as a reference WER on your eval set.
+dataset:
+  format: asr
+  required_fields: [file, text]
+  optional_fields: [region, channel, noise, speaker]
+  example: "clips/0001.wav,আমার অর্ডারটা কবে পৌঁছাবে জানাবেন?"
+  recommended:
+    hours: "1-10"
+    sample_rate: "16000"
+    clip_seconds: "1-30"
+    speakers: "100+ for speaker variety"
+  notes: |
+    Upload as a zip with `metadata.csv` (columns `file,text`) and the audio files. Transcripts in Bangla script,
+    Unicode NFC, with numbers written the way they are spoken (for example "১২৩" as "একশো তেইশ") if the model
+    should output words. Keep phone-call audio (8 kHz upsampled) in the mix if the bot serves calls.
+finetune:
+  methods: [adapter]
+  frameworks: [transformers]
+  targets:
+    - "Train only the Bengali adapter weights and the output layer; freeze the base model."
+  hyperparams:
+    learning_rate: 1.0e-3
+    num_train_epochs: 4
+    per_device_batch_size: 32
+  metrics: [wer, cer]
+  pitfalls:
+    - "Non-commercial: a fine-tune inherits CC-BY-NC and cannot ship."
+recipe_template:
+  method: {type: adapter}
+  hparams:
+    learning_rate: 1.0e-3
+    num_train_epochs: 4
+    target_lang: ben
+  export: []
+sources:
+  - title: mms-1b-all model card
+    url: https://huggingface.co/facebook/mms-1b-all
+  - title: Fine-tuning MMS adapters (Hugging Face blog)
+    url: https://huggingface.co/blog/mms_adapters
+verified: 2026-11-23

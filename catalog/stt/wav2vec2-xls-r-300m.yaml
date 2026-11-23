@@ -1,0 +1,65 @@
+id: wav2vec2-xls-r-300m
+task: asr
+name: wav2vec2 XLS-R 300M
+hf_repo: facebook/wav2vec2-xls-r-300m
+params: 300M
+role: comparison
+license:
+  id: apache-2.0
+  commercial_ok: true
+  url: https://huggingface.co/facebook/wav2vec2-xls-r-300m
+bangla:
+  status: related
+  evidence: >-
+    Self-supervised on 436k hours in 128 languages; the card does not name Bengali, and the model has no
+    ASR head until you fine-tune one.
+  url: https://huggingface.co/facebook/wav2vec2-xls-r-300m
+runtime:
+  engine: custom
+  streaming: false
+description: |
+  A pretrained speech encoder with no output vocabulary. Fine-tuning adds a CTC head over Bengali characters.
+  It is a cheap, well-documented baseline for checking how much your data alone can achieve.
+dataset:
+  format: asr
+  required_fields: [file, text]
+  optional_fields: [region, channel, noise, speaker]
+  example: "clips/0001.wav,আমার অর্ডারটা কবে পৌঁছাবে জানাবেন?"
+  recommended:
+    hours: "50-300"
+    sample_rate: "16000"
+    clip_seconds: "1-30"
+    speakers: "100+ for speaker variety"
+  notes: |
+    Upload as a zip with `metadata.csv` (columns `file,text`) and the audio files. Transcripts in Bangla script,
+    Unicode NFC, with numbers written the way they are spoken (for example "১২৩" as "একশো তেইশ") if the model
+    should output words. Keep phone-call audio (8 kHz upsampled) in the mix if the bot serves calls.
+finetune:
+  methods: [full]
+  frameworks: [transformers]
+  targets:
+    - "Build a character vocabulary from your Bengali transcripts and add a CTC head (`Wav2Vec2ForCTC`)."
+    - "Freeze the convolutional feature encoder (`freeze_feature_encoder()`); train the transformer and head."
+    - "Optionally add an n-gram language model (pyctcdecode + KenLM) trained on Bangla text."
+  hyperparams:
+    learning_rate: 3.0e-4
+    warmup_steps: 500
+    num_train_epochs: 30
+    per_device_batch_size: 16
+    mask_time_prob: 0.05
+  metrics: [wer, cer]
+  pitfalls:
+    - "Build the vocabulary from NFC-normalised text, or Bengali vowel signs and conjuncts inflate WER."
+    - "Without a language model, CTC output is spelled phonetically; add KenLM for usable WER."
+recipe_template:
+  method: {type: full}
+  hparams:
+    learning_rate: 3.0e-4
+    num_train_epochs: 30
+  export: []
+sources:
+  - title: wav2vec2-xls-r-300m model card
+    url: https://huggingface.co/facebook/wav2vec2-xls-r-300m
+  - title: Fine-tune XLS-R (Hugging Face blog)
+    url: https://huggingface.co/blog/fine-tune-xlsr-wav2vec2
+verified: 2026-11-23

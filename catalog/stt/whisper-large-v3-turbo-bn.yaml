@@ -1,0 +1,78 @@
+id: whisper-large-v3-turbo-bn
+task: asr
+name: Whisper large-v3-turbo Bengali (mozilla-ai)
+hf_repo: mozilla-ai/whisper-large-v3-turbo-bn
+derived_from: openai/whisper-large-v3-turbo
+params: 809M
+role: primary
+license:
+  id: apache-2.0
+  commercial_ok: true
+  url: https://huggingface.co/mozilla-ai/whisper-large-v3-turbo-bn
+  notes: The base Whisper weights are MIT; this fine-tune is tagged Apache-2.0. Common Voice training data is CC0.
+bangla:
+  status: finetuned
+  evidence: >-
+    Fine-tuned on 21,409 Common Voice 21.0 Bengali clips. Normalised WER on Common Voice Bengali dropped from 78.8%
+    (base turbo) to 11.05%; normalised CER from 62.5% to 6.06% (self-reported, 9,363 test clips).
+  url: https://huggingface.co/mozilla-ai/whisper-large-v3-turbo-bn
+runtime:
+  engine: faster_whisper
+  convert: ct2
+  streaming: false
+description: |
+  Whisper large-v3-turbo (4 decoder layers instead of 32) fine-tuned on Common Voice Bengali by Mozilla.ai, using
+  their speech-to-text-finetune blueprint. It is the best open starting point for Bangla STT in RealtimeSTT:
+  convert it to CTranslate2 and load it in the `faster_whisper` engine.
+
+  Whisper is not a streaming model; RealtimeSTT gets low latency by voice-activity detection and re-transcribing
+  short windows.
+dataset:
+  format: asr
+  required_fields: [file, text]
+  optional_fields: [region, channel, noise, speaker]
+  example: "clips/0001.wav,আমার অর্ডারটা কবে পৌঁছাবে জানাবেন?"
+  recommended:
+    hours: "10-100"
+    sample_rate: "16000"
+    clip_seconds: "1-30"
+    speakers: "100+ for speaker variety"
+  notes: |
+    Upload as a zip with `metadata.csv` (columns `file,text`) and the audio files. Transcripts in Bangla script,
+    Unicode NFC, with numbers written the way they are spoken (for example "১২৩" as "একশো তেইশ") if the model
+    should output words. Keep phone-call audio (8 kHz upsampled) in the mix if the bot serves calls.
+finetune:
+  methods: [full, lora]
+  frameworks: [transformers, unsloth]
+  targets:
+    - "Continue from this checkpoint with your own domain audio (e-commerce terms, product names, phone audio)."
+    - "Full fine-tune of the decoder plus the top encoder layers; freeze the lower encoder layers if data is under 20 h."
+    - "Force the language token `<|bn|>` and task `transcribe` in both training and inference."
+    - "Export to CTranslate2 (`ct2-transformers-converter --quantization float16`) for RealtimeSTT."
+  hyperparams:
+    learning_rate: 1.0e-5
+    warmup_steps: 500
+    max_steps: 5000
+    per_device_batch_size: 16
+    grad_accum: 2
+    fp16: true
+    freeze_encoder_layers: 16
+  metrics: [wer, cer]
+  pitfalls:
+    - "Hallucinated text on silence or noise; include non-speech clips with empty transcripts and keep VAD on at inference."
+    - "Orthographic WER is far higher than normalised WER (26% vs 11% here); decide which normalisation you report before comparing runs."
+    - "Overfitting to Common Voice read speech; conversational phone audio needs its own eval split."
+recipe_template:
+  method: {type: full}
+  hparams:
+    learning_rate: 1.0e-5
+    warmup_steps: 500
+    max_steps: 5000
+    language: bn
+  export: [ct2]
+sources:
+  - title: mozilla-ai/whisper-large-v3-turbo-bn model card
+    url: https://huggingface.co/mozilla-ai/whisper-large-v3-turbo-bn
+  - title: Mozilla.ai speech-to-text-finetune blueprint
+    url: https://github.com/mozilla-ai/speech-to-text-finetune
+verified: 2026-11-23

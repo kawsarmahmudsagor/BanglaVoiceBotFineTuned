@@ -1,0 +1,71 @@
+id: bengali-zipformer-streaming
+task: asr
+name: SPRING Lab Bengali streaming Zipformer
+hf_repo: SPRINGLab/k2
+params: 65M
+role: primary
+license:
+  id: cc-by-4.0
+  commercial_ok: true
+  url: https://aikosh.indiaai.gov.in/home/models/details/spring_lab_bengali.html
+  notes: Attribution to SPRING Lab, IIT Madras is required. The Hugging Face repo is gated (agree to share contact details).
+bangla:
+  status: native
+  evidence: Trained by SPRING Lab (IIT Madras) on about 750 hours of labelled Bengali speech.
+  url: https://aikosh.indiaai.gov.in/home/models/details/spring_lab_bengali.html
+runtime:
+  engine: custom
+  convert: onnx
+  streaming: true
+description: |
+  A Zipformer-Medium transducer (65M encoder, RNN-T predictor and joiner) built with icefall for low-latency
+  streaming Bengali ASR. Weights are in the gated `SPRINGLab/k2` repo, one folder per language.
+
+  There is no RealtimeSTT engine for it yet (`custom`): export it to ONNX with icefall's sherpa-onnx export script,
+  then run it through sherpa-onnx's streaming recogniser. It is the main candidate for true streaming partial results.
+dataset:
+  format: asr
+  required_fields: [file, text]
+  optional_fields: [region, channel, noise, speaker]
+  example: "clips/0001.wav,আমার অর্ডারটা কবে পৌঁছাবে জানাবেন?"
+  recommended:
+    hours: "10-100"
+    sample_rate: "16000"
+    clip_seconds: "1-30"
+    speakers: "100+ for speaker variety"
+  notes: |
+    Upload as a zip with `metadata.csv` (columns `file,text`) and the audio files. Transcripts in Bangla script,
+    Unicode NFC, with numbers written the way they are spoken (for example "১২৩" as "একশো তেইশ") if the model
+    should output words. Keep phone-call audio (8 kHz upsampled) in the mix if the bot serves calls.
+finetune:
+  methods: [full]
+  frameworks: [icefall, k2]
+  targets:
+    - "Fine-tune with icefall's Zipformer streaming recipe from this checkpoint."
+    - "Keep the existing BPE model; it was trained on Bengali text, so no tokenizer change is needed."
+    - "Keep the streaming chunk settings (`--causal 1`, chunk size and left context) the same as the original model."
+    - "Export with icefall's `export-onnx-streaming.py` for sherpa-onnx."
+  hyperparams:
+    base_lr: 0.002
+    num_epochs: 10
+    max_duration: 600
+    causal: 1
+  metrics: [wer, cer, rtf]
+  pitfalls:
+    - "Released files may be TorchScript exports; confirm the folder has a training checkpoint, not only the exported model."
+    - "Changing chunk size between training and inference raises WER sharply."
+recipe_template:
+  method: {type: full}
+  hparams:
+    base_lr: 0.002
+    num_epochs: 10
+    causal: 1
+  export: [onnx]
+sources:
+  - title: AIKosh listing, SPRING Lab Bengali streaming
+    url: https://aikosh.indiaai.gov.in/home/models/details/spring_lab_bengali.html
+  - title: SPRINGLab/k2 (gated)
+    url: https://huggingface.co/SPRINGLab/k2
+  - title: icefall Zipformer recipes
+    url: https://github.com/k2-fsa/icefall
+verified: 2026-11-23
