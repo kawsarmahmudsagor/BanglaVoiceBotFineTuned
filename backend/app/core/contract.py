@@ -29,6 +29,14 @@ class DatasetRef(BaseModel):
     split: SplitConfig | None = None
 
 
+class InitRef(BaseModel):
+    path: str
+    source_run: str
+    checkpoint: str
+    method: str
+    format: str
+
+
 class RunConfig(BaseModel):
     run_id: str
     attempt: int
@@ -42,6 +50,7 @@ class RunConfig(BaseModel):
     seed: int
     datasets: dict[str, DatasetRef]
     prepared_root: str
+    init_from: InitRef | None = None
 
 
 class Status(BaseModel):
@@ -107,6 +116,10 @@ class RunDir:
     @property
     def checkpoints_dir(self) -> Path:
         return self.path / "checkpoints"
+
+    @property
+    def init_dir(self) -> Path:
+        return self.path / "init"
 
     @property
     def eval_dir(self) -> Path:

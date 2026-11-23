@@ -5,7 +5,7 @@ import re
 from collections.abc import Iterable
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .splits import SplitConfig
 
@@ -26,6 +26,27 @@ class RecipeDatasets(BaseModel):
     split: SplitConfig = SplitConfig()
 
 
+# Allowed (source method, new method) pairs for a warm start (spec 14.2).
+INIT_METHOD_PAIRS: frozenset[tuple[str, str]] = frozenset({
+    ("lora", "lora"), ("lora", "qlora"), ("qlora", "lora"), ("qlora", "qlora"), ("lora", "full"),
+    ("qlora", "full"), ("full", "lora"), ("full", "qlora"), ("full", "full"), ("adapter", "adapter"),
+})
+
+
+class InitFrom(BaseModel):
+    run: str | None = None
+    checkpoint: Literal["final", "latest"] | int = "final"
+    model_version: str | None = None
+
+    @model_validator(mode="after")
+    def _one_source(self) -> "InitFrom":
+        if (self.run is None) == (self.model_version is None):
+            raise ValueError("init_from needs exactly one of 'run' or 'model_version'")
+        if self.run is None and self.checkpoint != "final":
+            raise ValueError("init_from.checkpoint can only be set together with 'run'")
+        return self
+
+
 class RecipeSpec(BaseModel):
     name: str
     task: Literal["llm-sft", "asr", "tts"]
@@ -36,6 +57,7 @@ class RecipeSpec(BaseModel):
     method: dict
     hparams: dict
     export: list[str] = []
+    init_from: InitFrom | None = None
 
     @field_validator("name")
     @classmethod

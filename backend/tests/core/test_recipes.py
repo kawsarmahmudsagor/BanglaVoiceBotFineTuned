@@ -82,3 +82,34 @@ def test_method_requires_type():
 def test_seed_property():
     assert make_spec(hparams={}).seed == 42
     assert make_spec(hparams={"seed": 7}).seed == 7
+
+
+def test_init_from_requires_exactly_one_source():
+    from app.core.recipes import InitFrom
+
+    with pytest.raises(ValidationError):
+        InitFrom(run="r-1", model_version="m@v1")
+    with pytest.raises(ValidationError):
+        InitFrom()
+    assert InitFrom(run="r-1").checkpoint == "final"
+    assert InitFrom(model_version="m@v1").run is None
+
+
+def test_init_from_checkpoint_only_with_run():
+    from app.core.recipes import InitFrom
+
+    with pytest.raises(ValidationError):
+        InitFrom(model_version="m@v1", checkpoint="latest")
+    assert InitFrom(run="r-1", checkpoint=300).checkpoint == 300
+    with pytest.raises(ValidationError):
+        InitFrom(run="r-1", checkpoint="bogus")
+
+
+def test_init_method_pairs_and_recipe_field():
+    from app.core.recipes import INIT_METHOD_PAIRS
+
+    assert ("adapter", "adapter") in INIT_METHOD_PAIRS and ("adapter", "full") not in INIT_METHOD_PAIRS
+    assert len(INIT_METHOD_PAIRS) == 10
+    assert make_spec().init_from is None
+    spec = make_spec(init_from={"run": "r-1"})
+    assert spec.init_from.run == "r-1"

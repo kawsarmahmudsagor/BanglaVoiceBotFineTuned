@@ -4,11 +4,11 @@ import sys
 import pytest
 
 from app.core.backend_kit import (
-    NanGuard, Reporter, StopFlag, TrainingDiverged, eval_opts, latest_checkpoint,
-    main, mark_complete, max_skip_share,
+    InitChoice, NanGuard, Reporter, StopFlag, TrainingDiverged, eval_opts, init_source, latest_checkpoint,
+    main, mark_complete, max_skip_share, read_init_meta, resolve_checkpoint, write_init_meta,
 )
 from app.core.contract import (
-    Phase, RunConfig, RunDir, append_eval_sample, read_eval_samples, read_metrics,
+    InitRef, Phase, RunConfig, RunDir, append_eval_sample, read_eval_samples, read_metrics,
     read_status, write_config,
 )
 from app.core.prepare import PrepareError
@@ -161,3 +161,59 @@ def test_eval_samples_roundtrip(tmp_path):
     rows, total = read_eval_samples(rd, 1, 1)
     assert rows == [{"i": 1, "text": "bangla"}] and total == 3
     assert read_eval_samples(RunDir(tmp_path / "none"), 0, 5) == ([], 0)
+
+
+def _ckpt(rd, name, complete=True):
+    d = rd.checkpoints_dir / name
+    d.mkdir(parents=True)
+    if complete:
+        mark_complete(d)
+    return d
+
+
+def test_resolve_checkpoint_final_latest_step(tmp_path):
+    rd = RunDir(tmp_path)
+    rd.ensure()
+    assert resolve_checkpoint(rd, "final") is None and resolve_checkpoint(rd, "latest") is None
+    _ckpt(rd, "checkpoint-100")
+    c300 = _ckpt(rd, "checkpoint-300")
+    _ckpt(rd, "checkpoint-500", complete=False)
+    assert resolve_checkpoint(rd, "latest") == c300
+    assert resolve_checkpoint(rd, 300) == c300
+    assert resolve_checkpoint(rd, 500) is None and resolve_checkpoint(rd, 7) is None
+    _ckpt(rd, "final", complete=False)
+    assert resolve_checkpoint(rd, "final") is None
+    mark_complete(rd.checkpoints_dir / "final")
+    assert resolve_checkpoint(rd, "final") == rd.checkpoints_dir / "final"
+
+
+def test_init_meta_roundtrip(tmp_path):
+    assert read_init_meta(tmp_path) is None
+    write_init_meta(tmp_path, backend="hf", base_model="m", method="lora", format="hf-peft", step=12)
+    assert read_init_meta(tmp_path) == {"backend": "hf", "base_model": "m", "method": "lora",
+                                        "format": "hf-peft", "step": 12}
+
+
+def _init_cfg(rd, resume):
+    cfg = _cfg()
+    cfg.resume = resume
+    cfg.init_from = InitRef(path=str(rd.init_dir), source_run="r-0", checkpoint="final", method="lora", format="x")
+    return cfg
+
+
+def test_init_source_prefers_own_checkpoint_on_resume(tmp_path):
+    rd = RunDir(tmp_path)
+    rd.ensure()
+    own = _ckpt(rd, "checkpoint-5")
+    assert init_source(_init_cfg(rd, True), rd) == InitChoice("resume", own, read_init_meta(own))
+    assert init_source(_init_cfg(rd, False), rd).kind == "init"  # not resuming: own checkpoint ignored
+
+
+def test_init_source_uses_init_dir_when_no_own_checkpoint(tmp_path):
+    rd = RunDir(tmp_path)
+    rd.ensure()
+    rd.init_dir.mkdir()
+    write_init_meta(rd.init_dir, backend="b", base_model="m", method="lora", format="x", step=1)
+    ch = init_source(_init_cfg(rd, True), rd)
+    assert ch.kind == "init" and ch.path == rd.init_dir and ch.meta["step"] == 1
+    assert init_source(_cfg(), rd) is None

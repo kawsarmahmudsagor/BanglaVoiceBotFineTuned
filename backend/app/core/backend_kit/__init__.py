@@ -5,14 +5,16 @@ Light on purpose: audio.py and hf_access.py are submodules and are not imported 
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import re
 import signal
 import sys
 import time
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, NoReturn
+from typing import Callable, Literal, NoReturn
 
 from app.core.contract import (
     Metric, Phase, RunConfig, RunDir, Status, append_metric, read_config, write_status,
@@ -23,8 +25,11 @@ Handler = Callable[[RunDir, RunConfig, "Reporter"], int]
 
 __all__ = [
     "Handler", "main", "Reporter", "StopFlag", "NanGuard", "TrainingDiverged", "mark_complete",
-    "latest_checkpoint", "max_skip_share", "eval_opts",
+    "latest_checkpoint", "max_skip_share", "eval_opts", "INIT_META", "write_init_meta", "read_init_meta",
+    "resolve_checkpoint", "InitChoice", "init_source",
 ]
+
+INIT_META = "init_meta.json"
 
 
 class TrainingDiverged(RuntimeError):
@@ -101,6 +106,53 @@ def latest_checkpoint(rd: RunDir) -> Path | None:
         if best is None or n > best[0]:
             best = (n, d)
     return best[1] if best else None
+
+
+def write_init_meta(ckpt_dir: Path, *, backend: str, base_model: str, method: str, format: str, step: int) -> None:
+    meta = {"backend": backend, "base_model": base_model, "method": method, "format": format, "step": step}
+    (Path(ckpt_dir) / INIT_META).write_text(json.dumps(meta), encoding="utf-8")
+
+
+def read_init_meta(ckpt_dir: Path) -> dict | None:
+    try:
+        data = json.loads((Path(ckpt_dir) / INIT_META).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def resolve_checkpoint(rd: RunDir, which: str | int) -> Path | None:
+    """The complete checkpoint dir named by `which` ("final", "latest" or a step), else None."""
+    if which == "latest":
+        return latest_checkpoint(rd)
+    if which == "final":
+        d = rd.checkpoints_dir / "final"
+        return d if (d / ".complete").exists() else None
+    if not rd.checkpoints_dir.is_dir():
+        return None
+    for d in rd.checkpoints_dir.iterdir():
+        m = re.search(r"(\d+)$", d.name)
+        if d.is_dir() and m and int(m.group(1)) == which and (d / ".complete").exists():
+            return d
+    return None
+
+
+@dataclass
+class InitChoice:
+    kind: Literal["resume", "init"]
+    path: Path
+    meta: dict | None
+
+
+def init_source(cfg: RunConfig, rd: RunDir) -> InitChoice | None:
+    """Where a train phase starts from: its own checkpoint when resuming, else the warm-start init dir."""
+    if cfg.resume:
+        own = latest_checkpoint(rd)
+        if own is not None:
+            return InitChoice("resume", own, read_init_meta(own))
+    if cfg.init_from is not None:
+        return InitChoice("init", rd.init_dir, read_init_meta(rd.init_dir))
+    return None
 
 
 def max_skip_share(cfg: RunConfig) -> float:
