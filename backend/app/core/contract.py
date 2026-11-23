@@ -7,7 +7,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TypeVar
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 
 class Phase(str, Enum):
@@ -74,6 +74,13 @@ class EvalResults(BaseModel):
     samples_dir: str | None = None
 
 
+class PreparedRef(BaseModel):
+    """One entry of prepared_refs.json: role plus PrepInfo fields, flat (kept as dicts to avoid importing prepare)."""
+
+    model_config = ConfigDict(extra="allow")
+    role: str
+
+
 class RunDir:
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -113,6 +120,10 @@ class RunDir:
     @property
     def export_manifest_path(self) -> Path:
         return self.export_dir / "manifest.json"
+
+    @property
+    def prepared_refs_path(self) -> Path:
+        return self.path / "prepared_refs.json"
 
     def ensure(self) -> None:
         for d in (self.path, self.logs_dir, self.checkpoints_dir, self.eval_dir, self.export_dir):
@@ -191,3 +202,20 @@ def write_export_manifest(rd: RunDir, man: ExportManifest) -> None:
 
 def read_export_manifest(rd: RunDir) -> ExportManifest | None:
     return _read_model(rd.export_manifest_path, ExportManifest)
+
+
+def write_prepared_refs(rd: RunDir, refs: list[dict]) -> None:
+    rd.prepared_refs_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = rd.prepared_refs_path.with_name(rd.prepared_refs_path.name + ".tmp")
+    tmp.write_bytes(json.dumps(refs, indent=2, ensure_ascii=False).encode("utf-8"))
+    os.replace(tmp, rd.prepared_refs_path)
+
+
+def read_prepared_refs(rd: RunDir) -> list[dict]:
+    try:
+        data = json.loads(rd.prepared_refs_path.read_bytes())
+    except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
+        return []
+    if not isinstance(data, list) or not all(isinstance(r, dict) for r in data):
+        return []
+    return data

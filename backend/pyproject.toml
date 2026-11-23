@@ -24,6 +24,8 @@ server = [
   "sse-starlette",
   "python-multipart",
 ]
+prepare = ["pyarrow"]
+audio = ["numpy", "soundfile", "soxr"]
 worker = ["bangla-voice-backend[server]", "mlflow-skinny>=2.14"]
 
 [build-system]
@@ -47,7 +49,7 @@ exclude = []
 mlops-backend-fake = { workspace = true }
 
 [dependency-groups]
-dev = ["pytest", "pytest-asyncio", "httpx", "jsonschema", "mlops-backend-fake"]
+dev = ["pytest", "pytest-asyncio", "httpx", "jsonschema", "soxr", "mlops-backend-fake"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
