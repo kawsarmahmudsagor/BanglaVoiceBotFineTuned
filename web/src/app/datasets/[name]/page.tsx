@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { PageHeader, Panel } from "@/components/matra";
+import { EmptyState, ErrorNotice } from "@/components/notice";
 import { buttonVariants } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { getDataset, patchDataset } from "@/lib/api";
@@ -37,62 +39,61 @@ export default function DatasetPage() {
 
   const enc = encodeURIComponent(name);
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">
-          {name} {ds && <span className="font-mono text-sm text-muted-foreground">{ds.task}</span>}
-        </h1>
-        {ds && (
-          <Link href={`/datasets/new?name=${enc}&task=${ds.task}`} className={cn(buttonVariants())}>
-            Upload new version
-          </Link>
-        )}
-      </div>
-      {error && (
-        <div role="alert" className="rounded-md border border-red-500/50 bg-red-500/10 px-3 py-2 text-sm">
-          {error}
-        </div>
-      )}
+    <div className="space-y-5">
+      <PageHeader
+        title={name}
+        actions={
+          ds && (
+            <Link href={`/datasets/new?name=${enc}&task=${ds.task}`} className={cn(buttonVariants({ size: "lg" }), "px-3")}>
+              Upload new version
+            </Link>
+          )
+        }
+      >
+        {ds && <span className="font-mono">{ds.task}</span>}
+      </PageHeader>
+      {error && <ErrorNotice>{error}</ErrorNotice>}
       {ds && (
         <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={ds.eval_only} onChange={(e) => void toggleEvalOnly(e.target.checked)} />
+          <input type="checkbox" className="size-4 accent-[var(--saffron)]" checked={ds.eval_only} onChange={(e) => void toggleEvalOnly(e.target.checked)} />
           Eval only (excluded from training)
         </label>
       )}
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Version</TableHead>
-            <TableHead>Samples</TableHead>
-            <TableHead>Created</TableHead>
-            <TableHead>Commercial</TableHead>
-            <TableHead>Parent</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {ds?.versions.length === 0 && (
-            <TableRow>
-              <TableCell colSpan={5} className="text-muted-foreground">No versions yet</TableCell>
-            </TableRow>
-          )}
-          {ds?.versions
-            .slice()
-            .reverse()
-            .map((v) => (
-              <TableRow key={v.id}>
-                <TableCell>
-                  <Link href={`/datasets/${enc}/v/${v.number}`} className="underline">v{v.number}</Link>
-                </TableCell>
-                <TableCell>{v.n_samples}</TableCell>
-                <TableCell className="text-muted-foreground">
-                  {v.created_at ? new Date(v.created_at).toLocaleString() : ""}
-                </TableCell>
-                <TableCell>{v.commercial_ok ? "OK" : "No"}</TableCell>
-                <TableCell>{v.parent_number !== null ? `v${v.parent_number}` : ""}</TableCell>
+      <Panel title="Versions">
+        {ds?.versions.length === 0 ? (
+          <EmptyState>No versions yet.</EmptyState>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Version</TableHead>
+                <TableHead>Samples</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead>License</TableHead>
+                <TableHead>Parent</TableHead>
               </TableRow>
-            ))}
-        </TableBody>
-      </Table>
+            </TableHeader>
+            <TableBody>
+              {ds?.versions
+                .slice()
+                .reverse()
+                .map((v) => (
+                  <TableRow key={v.id}>
+                    <TableCell>
+                      <Link href={`/datasets/${enc}/v/${v.number}`} className="font-mono hover:text-saffron">v{v.number}</Link>
+                    </TableCell>
+                    <TableCell className="font-mono">{v.n_samples}</TableCell>
+                    <TableCell className="text-muted-foreground">{v.created_at ? new Date(v.created_at).toLocaleString() : ""}</TableCell>
+                    <TableCell className={v.commercial_ok ? "text-status-done" : "text-status-failed"}>
+                      {v.commercial_ok ? "commercial OK" : "non-commercial"}
+                    </TableCell>
+                    <TableCell className="font-mono">{v.parent_number !== null ? `v${v.parent_number}` : ""}</TableCell>
+                  </TableRow>
+                ))}
+            </TableBody>
+          </Table>
+        )}
+      </Panel>
     </div>
   );
 }
