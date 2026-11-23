@@ -1,113 +1,129 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Badge } from "@/components/ui/badge";
+import { Crown, GitCompareArrows } from "lucide-react";
+import { useEffect, useState } from "react";
+import { PageHeader, Panel } from "@/components/matra";
+import { EmptyState, ErrorNotice } from "@/components/notice";
+import { buttonVariants } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { listModels } from "@/lib/api";
-import { TASK_ORDER, formatMetric, groupByTask, keyMetrics } from "@/lib/models";
-import type { ModelVersion, Task } from "@/lib/types";
+import { sectionForTask } from "@/lib/catalog";
+import { TASK_ORDER, formatMetric, keyMetrics, laneOrder } from "@/lib/models";
+import { compareHref } from "@/lib/run-filters";
+import type { ModelVersion } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
-function ModelsList() {
-  const router = useRouter();
-  const pathname = usePathname();
-  const params = useSearchParams();
-  const raw = params.get("task") ?? "";
-  const task = (TASK_ORDER as string[]).includes(raw) ? (raw as Task) : undefined;
+const MAX_COMPARE = 4;
+
+export default function RegistryPage() {
   const [items, setItems] = useState<ModelVersion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<number[]>([]);
 
   useEffect(() => {
     let active = true;
-    listModels(task)
-      .then((d) => {
-        if (!active) return;
-        setItems(d);
-        setError(null);
-      })
+    listModels()
+      .then((d) => active && setItems(d))
       .catch((e) => active && setError(e instanceof Error ? e.message : String(e)));
     return () => {
       active = false;
     };
-  }, [task]);
+  }, []);
 
-  const onFilter = (value: string) =>
-    router.replace(value ? `${pathname}?task=${encodeURIComponent(value)}` : pathname);
-  const groups = items ? groupByTask(items) : [];
+  const toggle = (id: number) =>
+    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : s.length >= MAX_COMPARE ? s : [...s, id]));
+  const runIds = [...new Set((items ?? []).filter((m) => selected.includes(m.id)).map((m) => m.run_id))];
+  const canCompare = runIds.length >= 2 && runIds.length <= MAX_COMPARE;
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Models</h1>
-        <label className="flex items-center gap-2 text-sm">
-          Task
-          <select
-            aria-label="Task filter"
-            value={task ?? ""}
-            onChange={(e) => onFilter(e.target.value)}
-            className="h-8 rounded-md border bg-background px-2"
-          >
-            <option value="">All</option>
-            {TASK_ORDER.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-        </label>
-      </div>
-      {error && (
-        <div role="alert" className="rounded-md border border-red-500/50 bg-red-500/10 px-3 py-2 text-sm">
-          Cannot load models ({error})
-        </div>
+    <div className="space-y-5">
+      <PageHeader
+        title="Registry"
+        actions={
+          canCompare ? (
+            <Link href={compareHref(runIds)} className={cn(buttonVariants({ size: "lg" }), "gap-2 px-3")}>
+              <GitCompareArrows className="size-4" aria-hidden />
+              Compare ({selected.length})
+            </Link>
+          ) : (
+            <span className={cn(buttonVariants({ size: "lg", variant: "outline" }), "pointer-events-none gap-2 px-3 opacity-60")} aria-disabled="true">
+              <GitCompareArrows className="size-4" aria-hidden />
+              Compare ({selected.length})
+            </span>
+          )
+        }
+      >
+        Promoted model versions, one lane per model type. The champion is the version the voice bot serves.
+      </PageHeader>
+      {error && <ErrorNotice>Cannot load models ({error})</ErrorNotice>}
+      {items?.length === 0 && (
+        <EmptyState>No models yet. Promote a finished run from its run page.</EmptyState>
       )}
-      {items?.length === 0 && <p className="text-sm text-muted-foreground">No models yet. Promote a finished run.</p>}
-      {groups.map((g) => (
-        <section key={g.task} className="space-y-2">
-          <h2 className="font-mono text-sm font-medium">{g.task}</h2>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Version</TableHead>
-                <TableHead>Base model</TableHead>
-                <TableHead>Key metrics</TableHead>
-                <TableHead>Commercial</TableHead>
-                <TableHead>Champion</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {g.models.map((m) => (
-                <TableRow key={m.id}>
-                  <TableCell>
-                    <Link href={`/registry/${m.id}`} className="underline">{m.name}</Link>
-                  </TableCell>
-                  <TableCell>v{m.number}</TableCell>
-                  <TableCell className="font-mono">{m.base_model}</TableCell>
-                  <TableCell className="font-mono text-xs">
-                    {keyMetrics(m.metrics).map(([k, v]) => `${k}=${formatMetric(v)}`).join("  ")}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={m.commercial_ok ? "secondary" : "outline"}>
-                      {m.commercial_ok ? "commercial OK" : "non-commercial"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    {m.champion && <span role="img" aria-label="champion" title="champion">★</span>}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </section>
-      ))}
+      {items &&
+        items.length > 0 &&
+        TASK_ORDER.map((task) => {
+          const lane = laneOrder(items.filter((m) => m.task === task));
+          return (
+            <Panel key={task} title={sectionForTask(task).label} actions={<span className="font-mono text-[13px] text-muted-foreground">{task}</span>}>
+              {lane.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No {sectionForTask(task).label} models promoted yet.</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="w-10"><span className="sr-only">Select for compare</span></TableHead>
+                      <TableHead>Version</TableHead>
+                      <TableHead>Key metrics</TableHead>
+                      <TableHead>License</TableHead>
+                      <TableHead>Source run</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {lane.map((m) => {
+                      const checked = selected.includes(m.id);
+                      return (
+                        <TableRow key={m.id} data-state={checked ? "selected" : undefined} className={cn(m.champion && "bg-saffron/5")}>
+                          <TableCell>
+                            <input
+                              type="checkbox"
+                              className="size-4 accent-[var(--saffron)]"
+                              aria-label={`Select ${m.name} v${m.number} for compare`}
+                              checked={checked}
+                              disabled={!checked && selected.length >= MAX_COMPARE}
+                              onChange={() => toggle(m.id)}
+                            />
+                          </TableCell>
+                          <TableCell className="max-w-64">
+                            <Link href={`/registry/${m.id}`} className="inline-flex max-w-full items-center gap-1.5 hover:text-saffron">
+                              <span className="truncate font-medium" title={m.name}>{m.name}</span>
+                              <span className="font-mono">v{m.number}</span>
+                            </Link>
+                            {m.champion && (
+                              <span className="ml-2 inline-flex items-center gap-1 text-[13px] text-saffron">
+                                <Crown className="size-3.5" aria-hidden />
+                                Champion
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="font-mono text-[13px]">
+                            {keyMetrics(m.metrics).map(([k, v]) => `${k} ${formatMetric(v)}`).join("  ") || <span className="text-muted-foreground">none</span>}
+                          </TableCell>
+                          <TableCell className={m.commercial_ok ? "text-status-done" : "text-status-failed"}>
+                            {m.commercial_ok ? "commercial OK" : "non-commercial"}
+                          </TableCell>
+                          <TableCell className="max-w-40">
+                            <Link href={`/runs/${encodeURIComponent(m.run_id)}`} className="block truncate font-mono text-[13px] hover:text-saffron" title={m.run_id}>{m.run_id}</Link>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </Panel>
+          );
+        })}
     </div>
-  );
-}
-
-export default function ModelsPage() {
-  return (
-    <Suspense fallback={<p className="text-sm text-muted-foreground">Loading models...</p>}>
-      <ModelsList />
-    </Suspense>
   );
 }
