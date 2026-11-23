@@ -43,10 +43,10 @@ Run this once after setup to confirm the whole platform works end to end. It use
 9. While it is training, click Cancel. Success: the run ends in `cancelled`.
 10. Click Resume. Success: the run goes back to `queued`, then trains again.
 11. Let it finish. Success: the state is `done` and the run page shows eval metrics and an export.
-12. Click Promote. Success: the page navigates to the new model's page under Models.
-13. Models > open the model > Set champion. Success: the champion badge appears and the star shows in the list.
-14. Dashboard, active run: while a run is training (repeat step 8 if needed), the GPU card shows your GPU and the GPU lock card shows the run id as holder.
-15. Dashboard, idle: with no run active, the GPU lock card shows the lock as free.
+12. Click Promote to registry. Success: the page navigates to the new model's page under Registry.
+13. Registry > open the model > Set as champion. Success: the Champion label appears on the model page and at the top of its lane in Registry.
+14. Overview, active run: while a run is training (repeat step 8 if needed), the GPU card shows your GPU and the GPU lock card shows the run id as holder.
+15. Overview, idle: with no run active, the GPU lock card shows the lock as free.
 16. Open `http://localhost:5000` (MLflow, through the tunnel). Success: the run appears with its metrics.
 
 Sample `smoke.jsonl` (each line is one chat; these 5 lines are enough for the smoke check, since the fake backend does not read the data and small val/test splits are fine):
@@ -77,6 +77,15 @@ Everything is under `DATA_ROOT`:
 - `mlflow/`: MLflow artifacts. Run and experiment metadata is in the `mlflow` Postgres database.
 
 Platform records (datasets, jobs, runs) are in the `mlops` Postgres database, kept in the `pgdata` Docker volume. The API container sees `DATA_ROOT` and the repo's `backends/` and `recipes/` at the same absolute paths as the host, so paths it hands to the worker are valid on both sides.
+
+## Model catalog
+
+The Catalog page lists base models you can fine-tune, in three sections: LLM, STT and TTS. Each entry says what the model is, its license and Bangla support, the training data it needs (in the platform's upload format), and what to target when fine-tuning. "Fine-tune" opens a new recipe pre-filled from the entry.
+
+- Entries are YAML files at `catalog/<section>/<id>.yaml`, where `<section>` is `llm`, `stt` or `tts` and `<id>` matches the file's `id` field. The schema is `CatalogEntry` in `shared/mlops_shared/catalog.py`; unknown fields are rejected.
+- To add a model, copy an existing entry in the same section, edit it, cite every claim in `sources`, and set `verified` to the date you checked the model card. No code change is needed.
+- `uv run pytest shared/tests/test_repo_catalog.py` validates every committed entry. A file that fails to load also shows as a warning on the Catalog page, and the other entries still load.
+- The API reads the directory in `CATALOG_DIR` (default `<repo>/catalog`; compose mounts it read-only).
 
 ## Adding a backend
 

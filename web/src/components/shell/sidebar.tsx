@@ -16,7 +16,7 @@ export function NavLinks({ collapsed, onNavigate }: { collapsed: boolean; onNavi
             (collapsed ? (
               <div className="mx-3 mb-1 h-px bg-rule" aria-hidden />
             ) : (
-              <div className="px-3 pb-1 text-[13px] text-muted-foreground">{g.label}</div>
+              <div className="px-3 pb-1.5 text-[13px] text-muted-foreground">{g.label}</div>
             ))}
           <ul className="flex flex-col gap-0.5">
             {g.items.map(({ href, label, icon: Icon }) => {
@@ -31,7 +31,7 @@ export function NavLinks({ collapsed, onNavigate }: { collapsed: boolean; onNavi
                     className={cn(
                       "relative flex h-9 items-center gap-2.5 rounded-md px-3 text-sm transition-colors duration-150",
                       "hover:bg-raised",
-                      active ? "font-medium text-foreground" : "text-muted-foreground",
+                      active ? "bg-raised font-medium text-foreground" : "text-muted-foreground",
                       collapsed && "justify-center px-0",
                     )}
                   >

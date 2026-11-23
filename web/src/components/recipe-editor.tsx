@@ -224,7 +224,10 @@ export function RecipeEditor({ initial, notice }: { initial?: Spec; notice?: str
     }
   }
 
-  const grouped = groupErrors(validating ? [] : errors);
+  // An empty name is not a mistake yet; ask for it instead of flagging it.
+  const unnamed = str(spec.name) === "";
+  const shown = validating ? [] : unnamed ? errors.filter((e) => !e.startsWith("name")) : errors;
+  const grouped = groupErrors(shown);
   const err = (f: RecipeField) => grouped[f];
   const canSave = !saving && !validating && errors.length === 0 && !yamlError;
   const exportsSel = Array.isArray(spec.export) ? (spec.export as string[]) : [];
@@ -364,9 +367,10 @@ export function RecipeEditor({ initial, notice }: { initial?: Spec; notice?: str
             <ul className="list-disc pl-4">{grouped.general.map((e, i) => <li key={i}>{e}</li>)}</ul>
           </ErrorNotice>
         )}
-        {!validating && errors.length > 0 && !grouped.general && (
-          <p className="text-sm text-status-failed">Fix the {errors.length === 1 ? "problem" : `${errors.length} problems`} marked above to save.</p>
+        {!validating && shown.length > 0 && !grouped.general && (
+          <p className="text-sm text-status-failed">Fix the {shown.length === 1 ? "problem" : `${shown.length} problems`} marked above to save.</p>
         )}
+        {!validating && unnamed && <p className="text-sm text-muted-foreground">Name the recipe to save it.</p>}
         {saveError && <ErrorNotice>{saveError}</ErrorNotice>}
       </div>
       <Button size="lg" className="px-4" onClick={() => void save()} disabled={!canSave}>Save recipe</Button>

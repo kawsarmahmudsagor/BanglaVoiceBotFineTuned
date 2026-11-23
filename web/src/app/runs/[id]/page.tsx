@@ -224,7 +224,7 @@ function RunDetailView({ id }: { id: string }) {
 
       <PhaseTimeline phase={status?.phase} state={run.state} />
 
-      {status && (
+      {status && !terminal && (
         <div className="flex flex-wrap justify-between gap-2 text-sm">
           <span>
             <span className="font-mono">{status.total_steps ? `${status.step} / ${status.total_steps}` : status.step}</span> steps

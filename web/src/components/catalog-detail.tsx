@@ -76,11 +76,11 @@ function List({ items }: { items: string[] }) {
   );
 }
 
-function Tags({ items, mono }: { items: string[]; mono?: boolean }) {
+function Tags({ items, mono, highlightFirst }: { items: string[]; mono?: boolean; highlightFirst?: boolean }) {
   return (
     <div className="flex flex-wrap gap-1.5">
       {items.map((t, i) => (
-        <span key={t} className={cn("rounded-md bg-raised px-2 py-0.5 text-[13px]", mono && "font-mono", i === 0 && "ring-1 ring-saffron/60")}>
+        <span key={t} className={cn("rounded-md bg-raised px-2 py-0.5 text-[13px]", mono && "font-mono", highlightFirst && i === 0 && "ring-1 ring-saffron/60")}>
           {t}
         </span>
       ))}
@@ -172,7 +172,7 @@ export function CatalogDetail({ entry }: { entry: CatalogEntry }) {
       <Panel title="Fine-tuning">
         <div className="space-y-5">
           <dl className="grid gap-4 sm:grid-cols-3">
-            <Field label="Methods (first is recommended)"><Tags items={finetune.methods} mono /></Field>
+            <Field label="Methods (first is recommended)"><Tags items={finetune.methods} mono highlightFirst /></Field>
             <Field label="Frameworks"><Tags items={finetune.frameworks} /></Field>
             <Field label="Watch these metrics"><Tags items={finetune.metrics} mono /></Field>
           </dl>
