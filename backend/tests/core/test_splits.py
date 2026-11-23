@@ -8,10 +8,10 @@ def rows(labels):
     return [{"sample_id": f"{i:016x}", "split": lab} for i, lab in enumerate(labels)]
 
 
-def test_no_labels_70_20_10():
+def test_no_labels_90_5_5():
     out = assign(rows([None] * 20000), SplitConfig())
-    assert abs(out.count("train") / 20000 - 0.7) < 0.02 and abs(out.count("val") / 20000 - 0.2) < 0.02
-    assert abs(out.count("test") / 20000 - 0.1) < 0.02
+    assert abs(out.count("train") / 20000 - 0.9) < 0.01 and abs(out.count("val") / 20000 - 0.05) < 0.01
+    assert abs(out.count("test") / 20000 - 0.05) < 0.01
 
 
 def test_all_given_kept():
@@ -23,19 +23,19 @@ def test_train_and_test_given_carves_val_from_train():
     labels = ["train"] * 9000 + ["test"] * 1000
     out = assign(rows(labels), SplitConfig())
     assert out[9000:] == ["test"] * 1000
-    assert abs(out[:9000].count("val") / 9000 - 0.2 / 0.9) < 0.02 and "test" not in out[:9000]
+    assert abs(out[:9000].count("val") / 9000 - 0.05 / 0.95) < 0.01 and "test" not in out[:9000]
 
 
-def test_only_test_given_rest_split_70_20():
+def test_only_test_given_rest_split_90_5():
     labels = ["test"] * 1000 + [None] * 9000
     out = assign(rows(labels), SplitConfig())
     assert out[:1000] == ["test"] * 1000
-    assert abs(out[1000:].count("train") / 9000 - 0.7 / 0.9) < 0.02
+    assert abs(out[1000:].count("train") / 9000 - 0.9 / 0.95) < 0.01
 
 
 def test_ignore_dataset_splits():
     out = assign(rows(["test"] * 10000), SplitConfig(use_dataset_splits=False))
-    assert abs(out.count("train") / 10000 - 0.7) < 0.02
+    assert abs(out.count("train") / 10000 - 0.9) < 0.01
 
 
 def test_deterministic_and_order_independent():

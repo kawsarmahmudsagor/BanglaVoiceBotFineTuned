@@ -24,9 +24,9 @@ class EmptySplitError(ValueError):
 
 
 class SplitRatios(BaseModel):
-    train: float = 0.7
-    val: float = 0.2
-    test: float = 0.1
+    train: float = 0.9
+    val: float = 0.05
+    test: float = 0.05
 
     @model_validator(mode="after")
     def _check(self) -> "SplitRatios":

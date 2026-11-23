@@ -206,7 +206,7 @@ def test_iter_rows_applies_split_config(audio_ds):
 
 
 def test_empty_assigned_split_is_prepare_error(llm_ds):
-    ds = llm_ds.model_copy(update={"split": SplitConfig(use_dataset_splits=False)})  # 3 rows cannot fill 70/20/10
+    ds = llm_ds.model_copy(update={"split": SplitConfig(use_dataset_splits=False)})  # 3 rows cannot fill 90/5/5
     with pytest.raises(PrepareError, match="split '.*' is empty: add data or change datasets.split.ratios"):
         list(iter_rows(ds, "train"))
 
