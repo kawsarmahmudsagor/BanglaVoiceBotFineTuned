@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from app.core.contract import (
-    DatasetRef, EvalResults, Phase, RunConfig, RunDir, append_eval_sample, write_eval_results,
+    DatasetRef, EvalResults, Phase, RunConfig, RunDir, append_eval_sample, reset_eval_samples, write_eval_results,
 )
 from app.core.metrics import bangla_script_share, cer, has_emoji, has_markdown, sample_wer, wer
 from app.core.text import bn_normalize
@@ -32,6 +32,8 @@ def _mean(xs: list[float]) -> float:
 
 def run_llm_eval(rd: RunDir, rep: "Reporter", rows: list[dict], generate: Callable[[list[dict]], str], *,
                  loss: float | None, prefix: str = "", max_samples: int = 200) -> dict[str, float]:
+    if prefix == "":
+        reset_eval_samples(rd)
     items = []
     for row in rows:
         msgs = row["messages"]
@@ -62,12 +64,16 @@ def run_llm_eval(rd: RunDir, rep: "Reporter", rows: list[dict], generate: Callab
 def run_asr_eval(rd: RunDir, rep: "Reporter", rows: list[dict], transcribe: Callable[[list[str]], list[str]], *,
                  prefix: str = "", batch_size: int = 16, max_samples: int | None = None) -> dict[str, float]:
     rows = rows[:max_samples] if max_samples is not None else rows
+    if prefix == "":
+        reset_eval_samples(rd)
     refs: list[str] = []
     hyps: list[str] = []
-    start = time.perf_counter()
+    elapsed = 0.0
     for i in range(0, len(rows), batch_size):
         batch = rows[i : i + batch_size]
+        t0 = time.perf_counter()
         out = transcribe([r["audio_path"] for r in batch])
+        elapsed += time.perf_counter() - t0
         if len(out) != len(batch):
             raise ValueError(f"transcribe returned {len(out)} results for {len(batch)} inputs")
         for r, h in zip(batch, out):
@@ -78,7 +84,6 @@ def run_asr_eval(rd: RunDir, rep: "Reporter", rows: list[dict], transcribe: Call
                 append_eval_sample(rd, {"sample_id": r.get("sample_id"), "reference": ref_n,
                                         "hypothesis": hyp_n, "wer": sample_wer(ref_n, hyp_n)})
         rep.status(Phase.eval, step=min(i + batch_size, len(rows)), total_steps=len(rows))
-    elapsed = time.perf_counter() - start
     total_audio = sum(float(r.get("duration_s") or 0.0) for r in rows)
     m: dict[str, float] = {"wer": wer(refs, hyps), "cer": cer(refs, hyps)}
     for col in _SLICE_COLS:
@@ -99,6 +104,8 @@ def run_tts_eval(rd: RunDir, rep: "Reporter", rows: list[dict],
                  loss: float | None, prefix: str = "", max_samples: int = 20) -> dict[str, float]:
     from app.core.backend_kit.audio import write_wav
 
+    if prefix == "":
+        reset_eval_samples(rd)
     rows = rows[:max_samples]
     wall = 0.0
     audio_s = 0.0

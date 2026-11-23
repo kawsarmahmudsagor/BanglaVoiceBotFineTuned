@@ -101,3 +101,24 @@ def test_merge_results(rd, rep):
     run_asr_eval(rd, rep, rows, lambda p: ["x"])
     merge_results(rd, {"a": 1.0})
     assert read_eval_results(rd).samples_dir == "eval"
+
+
+def test_rerun_does_not_duplicate_samples(rd, rep):
+    lrows = [{"sample_id": "a", "messages": [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]}]
+    for _ in range(2):
+        run_llm_eval(rd, rep, lrows, lambda m: "x", loss=None)
+    assert read_eval_samples(rd, 0, 10)[1] == 1
+    arows = [{"sample_id": "a", "audio_path": "x", "text": "x", "duration_s": 1.0}]
+    for _ in range(2):
+        run_asr_eval(rd, rep, arows, lambda p: ["x"])
+    assert read_eval_samples(rd, 0, 10)[1] == 1
+
+
+def test_rerun_clears_stale_tts_wavs(rd, rep):
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("soundfile")
+    syn = lambda t, r: (np.zeros(2400, dtype="float32"), 24000)
+    run_tts_eval(rd, rep, [{"sample_id": "old", "text": "x"}], syn, loss=None)
+    run_tts_eval(rd, rep, [{"sample_id": "new", "text": "y"}], syn, loss=None)
+    assert [p.name for p in rd.eval_audio_dir.glob("*.wav")] == ["new.wav"]
+    assert read_eval_samples(rd, 0, 10)[1] == 1

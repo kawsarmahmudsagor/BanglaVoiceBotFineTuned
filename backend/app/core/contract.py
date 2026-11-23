@@ -252,3 +252,11 @@ def read_eval_samples(rd: RunDir, offset: int, limit: int) -> tuple[list[dict], 
         if isinstance(row, dict):
             rows.append(row)
     return rows[offset : offset + limit], len(rows)
+
+
+def reset_eval_samples(rd: RunDir) -> None:
+    """Drop samples.jsonl and eval/audio/*.wav so a re-run eval does not duplicate or leave stale samples."""
+    rd.eval_samples_path.unlink(missing_ok=True)
+    if rd.eval_audio_dir.is_dir():
+        for p in rd.eval_audio_dir.glob("*.wav"):
+            p.unlink(missing_ok=True)
