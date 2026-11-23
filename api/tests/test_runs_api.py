@@ -1,5 +1,6 @@
 import asyncio
 import json
+from types import SimpleNamespace
 
 from sqlalchemy import select
 
@@ -150,6 +151,7 @@ async def test_events_release_db_session_while_streaming(client, session, sessio
     app = client._transport.app
     real = app.state.sessionmaker
     open_count = {"n": 0}
+    opened = {"n": 0}
 
     class Tracked:
         def __init__(self):
@@ -157,6 +159,7 @@ async def test_events_release_db_session_while_streaming(client, session, sessio
 
         async def __aenter__(self):
             open_count["n"] += 1
+            opened["n"] += 1
             return await self.cm.__aenter__()
 
         async def __aexit__(self, *a):
@@ -166,13 +169,23 @@ async def test_events_release_db_session_while_streaming(client, session, sessio
                 open_count["n"] -= 1
 
     app.state.sessionmaker = Tracked
-    task = asyncio.create_task(client.get(f"/api/runs/{rid}/events"))
-    await asyncio.sleep(0.3)
-    assert not task.done()
-    assert open_count["n"] == 0
-    await set_state(session_factory, rid, state="done")
-    r = await asyncio.wait_for(task, 5)
+    # Observe the open-session count exactly where the stream sleeps between polls (deterministic).
+    at_sleep: list[int] = []
+    opened_before_first_sleep: list[int] = []
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(_delay):
+        at_sleep.append(open_count["n"])
+        opened_before_first_sleep.append(opened["n"])
+        await set_state(session_factory, rid, state="done")  # let the stream finish on the next poll
+        await real_sleep(0)
+
+    monkeypatch.setattr(runs_router, "asyncio", SimpleNamespace(sleep=fake_sleep))
+    r = await asyncio.wait_for(client.get(f"/api/runs/{rid}/events"), 5)
     assert r.status_code == 200
+    assert at_sleep == [0]  # nothing (404-check session or per-poll session) held open across a sleep
+    assert opened_before_first_sleep[0] >= 2  # 404-check session plus first poll session were used and closed
+    assert open_count["n"] == 0
 
 
 async def test_events_flush_last_line_without_newline(client, session, session_factory, monkeypatch):
