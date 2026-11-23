@@ -20,7 +20,11 @@ def _dispatch(phase: Phase) -> Handler:
             print(f"unsupported base_model '{cfg.base_model}' for backend {BACKEND}", file=sys.stderr)
             return 1
         # Family modules import torch/unsloth at call time only.
-        mod = importlib.import_module(f".{_FAMILY_MODULE[info.family]}", __package__)
+        try:
+            mod = importlib.import_module(f".{_FAMILY_MODULE[info.family]}", __package__)
+        except ImportError as e:
+            print(f"backend {BACKEND}: {info.family} support not installed ({e})", file=sys.stderr)
+            return 1
         fn = getattr(mod, phase.value, None)
         if fn is None:
             print(f"{phase.value} is not implemented for family '{info.family}'", file=sys.stderr)

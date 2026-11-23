@@ -113,3 +113,18 @@ def test_init_method_pairs_and_recipe_field():
     assert make_spec().init_from is None
     spec = make_spec(init_from={"run": "r-1"})
     assert spec.init_from.run == "r-1"
+
+
+def test_validate_recipe_rejects_unsupported_base_model():
+    import json
+    from pathlib import Path
+
+    raw = json.loads((Path(__file__).parents[2] / "workers/backends/unsloth/capabilities.json")
+                     .read_text(encoding="utf-8"))
+    caps = {"unsloth": Capabilities.model_validate(raw)}
+    ok = make_spec(backend="unsloth", base_model="Qwen/Qwen3-4B-Instruct-2507",
+                   method={"type": "lora"}, export=["gguf:q4_k_m"], hparams={})
+    assert validate_recipe(ok, caps) == []
+    bad = make_spec(backend="unsloth", base_model="x/y", method={"type": "lora"}, export=[], hparams={})
+    errs = validate_recipe(bad, caps)
+    assert any(e.startswith("base_model:") and "x/y" in e for e in errs)
