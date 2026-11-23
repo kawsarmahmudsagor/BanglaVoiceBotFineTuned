@@ -118,18 +118,19 @@ def _lock_hash(settings, backend: str) -> str | None:
     return hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else None
 
 
-def _safe_forward(fn, *args):
+async def _safe_forward(fn, *args):
+    """Run a (blocking) forwarder call in a worker thread; tracking errors never propagate."""
     try:
-        return fn(*args)
+        return await asyncio.to_thread(fn, *args)
     except Exception:
         log.warning("forwarder call failed", exc_info=True)
         return None
 
 
-def _drain_metrics(rd: RunDir, offset: int, forwarder: Forwarder) -> int:
+async def _drain_metrics(rd: RunDir, offset: int, forwarder: Forwarder) -> int:
     items, offset = read_metrics(rd, offset)
     if items:
-        _safe_forward(forwarder.metrics, items)
+        await _safe_forward(forwarder.metrics, items)
     return offset
 
 
@@ -187,7 +188,7 @@ async def _run_phase(session_factory, run_id, settings, python: Path, rd: RunDir
                     await asyncio.wait_for(proc.wait(), POLL_S)
                 except asyncio.TimeoutError:
                     pass
-                offset = _drain_metrics(rd, offset, forwarder)
+                offset = await _drain_metrics(rd, offset, forwarder)
                 if proc.returncode is None and await _cancel_requested(session_factory, run_id):
                     cancelled = True
                     await _stop(proc, settings.cancel_grace_s)
@@ -195,7 +196,7 @@ async def _run_phase(session_factory, run_id, settings, python: Path, rd: RunDir
             if proc.returncode is None:
                 _signal(proc, signal.SIGKILL if sys.platform != "win32" else signal.SIGTERM, "kill")
                 await proc.wait()
-    offset = _drain_metrics(rd, offset, forwarder)
+    offset = await _drain_metrics(rd, offset, forwarder)
     return proc.returncode, offset, cancelled
 
 
@@ -255,7 +256,7 @@ async def execute_run(session_factory, run_id: str, settings, forwarder: Forward
                 await release(s, "run", run_id)
         except Exception:
             log.exception("could not release GPU lock for run %s", run_id)
-        _safe_forward(forwarder.finish, state)
+        await _safe_forward(forwarder.finish, state)
     return state
 
 
@@ -281,7 +282,7 @@ async def _execute(session_factory, run_id: str, settings, forwarder: Forwarder)
         "git_sha": str(values["git_sha"]),
         "task": spec.task,
     }
-    mlflow_id = _safe_forward(forwarder.start, run.id, params, tags)
+    mlflow_id = await _safe_forward(forwarder.start, run.id, params, tags)
     if mlflow_id is not None:
         values["mlflow_run_id"] = mlflow_id
     await _update_run(session_factory, run_id, **values)

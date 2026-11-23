@@ -254,3 +254,40 @@ async def test_exception_error_text_has_type_name(env, monkeypatch):
     run = await queued_run(env, backend="nobackend")
     await execute_run(env.sf, run.id, env.settings, env.fwd)
     assert (await run_of(env, run.id)).error.startswith("BackendMissing: ")
+
+
+async def test_blocking_forwarder_does_not_block_event_loop(env):
+    import time
+
+    class SlowForwarder(RecordingForwarder):
+        def start(self, run_id, params, tags):
+            time.sleep(0.5)
+            return super().start(run_id, params, tags)
+
+        def metrics(self, items):
+            time.sleep(0.5)
+            super().metrics(items)
+
+        def finish(self, state):
+            time.sleep(0.5)
+            super().finish(state)
+
+    max_gap = 0.0
+    stop = False
+
+    async def ticker():
+        nonlocal max_gap
+        last = time.monotonic()
+        while not stop:
+            await asyncio.sleep(0.01)
+            now = time.monotonic()
+            max_gap = max(max_gap, now - last)
+            last = now
+
+    run = await queued_run(env, hparams={"steps": 3})
+    t = asyncio.create_task(ticker())
+    assert await execute_run(env.sf, run.id, env.settings, SlowForwarder()) == "done"
+    stop = True
+    await t
+    # each blocking forwarder call sleeps 0.5 s; the loop must keep ticking meanwhile
+    assert max_gap < 0.3, max_gap
