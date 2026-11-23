@@ -35,20 +35,27 @@ _META_SPLIT_RE = re.compile(r"^metadata_(.+)\.csv$", re.IGNORECASE)
 SPLIT_ERR = "use train, valid or test"
 
 
-def metadata_files(root: Path) -> tuple[Path | None, dict[str, Path]]:
-    """metadata.csv (if any) and the recognised metadata_<split>.csv files keyed by split."""
+def metadata_files(root: Path) -> tuple[Path | None, dict[str, Path], list[Issue]]:
+    """metadata.csv (if any), the recognised metadata_<split>.csv files keyed by split, and layout problems."""
     plain = root / "metadata.csv"
     per_split: dict[str, Path] = {}
+    problems: list[Issue] = []
     for p in sorted(root.iterdir()):
         m = _META_SPLIT_RE.match(p.name)
-        if m and p.is_file():
-            try:
-                sp = normalize_split(m.group(1))
-            except ValueError:
-                continue
-            if sp:
-                per_split[sp] = p
-    return (plain if plain.is_file() else None), per_split
+        if not (m and p.is_file()):
+            continue
+        try:
+            sp = normalize_split(m.group(1))
+        except ValueError:
+            sp = None
+        if sp is None:
+            problems.append(Issue("unknown_split_file", f"split file '{p.name}': {SPLIT_ERR}"))
+        elif sp in per_split:
+            problems.append(Issue("duplicate_split_file", f"duplicate split files for '{sp}': "
+                                  f"{per_split[sp].name} and {p.name}"))
+        else:
+            per_split[sp] = p
+    return (plain if plain.is_file() else None), per_split, problems
 
 
 def _read_records(path: Path) -> tuple[list[str], list[tuple[int, dict]]]:
@@ -67,7 +74,10 @@ def _read_records(path: Path) -> tuple[list[str], list[tuple[int, dict]]]:
 def validate_audio(root: Path, task: str) -> tuple[Report, list[dict]]:
     report = Report()
     report.stats.update(n_samples=0, total_duration_s=0.0)
-    plain, per_split = metadata_files(root)
+    plain, per_split, problems = metadata_files(root)
+    if problems:
+        report.errors.extend(problems)
+        return report, []
     if plain is not None and per_split:
         report.errors.append(Issue(
             "mixed_metadata", "both metadata.csv and metadata_<split>.csv found: use one layout"))

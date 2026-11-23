@@ -74,8 +74,8 @@ def _extract(upload: Path, dest: Path, report: Report, disk_min_gb: float = 0) -
             with zf.open(info) as src, open(target, "wb") as out:
                 shutil.copyfileobj(src, out)
     def has_meta(d: Path) -> bool:
-        plain, per_split = metadata_files(d)
-        return plain is not None or bool(per_split)
+        plain, per_split, problems = metadata_files(d)
+        return plain is not None or bool(per_split) or bool(problems)
 
     if has_meta(dest):
         return dest

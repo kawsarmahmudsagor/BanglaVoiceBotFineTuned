@@ -177,7 +177,7 @@ def test_llm_zip_without_split_files_errors(tmp_path):
 
 def test_audio_split_column(tmp_path, make_zip, audio):
     z = make_zip(files={"a.wav": audio.sine(2.0), "b.wav": audio.sine(2.0, freq=300), "c.wav": audio.sine(2.0, freq=400)},
-                 metadata="file,text,split\na.wav,ক,Training\nb.wav,খ,test\nc.wav,গ,\n".replace("split\n", "split" + "\n"))
+                 metadata="file,text,split\na.wav,ক,Training\nb.wav,খ,test\nc.wav,গ,\n")
     r = ingest(z, "asr", tmp_path / "out")
     assert r.report.ok, r.report.errors
     assert sorted(x["split"] or "" for x in _manifest(r)) == ["", "test", "train"]
@@ -221,3 +221,27 @@ def test_split_source_and_given_splits_recorded(tmp_path, jsonl):
     assert r.report.stats["given_splits"] == {"train": 1, "val": 0, "test": 1, "unassigned": 1}
     r2 = ingest(jsonl([_conv("ঘ")], name="n.jsonl"), "llm-sft", tmp_path / "out")
     assert r2.report.stats["split_source"] == "none"
+
+
+def test_unknown_metadata_split_file_errors(tmp_path, make_zip, audio):
+    z = make_zip(files={"a.wav": audio.sine(2.0)}, metadata=None,
+                 extra_members={"metadata_hold.csv": b"file,text\na.wav,x\n"})
+    r = ingest(z, "asr", tmp_path / "out")
+    assert [i.message for i in r.report.errors] == ["split file 'metadata_hold.csv': use train, valid or test"]
+
+
+def test_duplicate_metadata_split_files_error(tmp_path, make_zip, audio):
+    z = make_zip(files={"a.wav": audio.sine(2.0), "b.wav": audio.sine(2.0, freq=300)}, metadata=None,
+                 extra_members={"metadata_valid.csv": b"file,text\na.wav,x\n", "metadata_val.csv": b"file,text\nb.wav,y\n"})
+    r = ingest(z, "asr", tmp_path / "out")
+    assert [i.code for i in r.report.errors] == ["duplicate_split_file"]
+    assert "'val'" in r.report.errors[0].message
+
+
+def test_duplicate_llm_split_files_error(tmp_path):
+    z = tmp_path / "d.zip"
+    with zipfile.ZipFile(z, "w") as zf:
+        zf.writestr("valid.jsonl", _jl(_conv("ক")))
+        zf.writestr("val.jsonl", _jl(_conv("খ")))
+    r = ingest(z, "llm-sft", tmp_path / "out")
+    assert [i.code for i in r.report.errors] == ["duplicate_split_file"] and r.version_dir is None

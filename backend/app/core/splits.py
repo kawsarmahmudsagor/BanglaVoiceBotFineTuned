@@ -57,6 +57,13 @@ def normalize_split(value: str | None) -> str | None:
         raise ValueError(f"unknown split '{value}'") from None
 
 
+def for_source(cfg: SplitConfig, split_source: str | None) -> SplitConfig:
+    """Ignore stored labels of versions that have no dataset-provided splits (legacy 90/5/5 hash labels)."""
+    if split_source == "dataset":
+        return cfg
+    return cfg.model_copy(update={"use_dataset_splits": False})
+
+
 def _position(sample_id: str) -> float:
     return int(hashlib.sha256(sample_id.encode("utf-8")).hexdigest()[:8], 16) / 2**32
 

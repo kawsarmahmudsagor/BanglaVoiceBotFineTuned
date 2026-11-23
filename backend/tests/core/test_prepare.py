@@ -199,7 +199,8 @@ def test_iter_rows_applies_split_config(audio_ds):
                                                               ratios=SplitRatios(train=0.5, val=0.5, test=0.0))})
     got = load_splits(ignore, ["train", "val"])
     assert sum(len(v) for v in got.values()) == 4
-    assert {r["split"] for r in got["val"]} <= {"val"}
+    assert got["val"] and {r["split"] for r in got["val"]} == {"val"}
+    assert got["train"] and {r["split"] for r in got["train"]} == {"train"}
     # same config twice (cached) is stable
     assert [r["sample_id"] for r in iter_rows(ignore, "train")] == [r["sample_id"] for r in got["train"]]
 

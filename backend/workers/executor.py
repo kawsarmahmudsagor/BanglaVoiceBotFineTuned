@@ -20,7 +20,7 @@ from app.core.contract import (
     DatasetRef, Metric, RunConfig, RunDir, read_metrics, read_prepared_refs, write_config,
 )
 from app.core.recipes import RecipeSpec, parse_dataset_ref
-from app.core.splits import SplitConfig
+from app.core.splits import SplitConfig, for_source
 
 from .lock import release
 
@@ -55,6 +55,8 @@ class NullForwarder:
 
 
 def _ref(version: DatasetVersion, name: str, splits: list[str], split: SplitConfig | None = None) -> DatasetRef:
+    if split is not None:
+        split = for_source(split, version.split_source)
     return DatasetRef(
         name=name,
         version=version.number,

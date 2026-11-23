@@ -93,6 +93,19 @@ def test_baseline_cached(cfg, ds):
     assert calls == [1, 1]
 
 
+def test_baseline_key_changes_with_split_ratios(cfg, ds):
+    from app.core.splits import SplitConfig, SplitRatios
+
+    calls = []
+    f = lambda: calls.append(1) or {"wer": 0.4}
+    a = ds.model_copy(update={"split": SplitConfig()})
+    b = ds.model_copy(update={"split": SplitConfig(ratios=SplitRatios(train=0.8, val=0.1, test=0.1))})
+    baseline_metrics(cfg, a, {"k": 1}, f)
+    baseline_metrics(cfg, a, {"k": 1}, f)
+    baseline_metrics(cfg, b, {"k": 1}, f)
+    assert calls == [1, 1]
+
+
 def test_merge_results(rd, rep):
     merge_results(rd, {"a": 1.0}, {"b": 2.0})
     res = read_eval_results(rd)

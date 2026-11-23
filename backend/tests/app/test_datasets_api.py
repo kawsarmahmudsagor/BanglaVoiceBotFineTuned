@@ -328,3 +328,21 @@ async def test_version_detail_reports_split_source_and_default_counts(client, se
     v = (await client.get("/api/datasets/no-splits/versions/1")).json()
     assert v["split_source"] == "none" and v["given_splits"]["unassigned"] == 50
     assert sum(v["default_split_counts"].values()) == 50 and v["default_split_counts"]["val"] > 0
+
+
+async def test_legacy_version_labels_are_ignored(client, session_factory, settings):
+    from sqlalchemy import update
+
+    from app.models import DatasetVersion
+
+    rows = [{**json.loads(x), "split": "train"} for x in jsonl_bytes(200).decode().splitlines()]
+    data = ("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n").encode()
+    await ingest_via_api(client, session_factory, settings, "l.jsonl", data, "legacy")
+    async with session_factory() as s:
+        await s.execute(update(DatasetVersion).values(split_source="none", given_splits={}))
+        await s.commit()
+    v = (await client.get("/api/datasets/legacy/versions/1")).json()
+    c = v["default_split_counts"]
+    assert sum(c.values()) == 200 and c["train"] < 180 and c["val"] > 20 and c["test"] > 5
+    page = (await client.get("/api/datasets/legacy/versions/1/samples?split=val&limit=500")).json()
+    assert page["total"] == c["val"]

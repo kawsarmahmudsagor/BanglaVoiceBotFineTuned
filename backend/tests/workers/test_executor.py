@@ -392,3 +392,24 @@ async def test_build_config_passes_split_config(env):
                         env.settings, eval_only=set())
     assert cfg2.datasets["eval"].split == want
     assert RecipeSpec.model_validate(_spec({})).datasets.split == SplitConfig()
+
+
+async def test_build_config_ignores_labels_of_versions_without_dataset_splits(env):
+    from app.core.recipes import RecipeSpec
+
+    run = await queued_run(env, eval_only_eval=True)
+    async with env.sf() as s:
+        versions = {}
+        for name in ("trainset", "evalset"):
+            ds = (await s.execute(select(Dataset).where(Dataset.name == name))).scalar_one()
+            versions[f"{name}@v1"] = (await s.execute(select(DatasetVersion).where(DatasetVersion.dataset_id == ds.id))).scalar_one()
+    raw = _spec({}, "trainset@v1")
+    spec = RecipeSpec.model_validate(raw)
+    v = versions["trainset@v1"]
+    v.split_source = "none"
+    cfg = build_config(run, spec, {"trainset@v1": v}, env.settings, eval_only=set())
+    assert cfg.datasets["train"].split.use_dataset_splits is False
+    assert cfg.datasets["eval"].split.use_dataset_splits is False
+    v.split_source = "dataset"
+    cfg = build_config(run, spec, {"trainset@v1": v}, env.settings, eval_only=set())
+    assert cfg.datasets["train"].split.use_dataset_splits is True
