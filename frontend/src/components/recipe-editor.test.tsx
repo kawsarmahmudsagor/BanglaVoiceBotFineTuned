@@ -61,7 +61,16 @@ describe("RecipeEditor data splits", () => {
     render(<RecipeEditor initial={spec} />);
     expect(await screen.findByText("Ratios must add up to 100%")).toBeInTheDocument();
     await waitFor(() => expect(api.validateRecipe).toHaveBeenCalled());
-    await new Promise((r) => setTimeout(r, 700));
+    await waitFor(() => expect(screen.queryByText("Validating…")).toBeNull());
     expect(screen.getByRole("button", { name: "Save recipe" })).toBeDisabled();
+  });
+
+  it("enables save when the ratios are valid (control)", async () => {
+    const spec = {
+      ...SPEC,
+      datasets: { ...SPEC.datasets, split: { use_dataset_splits: false, ratios: { train: 0.9, val: 0.05, test: 0.05 } } },
+    };
+    render(<RecipeEditor initial={spec} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save recipe" })).toBeEnabled());
   });
 });

@@ -5,6 +5,7 @@ Pure: depends on pydantic and the standard library only.
 from __future__ import annotations
 
 import hashlib
+import math
 
 from pydantic import BaseModel, model_validator
 
@@ -30,6 +31,8 @@ class SplitRatios(BaseModel):
 
     @model_validator(mode="after")
     def _check(self) -> "SplitRatios":
+        if not all(math.isfinite(x) for x in (self.train, self.val, self.test)):
+            raise ValueError("split ratios must be finite numbers")
         if min(self.train, self.val, self.test) < 0:
             raise ValueError("split ratios must be >= 0")
         if self.train <= 0:

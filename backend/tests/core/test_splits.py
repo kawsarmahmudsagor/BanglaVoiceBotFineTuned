@@ -55,7 +55,11 @@ def test_zero_ratio_split_may_be_empty():
 
 
 @pytest.mark.parametrize("bad", [dict(train=0.5, val=0.2, test=0.2), dict(train=0, val=0.5, test=0.5),
-                                 dict(train=1.1, val=-0.1, test=0)])
+                                 dict(train=1.1, val=-0.1, test=0),
+                                 dict(train=0.9, val=float("nan"), test=0.05),
+                                 dict(train=float("nan"), val=0.05, test=0.05),
+                                 dict(train=float("inf"), val=0.0, test=0.0),
+                                 dict(train=0.9, val=float("-inf"), test=0.1)])
 def test_ratio_validation(bad):
     with pytest.raises(ValidationError):
         SplitRatios(**bad)

@@ -84,6 +84,8 @@ export function SplitFields({
               aria-describedby={error ? `${id}-err` : undefined}
               value={shown(key)}
               onChange={(e) => {
+                // Half-typed text such as "5." reads as empty; leave the browser's text alone.
+                if (e.target.value === "" && e.target.validity.badInput) return;
                 setDraft((d) => ({ ...d, [key]: e.target.value }));
                 const n = e.target.value === "" ? NaN : e.target.valueAsNumber;
                 onChange({ ...value, ratios: { ...value.ratios, [key]: fromPct(n) } });
