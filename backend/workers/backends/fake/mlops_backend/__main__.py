@@ -8,6 +8,7 @@ import sys
 import time
 from pathlib import Path
 
+from app.core.backend_kit import mark_complete, write_init_meta
 from app.core.contract import (
     EvalResults, ExportArtifact, ExportManifest, Metric, Phase, RunConfig, RunDir, Status,
     append_metric, read_config, write_eval_results, write_export_manifest, write_prepared_refs, write_status,
@@ -73,6 +74,12 @@ def train(rd: RunDir, cfg: RunConfig) -> int:
         state["step"] = n
         _write_checkpoint(rd, n)
         _status(rd, Phase.train, step=n, total_steps=steps, message="training")
+    final = rd.checkpoints_dir / "final"
+    final.mkdir(parents=True, exist_ok=True)
+    (final / "model.txt").write_text(f"fake weights after {state['step']} steps\n")
+    write_init_meta(final, backend=cfg.backend, base_model=cfg.base_model, method=cfg.method["type"],
+                    format="fake", step=state["step"])
+    mark_complete(final)
     return 0
 
 

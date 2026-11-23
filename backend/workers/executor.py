@@ -17,10 +17,11 @@ from sqlalchemy import select, update
 from app.backends import backend_python
 from app.models import Dataset, DatasetVersion, RecipeVersion, Run, utcnow
 from app.core.contract import (
-    DatasetRef, Metric, RunConfig, RunDir, read_metrics, read_prepared_refs, write_config,
+    DatasetRef, InitRef, Metric, RunConfig, RunDir, read_config, read_metrics, read_prepared_refs, write_config,
 )
 from app.core.recipes import RecipeSpec, parse_dataset_ref
 from app.core.splits import SplitConfig, for_source
+from app.runs_init import link_tree, resolve_init
 
 from .lock import release
 
@@ -75,6 +76,7 @@ def build_config(
     settings,
     *,
     eval_only: set[str] | frozenset[str],
+    init: InitRef | None = None,
 ) -> RunConfig:
     """`versions` maps recipe refs (`name@vN`) to versions; `eval_only` holds eval-only dataset names."""
     datasets: dict[str, DatasetRef] = {}
@@ -98,6 +100,7 @@ def build_config(
         seed=recipe.seed,
         datasets=datasets,
         prepared_root=str(settings.prepared_dir),
+        init_from=init.model_copy(update={"path": str(RunDir(Path(run.run_dir)).init_dir)}) if init else None,
     )
 
 
@@ -391,13 +394,37 @@ async def _forward_prepared(rd: RunDir, forwarder: Forwarder) -> None:
         await _safe_forward(forwarder.params, params)
 
 
+async def _resolve_init(session_factory, spec: RecipeSpec, rd: RunDir, settings):
+    """(InitRef, source checkpoint dir, error). An already linked init/ keeps a resumed run independent of its source."""
+    if rd.init_dir.is_dir():
+        try:
+            prev = read_config(rd).init_from
+        except (OSError, ValueError):
+            prev = None
+        if prev is not None:
+            return prev, None, None
+    async with session_factory() as s:
+        resolved, errors = await resolve_init(s, spec, settings)
+    if errors:
+        return None, None, "; ".join(errors)
+    return resolved[2], resolved[1], None
+
+
 async def _execute(session_factory, run_id: str, settings, forwarder: Forwarder) -> str:
     run, spec, versions, eval_only = await _load(session_factory, run_id)
     python = backend_python(spec.backend, settings)  # BackendMissing -> failed run with message
     rd = RunDir(Path(run.run_dir))
     rd.ensure()
-    cfg = build_config(run, spec, versions, settings, eval_only=eval_only)
+    init, source = None, None
+    if spec.init_from is not None:
+        init, source, error = await _resolve_init(session_factory, spec, rd, settings)
+        if error:
+            await _update_run(session_factory, run_id, error=error)
+            return "failed"
+    cfg = build_config(run, spec, versions, settings, eval_only=eval_only, init=init)
     write_config(rd, cfg)
+    if init is not None and not rd.init_dir.exists():
+        await asyncio.to_thread(link_tree, source, rd.init_dir)
 
     values: dict = {
         "git_sha": await asyncio.to_thread(_git_sha, Path(settings.backends_root).parent),

@@ -413,3 +413,54 @@ async def test_build_config_ignores_labels_of_versions_without_dataset_splits(en
     v.split_source = "dataset"
     cfg = build_config(run, spec, {"trainset@v1": v}, env.settings, eval_only=set())
     assert cfg.datasets["train"].split.use_dataset_splits is True
+
+
+async def test_executor_links_init_dir_and_sets_config(env):
+    first = await queued_run(env, hparams={"steps": 2})
+    assert await execute_run(env.sf, first.id, env.settings, env.fwd) == "done"
+    rd1 = RunDir(first.run_dir)
+    assert (rd1.checkpoints_dir / "final" / ".complete").exists()
+    async with env.sf() as s:
+        spec = _spec({"steps": 2})
+        spec["name"] = "rec2"
+        spec["init_from"] = {"run": first.id}
+        recipe = Recipe(name="rec2")
+        s.add(recipe)
+        await s.flush()
+        rv = RecipeVersion(recipe_id=recipe.id, number=1, spec=spec, yaml="x")
+        s.add(rv)
+        await s.flush()
+        s.add(Run(id="r-test0002", recipe_version_id=rv.id, run_dir=str(env.settings.runs_dir / "r-test0002"),
+                  commercial_ok=True))
+        await s.commit()
+        second = await claim_next_run(s)
+    assert second.id == "r-test0002"
+    assert await execute_run(env.sf, second.id, env.settings, NullForwarder()) == "done"
+    rd2 = RunDir(second.run_dir)
+    ref = read_config(rd2).init_from
+    assert ref.path == str(rd2.init_dir) and ref.source_run == first.id
+    assert (ref.checkpoint, ref.method, ref.format) == ("final", "full", "fake")
+    assert (rd2.init_dir / "model.txt").read_text() == (rd1.checkpoints_dir / "final" / "model.txt").read_text()
+    assert (rd2.init_dir / ".complete").exists()
+
+
+async def test_executor_fails_run_when_source_checkpoint_missing(env):
+    first = await queued_run(env, hparams={"steps": 1})
+    assert await execute_run(env.sf, first.id, env.settings, env.fwd) == "done"
+    (RunDir(first.run_dir).checkpoints_dir / "final" / ".complete").unlink()
+    async with env.sf() as s:
+        spec = _spec({"steps": 1})
+        spec["init_from"] = {"run": first.id}
+        recipe = Recipe(name="rec2")
+        s.add(recipe)
+        await s.flush()
+        rv = RecipeVersion(recipe_id=recipe.id, number=1, spec=spec, yaml="x")
+        s.add(rv)
+        await s.flush()
+        s.add(Run(id="r-test0002", recipe_version_id=rv.id, run_dir=str(env.settings.runs_dir / "r-test0002")))
+        await s.commit()
+        await claim_next_run(s)
+    assert await execute_run(env.sf, "r-test0002", env.settings, NullForwarder()) == "failed"
+    r = await run_of(env, "r-test0002")
+    assert r.error == f"init_from: run {first.id} has no complete checkpoint 'final'"
+    assert (await lock_state(env)).holder_kind is None
