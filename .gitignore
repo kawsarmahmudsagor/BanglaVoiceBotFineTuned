@@ -9,6 +9,6 @@ runs/
 models/
 mlruns/
 
-# web pages named models/runs/data are source, not artifacts
-!web/src/**
+# frontend pages named models/runs/data are source, not artifacts
+!frontend/src/**
 var/
