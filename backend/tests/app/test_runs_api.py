@@ -1,12 +1,16 @@
 import asyncio
 import json
+import os
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import select
 
 from app.models import Dataset, Recipe, RecipeVersion, Run
 from app.routers import runs as runs_router
-from app.core.contract import Metric, RunDir, Status, append_metric, write_status
+from app.core.contract import (
+    Metric, RunDir, Status, append_eval_sample, append_metric, write_prepared_refs, write_status,
+)
 from runs_helpers import finish_files, make_run, set_state
 
 
@@ -332,3 +336,54 @@ async def test_list_runs_limit(client, session):
     assert (await client.get("/api/runs?limit=500")).status_code == 200
     assert (await client.get("/api/runs?limit=501")).status_code == 422
     assert (await client.get("/api/runs?limit=0")).status_code == 422
+
+
+@pytest.fixture
+async def run_with_dir(client, session):
+    rid = await make_run(client, session)
+    rd = RunDir((await client.get(f"/api/runs/{rid}")).json()["run_dir"])
+    rd.ensure()
+    return rid, rd
+
+
+async def test_prepared_refs_empty_then_present(client, run_with_dir):
+    rid, rd = run_with_dir
+    assert (await client.get(f"/api/runs/{rid}/prepared")).json() == {"refs": []}
+    write_prepared_refs(rd, [{"role": "train", "hash": "h1"}])
+    assert (await client.get(f"/api/runs/{rid}/prepared")).json() == {"refs": [{"role": "train", "hash": "h1"}]}
+    assert (await client.get("/api/runs/r-nope/prepared")).status_code == 404
+
+
+async def test_eval_samples_paged(client, run_with_dir):
+    rid, rd = run_with_dir
+    for i in range(3):
+        append_eval_sample(rd, {"i": i})
+    body = (await client.get(f"/api/runs/{rid}/eval/samples?offset=1&limit=1")).json()
+    assert body == {"items": [{"i": 1}], "total": 3}
+    assert (await client.get(f"/api/runs/{rid}/eval/samples?offset=-1")).status_code == 422
+    assert (await client.get(f"/api/runs/{rid}/eval/samples?limit=501")).status_code == 422
+    assert (await client.get(f"/api/runs/{rid}/eval/samples?limit=0")).status_code == 422
+    assert (await client.get("/api/runs/r-nope/eval/samples")).status_code == 404
+
+
+async def test_eval_audio_serves_wav(client, run_with_dir):
+    rid, rd = run_with_dir
+    rd.eval_audio_dir.mkdir(parents=True, exist_ok=True)
+    (rd.eval_audio_dir / "a-1.wav").write_bytes(b"RIFFdata")
+    r = await client.get(f"/api/runs/{rid}/eval/audio/a-1.wav")
+    assert r.status_code == 200 and r.content == b"RIFFdata" and r.headers["content-type"] == "audio/wav"
+    assert (await client.get(f"/api/runs/{rid}/eval/audio/missing.wav")).status_code == 404
+
+
+@pytest.mark.parametrize("name", ["..%2Fconfig.json", "../config.json", "a.txt", "link.wav"])
+async def test_eval_audio_rejects_traversal(client, run_with_dir, name):
+    rid, rd = run_with_dir
+    rd.config_path.write_text("{}", encoding="utf-8")
+    rd.eval_audio_dir.mkdir(parents=True, exist_ok=True)
+    (rd.eval_audio_dir / "a.txt").write_bytes(b"x")
+    if name == "link.wav":
+        try:
+            os.symlink(rd.config_path, rd.eval_audio_dir / "link.wav")
+        except OSError:
+            pytest.skip("symlinks not permitted")
+    assert (await client.get(f"/api/runs/{rid}/eval/audio/{name}")).status_code == 404

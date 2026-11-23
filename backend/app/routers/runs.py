@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
+import re
 import secrets
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -14,7 +15,9 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from app.core.contract import RunDir, read_eval_results, read_export_manifest, read_metrics, read_status
+from app.core.contract import (
+    RunDir, read_eval_results, read_eval_samples, read_export_manifest, read_metrics, read_prepared_refs, read_status,
+)
 from app.core.recipes import RecipeSpec, commercial_ok, parse_dataset_ref
 
 from .. import system
@@ -29,6 +32,7 @@ router = APIRouter(prefix="/api")
 EVENTS_POLL_S = 1.0
 TERMINAL = ("done", "failed", "cancelled")
 OOM_HINT = "CUDA out of memory: lower batch_size or enable gradient checkpointing"
+AUDIO_NAME = re.compile(r"^[A-Za-z0-9._-]+\.wav$")
 LOG_WINDOW_BYTES = 256 * 1024  # first read of a log only looks at its end
 
 
@@ -272,6 +276,32 @@ async def run_events(run_id: str, request: Request):
     async with request.app.state.sessionmaker() as session:
         await get_run(session, run_id)
     return EventSourceResponse(_stream(request, run_id))
+
+
+@router.get("/runs/{run_id}/prepared")
+async def run_prepared(run_id: str, session: AsyncSession = Depends(get_session)) -> dict:
+    run = await get_run(session, run_id)
+    return {"refs": read_prepared_refs(RunDir(Path(run.run_dir)))}
+
+
+@router.get("/runs/{run_id}/eval/samples")
+async def run_eval_samples(run_id: str, offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=500),
+                           session: AsyncSession = Depends(get_session)) -> dict:
+    run = await get_run(session, run_id)
+    items, total = read_eval_samples(RunDir(Path(run.run_dir)), offset, limit)
+    return {"items": items, "total": total}
+
+
+@router.get("/runs/{run_id}/eval/audio/{name}")
+async def run_eval_audio(run_id: str, name: str, session: AsyncSession = Depends(get_session)) -> Response:
+    run = await get_run(session, run_id)
+    audio_dir = RunDir(Path(run.run_dir)).eval_audio_dir
+    if not AUDIO_NAME.match(name):
+        raise HTTPException(404, "file not found")
+    target = (audio_dir / name).resolve()
+    if not inside(target, audio_dir.resolve()):
+        raise HTTPException(404, "file not found")
+    return FileResponse(target, media_type="audio/wav")
 
 
 @router.get("/runs/{run_id}/files/{path:path}")
