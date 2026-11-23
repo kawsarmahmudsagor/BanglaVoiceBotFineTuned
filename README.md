@@ -6,13 +6,15 @@ A web UI and API for preparing Bangla speech data and running training and evalu
 
 Target: Ubuntu 24.04 with an NVIDIA driver, Docker with Compose, nvidia-container-toolkit, and uv.
 
-1. Clone the repo and copy the config: `cp .env.example .env`. Set `DATA_ROOT` (a directory with plenty of disk), `REPO_ROOT` (absolute path of this checkout), and `POSTGRES_PASSWORD`. Put the same password in `DATABASE_URL`. The password goes into database URLs, so it must be URL-safe (letters and digits).
+1. Clone the repo and copy the config: `cp .env.example .env`. Set `DATA_ROOT` (a directory with plenty of disk), `REPO_ROOT` (absolute path of this checkout), and `POSTGRES_PASSWORD`. Put the same password in `DATABASE_URL`. Keep `.env` plain: no quotes, no spaces around `=`, and no `$` or `#` in values (the scripts also strip Windows line endings). The password goes into database URLs, so it must be URL-safe (letters and digits).
 2. Create `DATA_ROOT` and make it writable by uid 1000 (the API container user, normally the first VM user). `dev.sh` creates it if missing and stops with a message if it is not writable.
 3. Run `scripts/check_vm.sh`. It checks the GPU driver, the Docker nvidia runtime, Compose, uv and free disk, and prints `OK` or each failure.
 4. Run `scripts/setup_venvs.sh` to sync the workspace venv and one venv per real backend.
 5. Run `scripts/dev.sh`. It starts the compose stack, waits for `/api/health`, and runs the worker in the foreground (`uv run python -m mlops_worker`). Stop the worker with Ctrl-C; `docker compose down` stops the rest.
 
-Services listen on the VM's loopback only: web on 3000, API on 8000, MLflow on 5000, Postgres on 5432.
+`deploy/postgres/init.sql` (which creates the `mlflow` database) only runs on a fresh Postgres volume. On an existing volume, create it by hand: `docker compose exec postgres psql -U mlops -d mlops -c 'CREATE DATABASE mlflow;'`.
+
+MLflow runs as your VM user (`UID`/`GID`, default 1000). Services listen on the VM's loopback only: web on 3000, API on 8000, MLflow on 5000, Postgres on 5432.
 
 ## Reaching it from your PC
 

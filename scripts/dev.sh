@@ -3,7 +3,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-if [ -f .env ]; then set -a; . ./.env; set +a; fi
+. scripts/lib/env.sh
 
 if [ -z "${DATA_ROOT:-}" ]; then
   echo "DATA_ROOT is not set. Copy .env.example to .env and edit it." >&2

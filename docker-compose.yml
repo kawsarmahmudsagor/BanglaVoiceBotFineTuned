@@ -23,6 +23,9 @@ services:
   mlflow:
     build: ./deploy/mlflow
     restart: unless-stopped
+    # Run as the VM user so ${DATA_ROOT}/mlflow is not root-owned. Export UID/GID or it defaults to 1000.
+    user: "${UID:-1000}:${GID:-1000}"
+    # MLflow >=3.5 validates the Host header; the api reaches it as mlflow:5000.
     depends_on:
       postgres:
         condition: service_healthy
@@ -31,7 +34,10 @@ services:
       --backend-store-uri postgresql://${POSTGRES_USER:-mlops}:${POSTGRES_PASSWORD}@postgres:5432/mlflow
       --artifacts-destination ${DATA_ROOT:?set DATA_ROOT in .env}/mlflow
       --serve-artifacts
+      --allowed-hosts "mlflow:5000,localhost:5000,127.0.0.1:5000"
       --host 0.0.0.0 --port 5000
+    environment:
+      HOME: /tmp
     volumes:
       - ${DATA_ROOT}:${DATA_ROOT}
     ports:
