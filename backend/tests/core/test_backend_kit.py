@@ -1,0 +1,163 @@
+import signal
+import sys
+
+import pytest
+
+from app.core.backend_kit import (
+    NanGuard, Reporter, StopFlag, TrainingDiverged, eval_opts, latest_checkpoint,
+    main, mark_complete, max_skip_share,
+)
+from app.core.contract import (
+    Phase, RunConfig, RunDir, append_eval_sample, read_eval_samples, read_metrics,
+    read_status, write_config,
+)
+from app.core.prepare import PrepareError
+
+
+def _cfg(**hp):
+    return RunConfig(run_id="r", attempt=1, resume=False, task="llm", backend="b", base_model="m",
+                     method={}, hparams=hp, export=[], seed=1, datasets={}, prepared_root="/x")
+
+
+@pytest.fixture
+def run_dir_with_config(tmp_path):
+    rd = RunDir(tmp_path)
+    rd.ensure()
+    write_config(rd, _cfg())
+    return tmp_path
+
+
+def test_main_dispatches_and_exits_with_handler_code(run_dir_with_config):
+    with pytest.raises(SystemExit) as e:
+        main({Phase.train: lambda rd, cfg, rep: 7}, ["train", "--run-dir", str(run_dir_with_config)])
+    assert e.value.code == 7
+
+
+def test_main_unknown_phase_exits_2(run_dir_with_config):
+    with pytest.raises(SystemExit) as e:
+        main({Phase.train: lambda rd, cfg, rep: 0}, ["export", "--run-dir", str(run_dir_with_config)])
+    assert e.value.code == 2
+
+
+def test_main_exception_writes_status_message(run_dir_with_config):
+    def bad(rd, cfg, rep):
+        raise ValueError("first line\nsecond")
+    with pytest.raises(SystemExit) as e:
+        main({Phase.train: bad}, ["train", "--run-dir", str(run_dir_with_config)])
+    assert e.value.code == 1
+    assert read_status(RunDir(run_dir_with_config)).message == "ValueError: first line"
+
+
+def test_main_prepare_error_message(run_dir_with_config):
+    def bad(rd, cfg, rep):
+        raise PrepareError("no access to x/y: accept its terms on Hugging Face and set HF_TOKEN")
+    with pytest.raises(SystemExit) as e:
+        main({Phase.prepare: bad}, ["prepare", "--run-dir", str(run_dir_with_config)])
+    assert e.value.code == 1
+    assert read_status(RunDir(run_dir_with_config)).message.startswith("no access to x/y")
+
+
+def test_main_oom_prints_marker(run_dir_with_config, capsys):
+    class OutOfMemoryError(RuntimeError): ...
+
+    def oom(rd, cfg, rep):
+        raise OutOfMemoryError("CUDA out of memory. Tried to allocate 2 GiB")
+    with pytest.raises(SystemExit) as e:
+        main({Phase.train: oom}, ["train", "--run-dir", str(run_dir_with_config)])
+    assert e.value.code == 1
+    assert "RuntimeError: CUDA out of memory" in capsys.readouterr().err
+
+
+def test_reporter_rate_limits(tmp_path):
+    t = [0.0]
+    rep = Reporter(RunDir(tmp_path), clock=lambda: t[0])
+    rep.status(Phase.train, 1, 10)
+    t[0] = 0.5
+    rep.status(Phase.train, 2, 10)
+    assert read_status(RunDir(tmp_path)).step == 1
+    t[0] = 1.2
+    rep.status(Phase.train, 3, 10)
+    st = read_status(RunDir(tmp_path))
+    assert st.step == 3 and st.eta_s == pytest.approx(2.8, rel=0.05)
+
+
+def test_reporter_writes_final_step_immediately(tmp_path):
+    t = [0.0]
+    rep = Reporter(RunDir(tmp_path), clock=lambda: t[0])
+    rep.status(Phase.train, 1, 10)
+    t[0] = 0.1
+    rep.status(Phase.train, 10, 10)
+    assert read_status(RunDir(tmp_path)).step == 10
+
+
+def test_reporter_phase_change_writes_immediately(tmp_path):
+    t = [0.0]
+    rep = Reporter(RunDir(tmp_path), clock=lambda: t[0])
+    rep.status(Phase.train, 1, 10)
+    t[0] = 0.1
+    rep.status(Phase.eval, 0, None, "eval")
+    assert read_status(RunDir(tmp_path)).phase == Phase.eval
+
+
+def test_reporter_metric(tmp_path):
+    rep = Reporter(RunDir(tmp_path))
+    rep.metric(3, "train", "loss", 0.5)
+    ms, _ = read_metrics(RunDir(tmp_path))
+    assert ms[0].name == "loss" and ms[0].step == 3 and ms[0].value == 0.5
+
+
+def test_nan_guard_trips_on_third():
+    g = NanGuard()
+    g.feed(float("nan"))
+    g.feed(float("inf"))
+    with pytest.raises(TrainingDiverged, match="loss is NaN; lower learning_rate"):
+        g.feed(float("nan"))
+
+
+def test_nan_guard_resets_on_finite():
+    g = NanGuard()
+    g.feed(float("nan"))
+    g.feed(float("nan"))
+    g.feed(1.0)
+    g.feed(float("nan"))
+    g.feed(float("nan"))
+
+
+def test_latest_checkpoint_ignores_incomplete(tmp_path):
+    rd = RunDir(tmp_path)
+    rd.ensure()
+    for n in (100, 200):
+        (rd.checkpoints_dir / f"checkpoint-{n}").mkdir()
+    assert latest_checkpoint(rd) is None
+    mark_complete(rd.checkpoints_dir / "checkpoint-100")
+    assert latest_checkpoint(rd).name == "checkpoint-100"
+    mark_complete(rd.checkpoints_dir / "checkpoint-200")
+    assert latest_checkpoint(rd).name == "checkpoint-200"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_stop_flag_on_sigterm():
+    import os
+    flag = StopFlag().install()
+    assert flag.requested is False
+    os.kill(os.getpid(), signal.SIGTERM)
+    assert flag.requested is True
+
+
+def test_max_skip_share_override():
+    assert max_skip_share(_cfg()) == 0.05
+    assert max_skip_share(_cfg(prepare={"max_skip_share": 0.2})) == 0.2
+
+
+def test_eval_opts():
+    assert eval_opts(_cfg()) == (True, None)
+    assert eval_opts(_cfg(eval={"baseline": False, "max_samples": 5})) == (False, 5)
+
+
+def test_eval_samples_roundtrip(tmp_path):
+    rd = RunDir(tmp_path)
+    for i in range(3):
+        append_eval_sample(rd, {"i": i, "text": "bangla"})
+    rows, total = read_eval_samples(rd, 1, 1)
+    assert rows == [{"i": 1, "text": "bangla"}] and total == 3
+    assert read_eval_samples(RunDir(tmp_path / "none"), 0, 5) == ([], 0)

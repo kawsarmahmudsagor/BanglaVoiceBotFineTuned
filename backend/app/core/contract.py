@@ -122,6 +122,14 @@ class RunDir:
         return self.export_dir / "manifest.json"
 
     @property
+    def eval_samples_path(self) -> Path:
+        return self.eval_dir / "samples.jsonl"
+
+    @property
+    def eval_audio_dir(self) -> Path:
+        return self.eval_dir / "audio"
+
+    @property
     def prepared_refs_path(self) -> Path:
         return self.path / "prepared_refs.json"
 
@@ -219,3 +227,28 @@ def read_prepared_refs(rd: RunDir) -> list[dict]:
     if not isinstance(data, list) or not all(isinstance(r, dict) for r in data):
         return []
     return data
+
+
+def append_eval_sample(rd: RunDir, sample: dict) -> None:
+    rd.eval_dir.mkdir(parents=True, exist_ok=True)
+    with rd.eval_samples_path.open("ab") as f:
+        f.write(json.dumps(sample, ensure_ascii=False).encode("utf-8") + b"\n")
+
+
+def read_eval_samples(rd: RunDir, offset: int, limit: int) -> tuple[list[dict], int]:
+    """Return rows [offset, offset+limit) and the total number of valid rows."""
+    try:
+        data = rd.eval_samples_path.read_bytes()
+    except FileNotFoundError:
+        return [], 0
+    rows: list[dict] = []
+    for line in data[: data.rfind(b"\n") + 1].splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows[offset : offset + limit], len(rows)
