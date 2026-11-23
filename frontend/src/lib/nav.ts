@@ -19,7 +19,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/catalog", label: "Catalog", icon: Library },
       { href: "/datasets", label: "Datasets", icon: Database },
-      { href: "/recipes", label: "Recipes", icon: FileCode2 },
+      { href: "/train", label: "Train", icon: FileCode2 },
     ],
   },
   {
@@ -47,7 +47,7 @@ export function isActive(pathname: string, href: string): boolean {
 const LABELS: Record<string, string> = {
   catalog: "Catalog",
   datasets: "Datasets",
-  recipes: "Recipes",
+  train: "Train",
   runs: "Runs",
   compare: "Compare",
   registry: "Registry",

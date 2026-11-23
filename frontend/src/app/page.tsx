@@ -110,7 +110,7 @@ function NowPanel({ runs, system }: { runs: RunListItem[] | null; system: System
         ) : (
           <p className="text-sm text-muted-foreground">
             No run is using the GPU.{" "}
-            {runs && runs.length > 0 && <Link href="/recipes" className="text-saffron underline">Start a run from a recipe</Link>}
+            {runs && runs.length > 0 && <Link href="/train" className="text-saffron underline">Start a run from Train</Link>}
           </p>
         )}
         <div className="flex flex-wrap gap-x-6 gap-y-2 border-t border-border pt-3 text-sm">
@@ -208,14 +208,14 @@ export default function Overview() {
       <Panel title="Recent runs" actions={<Link href="/runs" className="text-sm text-saffron underline underline-offset-2">All runs</Link>}>
         {runs?.length === 0 ? (
           <EmptyState>
-            No runs yet. Pick a model in <Link href="/catalog" className="text-saffron underline">Catalog</Link> to start a recipe.
+            No runs yet. Pick a model in <Link href="/catalog" className="text-saffron underline">Catalog</Link> to start training.
           </EmptyState>
         ) : (
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>Run</TableHead>
-                <TableHead>Recipe</TableHead>
+                <TableHead>Config</TableHead>
                 <TableHead>State</TableHead>
                 <TableHead>Created</TableHead>
               </TableRow>

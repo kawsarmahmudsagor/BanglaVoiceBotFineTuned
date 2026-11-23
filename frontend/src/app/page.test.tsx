@@ -68,7 +68,7 @@ describe("Overview", () => {
     route(BASE);
     const { container } = render(<Overview />);
     await act(async () => {});
-    expect(container.textContent).toContain("No runs yet. Pick a model in Catalog to start a recipe.");
+    expect(container.textContent).toContain("No runs yet. Pick a model in Catalog to start training.");
     expect(screen.getByRole("link", { name: "Catalog" })).toHaveAttribute("href", "/catalog");
   });
 

@@ -58,7 +58,7 @@ describe("buildItems", () => {
     const recipe = { name: "smoke", latest: { number: 1, frozen: false, task: "llm-sft", backend: "fake", base_model: "m", updated_at: null } } as RecipeListItem;
     const dataset = { id: 1, name: "bn-chat", task: "llm-sft", eval_only: false, latest: null } as unknown as DatasetListItem;
     const items = buildItems({ ...EMPTY, recipes: [recipe], datasets: [dataset] });
-    expect(items.find((i) => i.group === "Recipes")?.href).toBe("/recipes/smoke");
+    expect(items.find((i) => i.group === "Train")?.href).toBe("/train/smoke");
     expect(items.find((i) => i.group === "Datasets")?.href).toBe("/datasets/bn-chat");
   });
 });

@@ -11,7 +11,7 @@ const uiMono = JetBrains_Mono({ variable: "--font-mono-ui", subsets: ["latin"], 
 
 export const metadata: Metadata = {
   title: "Bangla Voice MLOps",
-  description: "Datasets, recipes, training runs and models for Bangla voice.",
+  description: "Datasets, training, runs and models for Bangla voice.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

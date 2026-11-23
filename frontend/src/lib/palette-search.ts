@@ -1,7 +1,7 @@
 import { NAV_GROUPS } from "./nav";
 import type { CatalogSummary, DatasetListItem, RecipeListItem, RunListItem } from "./types";
 
-export type PaletteGroup = "Pages" | "Runs" | "Catalog" | "Recipes" | "Datasets";
+export type PaletteGroup = "Pages" | "Runs" | "Catalog" | "Train" | "Datasets";
 
 export interface PaletteItem {
   group: PaletteGroup;
@@ -36,9 +36,9 @@ export function buildItems(src: PaletteSources): PaletteItem[] {
     keywords: [c.id, c.hf_repo, c.task],
   }));
   const recipes: PaletteItem[] = src.recipes.map((r) => ({
-    group: "Recipes",
+    group: "Train",
     label: r.name,
-    href: `/recipes/${enc(r.name)}`,
+    href: `/train/${enc(r.name)}`,
     keywords: [r.latest.task, r.latest.base_model],
   }));
   const datasets: PaletteItem[] = src.datasets.map((d) => ({

@@ -54,7 +54,7 @@ describe("CatalogDetail", () => {
 
   it("links Fine-tune to a pre-filled recipe and the data format to upload", () => {
     render(<CatalogDetail entry={entryFixture()} />);
-    expect(screen.getByRole("link", { name: "Fine-tune" })).toHaveAttribute("href", "/recipes/new?catalog=whisper-x");
+    expect(screen.getByRole("link", { name: "Fine-tune" })).toHaveAttribute("href", "/train/new?catalog=whisper-x");
     expect(screen.getByRole("link", { name: /Upload asr dataset/ })).toHaveAttribute("href", "/datasets/new?task=asr");
   });
 

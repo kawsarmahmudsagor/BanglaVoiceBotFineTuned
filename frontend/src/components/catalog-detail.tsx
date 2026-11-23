@@ -116,7 +116,7 @@ export function CatalogDetail({ entry }: { entry: CatalogEntry }) {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <CatalogHeaderMeta entry={entry} />
-        <Link href={`/recipes/new?catalog=${encodeURIComponent(entry.id)}`} className={cn(buttonVariants({ size: "lg" }), "px-4")}>
+        <Link href={`/train/new?catalog=${encodeURIComponent(entry.id)}`} className={cn(buttonVariants({ size: "lg" }), "px-4")}>
           Fine-tune
         </Link>
       </div>

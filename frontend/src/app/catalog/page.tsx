@@ -61,7 +61,7 @@ function CatalogView() {
   return (
     <div className="space-y-5">
       <PageHeader title="Model catalog">
-        Base models you can fine-tune, with the data they need and what to train. Pick one and choose Fine-tune to start a recipe.
+        Base models you can fine-tune, with the data they need and what to train. Pick one and choose Fine-tune to start training.
       </PageHeader>
 
       <div role="tablist" aria-label="Model type" className="flex gap-1 border-b border-border">

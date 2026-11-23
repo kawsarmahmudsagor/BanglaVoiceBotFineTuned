@@ -8,6 +8,9 @@ const nextConfig: NextConfig = {
     return [
       { source: "/models", destination: "/registry", permanent: false },
       { source: "/models/:id", destination: "/registry/:id", permanent: false },
+      // Recipes became Train; keep old links working.
+      { source: "/recipes", destination: "/train", permanent: false },
+      { source: "/recipes/:path*", destination: "/train/:path*", permanent: false },
     ];
   },
 };

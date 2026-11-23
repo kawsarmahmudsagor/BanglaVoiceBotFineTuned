@@ -246,7 +246,7 @@ export function RecipeEditor({ initial, notice }: { initial?: Spec; notice?: str
     try {
       const body: RecipeBody = { spec };
       const saved = await saveRecipe(body);
-      router.push(`/recipes/${encodeURIComponent(saved.name)}`);
+      router.push(`/train/${encodeURIComponent(saved.name)}`);
     } catch (e) {
       setSaveError(errMsg(e));
       setSaving(false);
@@ -275,7 +275,7 @@ export function RecipeEditor({ initial, notice }: { initial?: Spec; notice?: str
         <Panel title="Form">
           <div className="grid gap-3">
             <Field label="Name" errors={err("name")}>
-              {(p) => <Input {...p} value={str(spec.name)} onChange={(e) => setField("name", e.target.value)} placeholder="my-recipe" />}
+              {(p) => <Input {...p} value={str(spec.name)} onChange={(e) => setField("name", e.target.value)} placeholder="my-config" />}
             </Field>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Task">
@@ -381,7 +381,7 @@ export function RecipeEditor({ initial, notice }: { initial?: Spec; notice?: str
 
         <Panel title="YAML">
           <textarea
-            aria-label="Recipe YAML"
+            aria-label="Training config YAML"
             aria-invalid={!!yamlError || undefined}
             className={cn(
               "h-[32rem] w-full resize-y rounded-md border border-input bg-ink p-3 font-mono text-[13px] leading-relaxed",
@@ -405,10 +405,10 @@ export function RecipeEditor({ initial, notice }: { initial?: Spec; notice?: str
         {!validating && shown.length > 0 && !grouped.general && (
           <p className="text-sm text-status-failed">Fix the {shown.length === 1 ? "problem" : `${shown.length} problems`} marked above to save.</p>
         )}
-        {!validating && unnamed && <p className="text-sm text-muted-foreground">Name the recipe to save it.</p>}
+        {!validating && unnamed && <p className="text-sm text-muted-foreground">Name the training config to save it.</p>}
         {saveError && <ErrorNotice>{saveError}</ErrorNotice>}
       </div>
-      <Button size="lg" className="px-4" onClick={() => void save()} disabled={!canSave}>Save recipe</Button>
+      <Button size="lg" className="px-4" onClick={() => void save()} disabled={!canSave}>Save training config</Button>
     </div>
   );
 }

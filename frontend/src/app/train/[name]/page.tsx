@@ -56,7 +56,7 @@ export default function RecipePage() {
     setCloneError(null);
     try {
       const r = await cloneRecipe(name, newName.trim());
-      router.push(`/recipes/${encodeURIComponent(r.name)}`);
+      router.push(`/train/${encodeURIComponent(r.name)}`);
     } catch (e) {
       setCloneError(errMsg(e));
     }
@@ -80,7 +80,7 @@ export default function RecipePage() {
         title={name}
         actions={
           <>
-            <Link href={`/recipes/new?from=${encodeURIComponent(name)}`} className={cn(buttonVariants({ variant: "outline", size: "lg" }), "px-3")}>
+            <Link href={`/train/new?from=${encodeURIComponent(name)}`} className={cn(buttonVariants({ variant: "outline", size: "lg" }), "px-3")}>
               Edit as new
             </Link>
             <Button variant="outline" size="lg" className="px-3" aria-expanded={cloning} onClick={() => setCloning((c) => !c)}>Clone</Button>
@@ -92,9 +92,9 @@ export default function RecipePage() {
       />
       {error && <ErrorNotice>{error}</ErrorNotice>}
       {cloning && (
-        <Panel title="Clone recipe">
+        <Panel title="Clone training config">
           <div className="flex max-w-md flex-wrap gap-2">
-            <Input aria-label="New recipe name" placeholder="new-recipe-name" value={newName} onChange={(e) => setNewName(e.target.value)} className="min-w-0 flex-1" />
+            <Input aria-label="New training config name" placeholder="new-config-name" value={newName} onChange={(e) => setNewName(e.target.value)} className="min-w-0 flex-1" />
             <Button onClick={() => void clone()} disabled={!newName.trim()}>Create clone</Button>
           </div>
           {cloneError && <ErrorNotice className="mt-2">{cloneError}</ErrorNotice>}
@@ -125,7 +125,7 @@ export default function RecipePage() {
           </ul>
         </Panel>
         <Panel title={selected ? `v${selected} YAML` : "YAML"}>
-          <pre aria-label="Recipe YAML" className="overflow-auto rounded-md bg-ink p-3 font-mono text-[13px] leading-relaxed">
+          <pre aria-label="Training config YAML" className="overflow-auto rounded-md bg-ink p-3 font-mono text-[13px] leading-relaxed">
             {version?.yaml ?? ""}
           </pre>
         </Panel>

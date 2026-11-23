@@ -5,8 +5,16 @@ describe("NAV_GROUPS", () => {
   it("lists groups and pages in order", () => {
     expect(NAV_GROUPS.map((g) => g.label)).toEqual([null, "Prepare", "Train", "Ship"]);
     expect(NAV_GROUPS.flatMap((g) => g.items.map((i) => i.href))).toEqual([
-      "/", "/catalog", "/datasets", "/recipes", "/runs", "/runs/compare", "/registry",
+      "/", "/catalog", "/datasets", "/train", "/runs", "/runs/compare", "/registry",
     ]);
+  });
+});
+
+describe("Train nav item", () => {
+  it("is /train labelled Train, with no /recipes", () => {
+    const items = NAV_GROUPS.flatMap((g) => g.items);
+    expect(items).toContainEqual(expect.objectContaining({ href: "/train", label: "Train" }));
+    expect(items.some((i) => i.href.startsWith("/recipes"))).toBe(false);
   });
 });
 

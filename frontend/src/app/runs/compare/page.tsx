@@ -45,7 +45,7 @@ async function loadRun(id: string): Promise<Loaded> {
     try {
       spec = (await getRecipeVersion(detail.recipe.name, detail.recipe.number)).spec as Record<string, unknown>;
     } catch (e) {
-      problems.push(`recipe: ${errText(e)}`);
+      problems.push(`training config: ${errText(e)}`);
     }
   }
   return { run: detail, metrics: metrics.status === "fulfilled" ? metrics.value : [], spec, problems };
@@ -159,7 +159,7 @@ function CompareView() {
           </Panel>
 
           <Panel title="Hyperparameters">
-            {diff.length ? <HparamDiff rows={diff} runIds={runIds} /> : <p className="text-sm text-muted-foreground">No recipe configs could be loaded.</p>}
+            {diff.length ? <HparamDiff rows={diff} runIds={runIds} /> : <p className="text-sm text-muted-foreground">No training configs could be loaded.</p>}
           </Panel>
 
           <Panel title="Final eval metrics">

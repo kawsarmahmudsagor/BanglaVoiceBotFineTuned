@@ -225,7 +225,7 @@ function RunDetailView({ id }: { id: string }) {
       >
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <StatusBadge state={run.state} />
-          <Link href={`/recipes/${encodeURIComponent(run.recipe.name)}`} className="hover:text-saffron">
+          <Link href={`/train/${encodeURIComponent(run.recipe.name)}`} className="hover:text-saffron">
             {run.recipe.name} <span className="font-mono">v{run.recipe.number}</span>
           </Link>
           <span>attempt <span className="font-mono">{run.attempt}</span></span>
@@ -269,10 +269,10 @@ function RunDetailView({ id }: { id: string }) {
         {tab === "config" && (
           <div className="space-y-4">
           <Panel title={`${run.recipe.name} v${run.recipe.number}`}>
-            {config === null && <p className="text-sm text-muted-foreground">Loading recipe…</p>}
-            {config && "error" in config && <ErrorNotice>Cannot load the recipe version ({config.error})</ErrorNotice>}
+            {config === null && <p className="text-sm text-muted-foreground">Loading training config…</p>}
+            {config && "error" in config && <ErrorNotice>Cannot load the training config version ({config.error})</ErrorNotice>}
             {config && "yaml" in config && (
-              <pre aria-label="Recipe YAML" className="overflow-auto rounded-md bg-ink p-3 font-mono text-[13px] leading-relaxed">{config.yaml}</pre>
+              <pre aria-label="Training config YAML" className="overflow-auto rounded-md bg-ink p-3 font-mono text-[13px] leading-relaxed">{config.yaml}</pre>
             )}
           </Panel>
           {preparedError && <ErrorNotice>Cannot load prepared data ({preparedError})</ErrorNotice>}

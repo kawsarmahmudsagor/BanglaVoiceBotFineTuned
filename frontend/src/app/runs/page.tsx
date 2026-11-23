@@ -115,7 +115,7 @@ function RunsList() {
           onChange={(v) => update({ state: v ? [v as RunState] : undefined })}
         />
         <FilterSelect label="Task" value={filter.task ?? ""} options={TASKS} onChange={(v) => update({ task: (v || undefined) as Task | undefined })} />
-        <FilterSelect label="Recipe" value={filter.recipe ?? ""} options={recipes.map((r) => ({ value: r, label: r }))} onChange={(v) => update({ recipe: v || undefined })} />
+        <FilterSelect label="Config" value={filter.recipe ?? ""} options={recipes.map((r) => ({ value: r, label: r }))} onChange={(v) => update({ recipe: v || undefined })} />
         <FilterSelect label="Backend" value={filter.backend ?? ""} options={backends.map((b) => ({ value: b, label: b }))} onChange={(v) => update({ backend: v || undefined })} />
         <DateInput label="Created from" value={filter.from ?? ""} onChange={(v) => update({ from: v || undefined })} />
         <DateInput label="Created to" value={filter.to ?? ""} onChange={(v) => update({ to: v || undefined })} />
@@ -135,7 +135,7 @@ function RunsList() {
             {filtered ? (
               "No runs match these filters."
             ) : (
-              <>No runs yet. <Link href="/recipes" className="text-saffron underline">Start one from a recipe</Link>.</>
+              <>No runs yet. <Link href="/train" className="text-saffron underline">Start one from Train</Link>.</>
             )}
           </EmptyState>
         ) : (
@@ -145,7 +145,7 @@ function RunsList() {
                 <TableHead className="w-10"><span className="sr-only">Select for compare</span></TableHead>
                 <TableHead>Run</TableHead>
                 <TableHead>State</TableHead>
-                <TableHead>Recipe</TableHead>
+                <TableHead>Config</TableHead>
                 <TableHead>Task</TableHead>
                 <TableHead>Backend</TableHead>
                 <TableHead>License</TableHead>

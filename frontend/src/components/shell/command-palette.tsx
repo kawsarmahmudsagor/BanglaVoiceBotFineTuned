@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { listCatalog, listDatasets, listRecipes, listRuns } from "@/lib/api";
 import { buildItems, type PaletteGroup, type PaletteSources } from "@/lib/palette-search";
 
-const GROUPS: PaletteGroup[] = ["Pages", "Runs", "Catalog", "Recipes", "Datasets"];
+const GROUPS: PaletteGroup[] = ["Pages", "Runs", "Catalog", "Train", "Datasets"];
 const EMPTY: PaletteSources = { runs: [], recipes: [], datasets: [], catalog: [] };
 
 function useIsMac() {
@@ -16,7 +16,7 @@ function useIsMac() {
   return mac;
 }
 
-/** Ctrl+K / Cmd+K: jump to any page, run, catalog entry, recipe or dataset. */
+/** Ctrl+K / Cmd+K: jump to any page, run, catalog entry, training config or dataset. */
 export function CommandPalette() {
   const router = useRouter();
   const mac = useIsMac();
@@ -90,7 +90,7 @@ export function CommandPalette() {
         <div className="flex items-center gap-2 border-b border-border px-3">
           <Search className="size-4 text-muted-foreground" aria-hidden />
           <Command.Input
-            placeholder="Go to a page, run, model, recipe or dataset"
+            placeholder="Go to a page, run, model, training config or dataset"
             className="h-11 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           />
         </div>

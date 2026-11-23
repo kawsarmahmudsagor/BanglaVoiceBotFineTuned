@@ -27,21 +27,21 @@ export default function RecipesPage() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Recipes"
+        title="Train"
         actions={
           <>
             <Link href="/catalog" className={cn(buttonVariants({ variant: "outline", size: "lg" }), "px-3")}>Start from catalog</Link>
-            <Link href="/recipes/new" className={cn(buttonVariants({ size: "lg" }), "px-3")}>New recipe</Link>
+            <Link href="/train/new" className={cn(buttonVariants({ size: "lg" }), "px-3")}>New training config</Link>
           </>
         }
       >
-        A recipe pins the base model, dataset versions, method and hyperparameters for a training run.
+        A training config pins the base model, dataset versions, method and hyperparameters for a training run.
       </PageHeader>
-      {error && <ErrorNotice>Cannot load recipes ({error})</ErrorNotice>}
+      {error && <ErrorNotice>Cannot load training configs ({error})</ErrorNotice>}
       <Panel>
         {items?.length === 0 ? (
           <EmptyState>
-            No recipes yet. <Link href="/catalog" className="text-saffron underline">Pick a model in the catalog</Link> to start one.
+            No training configs yet. <Link href="/catalog" className="text-saffron underline">Pick a model in the catalog</Link> to start one.
           </EmptyState>
         ) : (
           <Table>
@@ -59,7 +59,7 @@ export default function RecipesPage() {
               {items?.map((r) => (
                 <TableRow key={r.name}>
                   <TableCell className="max-w-56">
-                    <Link href={`/recipes/${encodeURIComponent(r.name)}`} className="block truncate font-medium hover:text-saffron" title={r.name}>{r.name}</Link>
+                    <Link href={`/train/${encodeURIComponent(r.name)}`} className="block truncate font-medium hover:text-saffron" title={r.name}>{r.name}</Link>
                   </TableCell>
                   <TableCell>
                     <span className="font-mono">v{r.latest.number}</span>

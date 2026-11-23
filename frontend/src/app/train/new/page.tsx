@@ -18,7 +18,7 @@ function NewRecipe() {
   const catalog = params.get("catalog");
   const [initial, setInitial] = useState<Spec | undefined>();
   const [notice, setNotice] = useState<string | null>(null);
-  const [title, setTitle] = useState("New recipe");
+  const [title, setTitle] = useState("New training config");
   const [ready, setReady] = useState(!from && !catalog);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,11 +31,11 @@ function NewRecipe() {
         const spec = catalogToSpec(entry);
         const backends = (await listBackends()) as { name?: unknown }[];
         const installed = backends.map((b) => String(b.name ?? ""));
-        return { spec, title: `New recipe (from catalog: ${entry.name})`, notice: backendNotice(String(spec.backend), installed) };
+        return { spec, title: `New training config (from catalog: ${entry.name})`, notice: backendNotice(String(spec.backend), installed) };
       }
       const r = await getRecipe(from!);
       const v = await getRecipeVersion(from!, Math.max(...r.versions.map((x) => x.number)));
-      return { spec: { ...v.spec, name: "" }, title: `New recipe (from ${from})`, notice: null };
+      return { spec: { ...v.spec, name: "" }, title: `New training config (from ${from})`, notice: null };
     };
     load()
       .then((r) => {
