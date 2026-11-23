@@ -53,7 +53,7 @@ Check licenses on each model card before a model is promoted for production. Che
 ```
 web/        Next.js (App Router) + shadcn/ui
 api/        FastAPI + async SQLAlchemy + Postgres + Alembic
-worker/     Redis-backed job queue, single GPU lock, launches backend subprocesses
+worker/     database-backed job queue, single GPU lock, launches backend subprocesses
 backends/   unsloth/ hf/ nemo/ f5/   (each its own uv venv + backend adapter)
 voice/      voice runtime copied from LocalVoiceAgent + vendored RealtimeSTT/RealtimeTTS
 shared/     bn_normalize, schemas, run-dir contract helpers (stdlib + pydantic only)
@@ -71,7 +71,7 @@ The API and worker never import trainer code. They only write `config.json`, sta
 
 ### 3.2 Processes and deployment
 
-- docker-compose runs Postgres, Redis, MLflow, the API and the web UI.
+- docker-compose runs Postgres, MLflow, the API and the web UI. The job queue lives in Postgres: one worker claims jobs with a conditional state update, so no Redis is needed.
 - The worker, backends and voice runtime run natively on the VM, each in its own uv venv. This matches LocalVoiceAgent, where uv hardlinks one torch copy into every venv.
 - The worker processes one GPU job at a time. CPU jobs (dataset ingest, CPU-only evaluation steps) run in a separate queue and do not take the GPU lock.
 
@@ -102,7 +102,7 @@ The API and worker never import trainer code. They only write `config.json`, sta
 
 Errors block registration. Warnings are shown but do not block.
 
-- **llm-sft errors**: invalid JSON, bad role order, empty assistant turn. **Warnings**: Bangla script share below 50 % in assistant turns, markdown or emoji in assistant turns (the output is spoken), duplicates, sequences over 4096 tokens for the reference tokenizer.
+- **llm-sft errors**: invalid JSON, bad role order, empty assistant turn. **Warnings**: Bangla script share below 50 % in assistant turns, markdown or emoji in assistant turns (the output is spoken), duplicates, samples over 12,000 characters (about 4,096 tokens; no tokenizer is loaded at ingest).
 - **audio errors**: undecodable file, missing transcript, transcript without audio. **Warnings**: duration outside 0.5–30 s, clipping, silence share above 50 %, loudness outside −30 to −14 LUFS, mixed sample rates.
 
 The UI shows the report and a sample browser: play audio, read text, filter by warning.
