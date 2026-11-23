@@ -2,21 +2,22 @@
 name = "bangla-voice-mlops"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
-dependencies = ["mlops-shared", "mlops-backend-fake"]
+dependencies = ["mlops-shared", "mlops-backend-fake", "mlops-api"]
 
 [tool.uv]
 package = false
 
 [tool.uv.workspace]
-members = ["shared", "backends/fake"]
+members = ["shared", "backends/fake", "api"]
 
 [tool.uv.sources]
 mlops-shared = { workspace = true }
 mlops-backend-fake = { workspace = true }
+mlops-api = { workspace = true }
 
 [dependency-groups]
 dev = ["pytest", "pytest-asyncio", "httpx", "jsonschema"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["shared/tests", "backends/fake/tests"]
+testpaths = ["shared/tests", "backends/fake/tests", "api/tests"]
