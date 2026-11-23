@@ -3,7 +3,8 @@ import { NAV_GROUPS, breadcrumbs, isActive } from "./nav";
 
 describe("NAV_GROUPS", () => {
   it("lists groups and pages in order", () => {
-    expect(NAV_GROUPS.map((g) => g.label)).toEqual([null, "Prepare", "Train", "Ship"]);
+    expect(NAV_GROUPS.map((g) => g.label)).toEqual([null, "Prepare", "Training", "Ship"]);
+    expect(NAV_GROUPS[2].items.map((i) => i.href)).toEqual(["/train", "/runs", "/runs/compare"]);
     expect(NAV_GROUPS.flatMap((g) => g.items.map((i) => i.href))).toEqual([
       "/", "/catalog", "/datasets", "/train", "/runs", "/runs/compare", "/registry",
     ]);

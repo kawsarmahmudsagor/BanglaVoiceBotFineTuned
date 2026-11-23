@@ -19,12 +19,12 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/catalog", label: "Catalog", icon: Library },
       { href: "/datasets", label: "Datasets", icon: Database },
-      { href: "/train", label: "Train", icon: FileCode2 },
     ],
   },
   {
-    label: "Train",
+    label: "Training",
     items: [
+      { href: "/train", label: "Train", icon: FileCode2 },
       { href: "/runs", label: "Runs", icon: Play },
       { href: "/runs/compare", label: "Compare", icon: GitCompareArrows },
     ],
