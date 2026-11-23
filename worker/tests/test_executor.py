@@ -1,0 +1,220 @@
+import asyncio
+import sys
+
+import pytest
+from sqlalchemy import select
+
+from mlops_api.models import Dataset, DatasetVersion, Recipe, RecipeVersion, Run
+from mlops_shared.contract import Metric, RunDir, read_config
+from mlops_worker import executor
+from mlops_worker.executor import PHASE_STATE, NullForwarder, build_config, execute_run
+from mlops_worker.jobs import claim_next_run
+from mlops_worker.lock import current
+
+from .conftest import get_run
+
+
+class RecordingForwarder:
+    def __init__(self):
+        self.started = []
+        self.metrics_seen: list[Metric] = []
+        self.finished: list[str] = []
+
+    def start(self, run_id, params, tags):
+        self.started.append((run_id, params, tags))
+        return "mlflow-1"
+
+    def metrics(self, items):
+        self.metrics_seen.extend(items)
+
+    def finish(self, state):
+        self.finished.append(state)
+
+
+class Env:
+    pass
+
+
+def _spec(hparams, eval_ref=None, backend="fake"):
+    return {
+        "name": "rec", "task": "llm-sft", "backend": backend, "base_model": "fake/base",
+        "base_model_meta": {"license": "apache-2.0", "commercial_ok": True},
+        "datasets": {"train": "trainset@v1", **({"eval": eval_ref} if eval_ref else {})},
+        "method": {"type": "full"}, "hparams": hparams, "export": ["dummy"],
+    }
+
+
+@pytest.fixture(autouse=True)
+def fast_poll(monkeypatch):
+    monkeypatch.setattr(executor, "POLL_S", 0.05)
+
+
+@pytest.fixture
+def env(settings, session_factory):
+    e = Env()
+    e.settings, e.sf, e.fwd = settings, session_factory, RecordingForwarder()
+    return e
+
+
+async def queued_run(env, hparams=None, eval_only_eval=False, backend="fake"):
+    """Create datasets + recipe + a run, then claim it (state preparing, lock held)."""
+    async with env.sf() as s:
+        ds = Dataset(name="trainset", task="llm-sft")
+        s.add(ds)
+        await s.flush()
+        s.add(DatasetVersion(dataset_id=ds.id, number=1, hash="h-train", path=str(env.settings.data_root / "ds-train"), n_samples=1))
+        eval_ref = None
+        if eval_only_eval:
+            ev = Dataset(name="evalset", task="llm-sft", eval_only=True)
+            s.add(ev)
+            await s.flush()
+            s.add(DatasetVersion(dataset_id=ev.id, number=1, hash="h-eval", path=str(env.settings.data_root / "ds-eval"), n_samples=1))
+            eval_ref = "evalset@v1"
+        recipe = Recipe(name="rec")
+        s.add(recipe)
+        await s.flush()
+        rv = RecipeVersion(recipe_id=recipe.id, number=1, spec=_spec(hparams or {}, eval_ref, backend), yaml="x")
+        s.add(rv)
+        await s.flush()
+        run_dir = env.settings.runs_dir / "r-test0001"
+        s.add(Run(id="r-test0001", recipe_version_id=rv.id, run_dir=str(run_dir), commercial_ok=True))
+        await s.commit()
+        run = await claim_next_run(s)
+        assert run is not None
+        return run
+
+
+async def lock_state(env):
+    async with env.sf() as s:
+        return await current(s)
+
+
+async def set_cancel(env, run_id):
+    async with env.sf() as s:
+        run = await s.get(Run, run_id)
+        run.cancel_requested = True
+        await s.commit()
+
+
+async def wait_for_state(env, run_id, state, timeout=10):
+    async def _w():
+        while True:
+            async with env.sf() as s:
+                if (await get_run(s, run_id)).state == state:
+                    return
+            await asyncio.sleep(0.02)
+    await asyncio.wait_for(_w(), timeout)
+
+
+async def run_of(env, run_id):
+    async with env.sf() as s:
+        return await get_run(s, run_id)
+
+
+async def test_successful_run_reaches_done(env):
+    run = await queued_run(env, hparams={"steps": 3})
+    assert await execute_run(env.sf, run.id, env.settings, env.fwd) == "done"
+    assert [m.step for m in env.fwd.metrics_seen] == [1, 2, 3]
+    assert (await lock_state(env)).holder_kind is None
+    r = await run_of(env, run.id)
+    assert r.state == "done" and r.finished_at is not None
+    assert r.dataset_hashes == {"train": "h-train"}
+    assert r.mlflow_run_id == "mlflow-1"
+    assert env.fwd.finished == ["done"]
+    cfg = read_config(RunDir(r.run_dir))
+    assert cfg.datasets["train"].manifest.endswith("manifest.parquet")
+    _, params, tags = env.fwd.started[0]
+    assert tags["backend"] == "fake" and tags["commercial_ok"] == "True" and tags["task"] == "llm-sft"
+    assert params["base_model"] == "fake/base"
+    assert (RunDir(r.run_dir).logs_dir / "stdout.log").exists()
+
+
+async def test_failed_phase_records_error_and_oom(env):
+    run = await queued_run(env, hparams={"oom": True})
+    assert await execute_run(env.sf, run.id, env.settings, env.fwd) == "failed"
+    r = await run_of(env, run.id)
+    assert r.oom and "CUDA out of memory" in r.error
+    assert (await lock_state(env)).holder_kind is None
+    assert env.fwd.finished == ["failed"]
+
+
+async def test_failed_phase_without_oom(env):
+    run = await queued_run(env, hparams={"fail_phase": "eval"})
+    assert await execute_run(env.sf, run.id, env.settings, env.fwd) == "failed"
+    r = await run_of(env, run.id)
+    assert not r.oom and "forced failure in eval" in r.error
+
+
+async def test_cancel_before_phase_start(env):
+    run = await queued_run(env)
+    await set_cancel(env, run.id)
+    assert await execute_run(env.sf, run.id, env.settings, env.fwd) == "cancelled"
+    assert (await lock_state(env)).holder_kind is None
+
+
+async def test_cancel_terminates_running_backend(env):
+    env.settings.cancel_grace_s = 5
+    run = await queued_run(env, hparams={"steps": 1000, "step_sleep_s": 0.05})
+    task = asyncio.create_task(execute_run(env.sf, run.id, env.settings, env.fwd))
+    await wait_for_state(env, run.id, "training")
+    await set_cancel(env, run.id)
+    assert await asyncio.wait_for(task, 15) == "cancelled"
+    assert (await lock_state(env)).holder_kind is None
+    assert (await run_of(env, run.id)).state == "cancelled"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+async def test_cancel_sigkills_backend_that_ignores_sigterm(env):
+    env.settings.cancel_grace_s = 1
+    run = await queued_run(env, hparams={"steps": 1000, "step_sleep_s": 0.05, "ignore_sigterm": True})
+    task = asyncio.create_task(execute_run(env.sf, run.id, env.settings, env.fwd))
+    await wait_for_state(env, run.id, "training")
+    await set_cancel(env, run.id)
+    assert await asyncio.wait_for(task, 10) == "cancelled"
+    assert (await lock_state(env)).holder_kind is None
+
+
+async def test_build_config_eval_splits(env):
+    from mlops_shared.recipes import RecipeSpec
+
+    run = await queued_run(env, eval_only_eval=True)
+    async with env.sf() as s:
+        versions = {}
+        for name in ("trainset", "evalset"):
+            ds = (await s.execute(select(Dataset).where(Dataset.name == name))).scalar_one()
+            versions[f"{name}@v1"] = (await s.execute(select(DatasetVersion).where(DatasetVersion.dataset_id == ds.id))).scalar_one()
+    spec = RecipeSpec.model_validate(_spec({"seed": 7}, "evalset@v1"))
+    cfg = build_config(run, spec, versions, env.settings, eval_only={"evalset"})
+    assert cfg.datasets["train"].splits == ["train", "val"]
+    assert cfg.datasets["eval"].splits == ["train", "val", "test"]
+    assert cfg.seed == 7 and cfg.prepared_root == str(env.settings.prepared_dir)
+
+    # eval dataset that is not eval_only -> only the test split
+    spec2 = RecipeSpec.model_validate(_spec({}, "trainset@v1"))
+    cfg2 = build_config(run, spec2, {"trainset@v1": versions["trainset@v1"]}, env.settings)
+    assert cfg2.datasets["eval"].splits == ["test"]
+
+
+async def test_missing_venv_fails_run_with_message(env, monkeypatch):
+    monkeypatch.delenv("BACKEND_PYTHON_NOBACKEND", raising=False)
+    run = await queued_run(env, backend="nobackend")
+    assert await execute_run(env.sf, run.id, env.settings, env.fwd) == "failed"
+    r = await run_of(env, run.id)
+    assert "setup_venvs.sh" in r.error
+    assert (await lock_state(env)).holder_kind is None
+
+
+async def test_forwarder_exceptions_do_not_fail_run(env):
+    class Broken(NullForwarder):
+        def start(self, *a):
+            raise RuntimeError("mlflow down")
+
+        def metrics(self, items):
+            raise RuntimeError("mlflow down")
+
+    run = await queued_run(env, hparams={"steps": 2})
+    assert await execute_run(env.sf, run.id, env.settings, Broken()) == "done"
+
+
+def test_phase_state_mapping():
+    assert PHASE_STATE == {"prepare": "preparing", "train": "training", "eval": "evaluating", "export": "exporting"}
