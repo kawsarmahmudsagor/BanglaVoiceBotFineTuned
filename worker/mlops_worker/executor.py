@@ -5,7 +5,9 @@ import hashlib
 import logging
 import os
 import re
+import signal
 import subprocess
+import sys
 from pathlib import Path
 from typing import Protocol
 
@@ -62,7 +64,8 @@ def build_config(
     recipe: RecipeSpec,
     versions: dict[str, DatasetVersion],
     settings,
-    eval_only: set[str] | frozenset[str] = frozenset(),
+    *,
+    eval_only: set[str] | frozenset[str],
 ) -> RunConfig:
     """`versions` maps recipe refs (`name@vN`) to versions; `eval_only` holds eval-only dataset names."""
     datasets: dict[str, DatasetRef] = {}
@@ -140,13 +143,30 @@ def _read_from(path: Path, start: int) -> str:
         return ""
 
 
+def _spawn_kwargs() -> dict:
+    if sys.platform == "win32":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def _signal(proc: asyncio.subprocess.Process, sig: int, win_method: str) -> None:
+    """Signal the backend's whole process group (POSIX) or the process (Windows)."""
+    try:
+        if sys.platform == "win32":
+            getattr(proc, win_method)()
+        else:
+            os.killpg(proc.pid, sig)  # session leader: pgid == pid
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
 async def _stop(proc: asyncio.subprocess.Process, grace_s: float) -> None:
     if proc.returncode is None:
-        proc.terminate()
+        _signal(proc, signal.SIGTERM, "terminate")
         try:
             await asyncio.wait_for(proc.wait(), grace_s)
         except asyncio.TimeoutError:
-            proc.kill()
+            _signal(proc, signal.SIGKILL if sys.platform != "win32" else signal.SIGTERM, "kill")
     await proc.wait()
 
 
@@ -159,7 +179,7 @@ async def _run_phase(session_factory, run_id, settings, python: Path, rd: RunDir
     with (rd.logs_dir / "stdout.log").open("ab") as out, (rd.logs_dir / "stderr.log").open("ab") as err:
         proc = await asyncio.create_subprocess_exec(
             str(python), "-m", "mlops_backend", phase, "--run-dir", str(rd.path),
-            stdout=out, stderr=err, env=env,
+            stdout=out, stderr=err, env=env, **_spawn_kwargs(),
         )
         try:
             while proc.returncode is None:
@@ -173,7 +193,7 @@ async def _run_phase(session_factory, run_id, settings, python: Path, rd: RunDir
                     await _stop(proc, settings.cancel_grace_s)
         finally:
             if proc.returncode is None:
-                proc.kill()
+                _signal(proc, signal.SIGKILL if sys.platform != "win32" else signal.SIGTERM, "kill")
                 await proc.wait()
     offset = _drain_metrics(rd, offset, forwarder)
     return proc.returncode, offset, cancelled
@@ -211,11 +231,18 @@ async def execute_run(session_factory, run_id: str, settings, forwarder: Forward
     state = "failed"
     try:
         state = await _execute(session_factory, run_id, settings, forwarder)
+    except asyncio.CancelledError:
+        state = "failed"
+        try:
+            await _update_run(session_factory, run_id, error="worker interrupted")
+        except Exception:
+            log.exception("could not record interruption for run %s", run_id)
+        raise
     except Exception as exc:
         log.exception("run %s crashed", run_id)
         state = "failed"
         try:
-            await _update_run(session_factory, run_id, error=str(exc))
+            await _update_run(session_factory, run_id, error=f"{type(exc).__name__}: {exc}")
         except Exception:
             log.exception("could not record failure for run %s", run_id)
     finally:
@@ -237,7 +264,7 @@ async def _execute(session_factory, run_id: str, settings, forwarder: Forwarder)
     python = backend_python(spec.backend, settings)  # BackendMissing -> failed run with message
     rd = RunDir(Path(run.run_dir))
     rd.ensure()
-    cfg = build_config(run, spec, versions, settings, eval_only)
+    cfg = build_config(run, spec, versions, settings, eval_only=eval_only)
     write_config(rd, cfg)
 
     values: dict = {
@@ -260,6 +287,8 @@ async def _execute(session_factory, run_id: str, settings, forwarder: Forwarder)
     await _update_run(session_factory, run_id, **values)
 
     offset = 0
+    if run.resume or run.attempt > 1:
+        _, offset = read_metrics(rd, 0)  # skip metrics already forwarded by earlier attempts
     stderr_path = rd.logs_dir / "stderr.log"
     for phase in PHASES:
         if await _cancel_requested(session_factory, run_id):

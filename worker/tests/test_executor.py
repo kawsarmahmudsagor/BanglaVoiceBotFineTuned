@@ -191,7 +191,7 @@ async def test_build_config_eval_splits(env):
 
     # eval dataset that is not eval_only -> only the test split
     spec2 = RecipeSpec.model_validate(_spec({}, "trainset@v1"))
-    cfg2 = build_config(run, spec2, {"trainset@v1": versions["trainset@v1"]}, env.settings)
+    cfg2 = build_config(run, spec2, {"trainset@v1": versions["trainset@v1"]}, env.settings, eval_only=set())
     assert cfg2.datasets["eval"].splits == ["test"]
 
 
@@ -218,3 +218,39 @@ async def test_forwarder_exceptions_do_not_fail_run(env):
 
 def test_phase_state_mapping():
     assert PHASE_STATE == {"prepare": "preparing", "train": "training", "eval": "evaluating", "export": "exporting"}
+
+
+async def test_resume_does_not_replay_earlier_metrics(env):
+    from mlops_worker.lock import acquire
+
+    run = await queued_run(env, hparams={"steps": 3})
+    assert await execute_run(env.sf, run.id, env.settings, env.fwd) == "done"
+    assert len(env.fwd.metrics_seen) == 3
+    async with env.sf() as s:
+        r = await s.get(Run, run.id)
+        r.state, r.resume, r.attempt, r.finished_at = "preparing", True, 2, None
+        await s.commit()
+        assert await acquire(s, "run", run.id)
+    fwd2 = RecordingForwarder()
+    assert await execute_run(env.sf, run.id, env.settings, fwd2) == "done"
+    assert fwd2.metrics_seen == []
+
+
+async def test_task_cancellation_records_interruption_and_releases_lock(env):
+    env.settings.cancel_grace_s = 5
+    run = await queued_run(env, hparams={"steps": 1000, "step_sleep_s": 0.05})
+    task = asyncio.create_task(execute_run(env.sf, run.id, env.settings, env.fwd))
+    await wait_for_state(env, run.id, "training")
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    r = await run_of(env, run.id)
+    assert r.state == "failed" and r.error == "worker interrupted"
+    assert (await lock_state(env)).holder_kind is None
+
+
+async def test_exception_error_text_has_type_name(env, monkeypatch):
+    monkeypatch.delenv("BACKEND_PYTHON_NOBACKEND", raising=False)
+    run = await queued_run(env, backend="nobackend")
+    await execute_run(env.sf, run.id, env.settings, env.fwd)
+    assert (await run_of(env, run.id)).error.startswith("BackendMissing: ")
