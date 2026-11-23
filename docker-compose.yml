@@ -60,6 +60,7 @@ services:
       DATA_ROOT: ${DATA_ROOT}
       BACKENDS_ROOT: ${REPO_ROOT:?set REPO_ROOT in .env}/backends
       RECIPES_DIR: ${REPO_ROOT}/recipes
+      CATALOG_DIR: ${REPO_ROOT}/catalog
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
       MLFLOW_TRACKING_URI: http://mlflow:5000
       DISK_WARN_GB: ${DISK_WARN_GB:-20}
@@ -71,6 +72,7 @@ services:
       - ${DATA_ROOT}:${DATA_ROOT}
       - ./backends:${REPO_ROOT}/backends:ro
       - ./recipes:${REPO_ROOT}/recipes
+      - ./catalog:${REPO_ROOT}/catalog:ro
     deploy:
       resources:
         reservations:

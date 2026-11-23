@@ -108,7 +108,7 @@ async def list_runs(state: str | None = None, limit: int | None = Query(None, ge
     if limit is not None:
         q = q.limit(limit)
     return [
-        {"id": r.id, "recipe": name, "recipe_number": rv.number, "backend": rv.spec.get("backend"), "state": r.state, "commercial_ok": r.commercial_ok,
+        {"id": r.id, "recipe": name, "recipe_number": rv.number, "backend": rv.spec.get("backend"), "task": rv.spec.get("task"), "state": r.state, "commercial_ok": r.commercial_ok,
          "created_at": iso(r.created_at), "started_at": iso(r.started_at), "finished_at": iso(r.finished_at)}
         for r, name, rv in (await session.execute(q)).all()
     ]

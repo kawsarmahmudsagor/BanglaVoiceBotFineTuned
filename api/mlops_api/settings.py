@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     data_root: Path = Path("./var")
     backends_root: Path = Path("./backends")
     recipes_dir: Path = Path("./recipes")
+    catalog_dir: Path = REPO_ROOT / "catalog"
     web_origin: str = "http://localhost:3000"
     mlflow_tracking_uri: str | None = None
     disk_warn_gb: float = 20

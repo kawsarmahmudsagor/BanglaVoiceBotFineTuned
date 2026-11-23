@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .db import make_engine, make_sessionmaker
+from .routers.catalog import router as catalog_router
 from .routers.datasets import router as datasets_router
 from .routers.models import router as models_router
 from .routers.recipes import router as recipes_router
@@ -36,6 +37,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(runs_router)
     app.include_router(models_router)
     app.include_router(system_router)
+    app.include_router(catalog_router)
 
     @app.get("/api/health")
     async def health() -> dict:
