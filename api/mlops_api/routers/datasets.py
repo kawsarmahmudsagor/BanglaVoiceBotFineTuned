@@ -105,6 +105,8 @@ async def create_ingest(body: IngestRequest, session: AsyncSession = Depends(get
     upload = await session.get(Upload, body.upload_id)
     if upload is None:
         raise HTTPException(404, "upload not found")
+    if upload.state == "consumed":
+        raise HTTPException(409, "upload already ingested")
     if upload.state != "complete":
         raise HTTPException(409, "upload is not complete")
     existing = (await session.execute(select(Dataset).where(Dataset.name == body.name))).scalar_one_or_none()

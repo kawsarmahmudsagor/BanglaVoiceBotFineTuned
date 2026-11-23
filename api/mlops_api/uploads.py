@@ -117,7 +117,7 @@ async def patch(
         client_offset = int(request.headers["upload-offset"])
     except (KeyError, ValueError):
         return _tus(400)
-    if upload.state == "complete":
+    if upload.state in ("complete", "consumed"):
         return _tus(409)  # nothing more may be appended
     path = _path(settings, upload)
     offset = _offset(settings, upload)

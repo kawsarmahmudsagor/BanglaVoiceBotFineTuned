@@ -10,7 +10,8 @@ package = false
 [tool.uv.workspace]
 members = ["shared", "backends/fake", "api", "worker"]
 # Real backends under backends/ are NOT members: each has its own venv (synced by scripts/setup_venvs.sh).
-# Add "backends/<name>" here for every one so uv does not auto-discover it as a member.
+# List every real backend in `exclude` below (e.g. "backends/<name>") so uv never treats it as a member;
+# the worker then runs it with backends/<name>/.venv instead of the root venv.
 exclude = []
 
 [tool.uv.sources]

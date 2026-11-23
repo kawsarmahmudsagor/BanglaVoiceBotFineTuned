@@ -298,3 +298,14 @@ async def test_upload_dir_deleted_after_done_kept_after_failed(client, session_f
     await run_ingest_now(session_factory, r.json()["ingest_id"], settings)
     assert (await client.get(f"/api/ingests/{r.json()['ingest_id']}")).json()["state"] == "failed"
     assert (settings.incoming_dir / bad_up).is_dir()
+
+
+async def test_ingested_upload_is_consumed_and_cannot_be_ingested_again(client, session_factory, settings):
+    up = await upload_bytes(client, "a.jsonl", jsonl_bytes(1))
+    r = await client.post("/api/datasets/ingest", json=req(up, "once"))
+    await run_ingest_now(session_factory, r.json()["ingest_id"], settings)
+    again = await client.post("/api/datasets/ingest", json=req(up, "once"))
+    assert again.status_code == 409 and again.json()["detail"] == "upload already ingested"
+    patch = await client.patch(f"/api/uploads/{up}", content=b"x", headers={
+        **TUS, "Upload-Offset": "0", "Content-Type": "application/offset+octet-stream"})
+    assert patch.status_code == 409

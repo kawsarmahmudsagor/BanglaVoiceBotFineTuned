@@ -33,9 +33,11 @@ def _is_root_workspace_member(name: str, repo_root: Path) -> bool:
         data = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError):
         return False
-    members = data.get("tool", {}).get("uv", {}).get("workspace", {}).get("members", [])
+    workspace = data.get("tool", {}).get("uv", {}).get("workspace", {})
     rel = f"backends/{name}"
-    return any(fnmatch(rel, m.rstrip("/")) for m in members)
+    if any(fnmatch(rel, e.rstrip("/")) for e in workspace.get("exclude", [])):
+        return False
+    return any(fnmatch(rel, m.rstrip("/")) for m in workspace.get("members", []))
 
 
 def backend_python(name: str, settings: Settings) -> Path:

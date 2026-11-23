@@ -14,7 +14,7 @@ import pyarrow.parquet as pq
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Dataset, DatasetVersion, Ingest
+from ..models import Dataset, DatasetVersion, Ingest, Upload
 from .ingest import _version_hash, ingest
 from .validate_audio import _sha256_file
 
@@ -86,6 +86,9 @@ async def run_ingest(session, ingest_id: int, settings) -> None:
         row.state = "done"
         row.report = report
         row.version_id = version.id
+        upload = await session.get(Upload, row.upload_id)
+        if upload is not None:
+            upload.state = "consumed"  # its file is deleted below; a second ingest gets a 409
         await session.commit()
         # The upload is now copied into the dataset version; keep it only on failure (for a retry).
         await asyncio.to_thread(shutil.rmtree, upload_dir, True)

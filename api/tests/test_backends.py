@@ -55,3 +55,12 @@ def test_backend_python_own_venv_wins_over_root(tmp_path, monkeypatch):
 
 def test_backend_python_env_override(settings):
     assert backend_python("fake", settings) == Path(sys.executable)
+
+
+def test_backend_python_excluded_backend_is_not_a_member(tmp_path, monkeypatch):
+    monkeypatch.delenv("BACKEND_PYTHON_FAKE", raising=False)
+    s = _repo(tmp_path, members=["backends/*"])
+    with (s.backends_root.parent / "pyproject.toml").open("a", encoding="utf-8") as f:
+        f.write('exclude = ["backends/fake"]\n')
+    with pytest.raises(BackendMissing):
+        backend_python("fake", s)

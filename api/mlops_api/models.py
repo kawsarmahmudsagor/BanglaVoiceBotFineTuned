@@ -19,7 +19,7 @@ class Upload(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     filename: Mapped[str] = mapped_column(String)
     length: Mapped[int] = mapped_column(BigInteger)
-    state: Mapped[str] = mapped_column(String, default="uploading")  # uploading|complete
+    state: Mapped[str] = mapped_column(String, default="uploading")  # uploading|complete|consumed
     created_at: Mapped[dt.datetime] = _ts(default=utcnow)
 
 
