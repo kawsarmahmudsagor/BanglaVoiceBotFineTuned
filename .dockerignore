@@ -1,0 +1,15 @@
+.git
+.venv
+**/.venv
+**/__pycache__
+.mypy_cache
+.pytest_cache
+.superpowers
+docs
+web
+var
+data
+runs
+models
+mlruns
+.env
