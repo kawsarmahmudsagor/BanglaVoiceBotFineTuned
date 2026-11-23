@@ -445,7 +445,7 @@ Added 2026-11-23 at the user's request. This replaces parent spec §4.4's ingest
 ### 15.1 Rule
 
 - If a dataset provides its own splits, a run uses them by default.
-- Otherwise a run splits the dataset 70/20/10 (train/valid/test).
+- Otherwise a run splits the dataset 90/5/5 (train/valid/test). Changed from 70/20/10 on 2026-11-23 at the user's request: large speech datasets (~1M clips) need most rows for training, and 5% already gives a stable WER.
 - Both are defaults. The recipe can change the ratios, or ignore the dataset's splits, like any other hyperparameter.
 
 ### 15.2 How an upload declares splits
@@ -475,14 +475,14 @@ Two layouts are accepted. Split names are case-insensitive:
 - The manifest's `split` column holds the dataset's own split (`train`/`val`/`test`), or null when not assigned.
 - `DatasetVersion` gains `split_source`: `"dataset"` when at least one row has a split, else `"none"`.
 - `DatasetVersion` gains `given_splits`: counts per split, plus `unassigned`.
-- Alembic migration `0003` adds both columns. Existing versions get `split_source = "none"`. Their 90/5/5 hash values in the `split` column are ignored from then on.
+- Alembic migration `0002` (ruling R10) adds both columns. Existing versions get `split_source = "none"`. Their 90/5/5 hash values in the `split` column are ignored from then on.
 - `split_ratios` is no longer written. The column stays for history.
 
 ### 15.4 Recipe
 
 `RecipeDatasets.split` holds a `SplitConfig`:
 - `use_dataset_splits: bool = True`
-- `ratios: {train: 0.7, val: 0.2, test: 0.1}`
+- `ratios: {train: 0.9, val: 0.05, test: 0.05}`
 
 Validation:
 - each ratio ≥ 0
@@ -509,11 +509,11 @@ Examples with the default ratios:
 
 | Dataset gives | Result |
 |---|---|
-| nothing | 70/20/10 of all rows |
+| nothing | 90/5/5 of all rows |
 | train, valid, test | as given |
-| train + test | test as given; given train split 70:20 into train/val |
-| only test (others unlabeled) | test as given; unlabeled rows split 70:20 into train/val |
-| everything, but `use_dataset_splits: false` | 70/20/10 of all rows |
+| train + test | test as given; given train split 90:5 into train/val |
+| only test (others unlabeled) | test as given; unlabeled rows split 90:5 into train/val |
+| everything, but `use_dataset_splits: false` | 90/5/5 of all rows |
 
 A split that ends up with 0 rows is allowed only if its ratio is 0. Otherwise the run fails in prepare with `split '<name>' is empty: add data or change datasets.split.ratios`.
 
@@ -526,10 +526,10 @@ A split that ends up with 0 rows is allowed only if its ratio is 0. Otherwise th
 
 ### 15.7 UI
 
-- **Dataset version page**: shows "Splits provided by dataset: train n · valid n · test n (unassigned n)" or "No splits in dataset — assigned per run (default 70/20/10)". The sample browser's split filter uses the default `SplitConfig`.
+- **Dataset version page**: shows "Splits provided by dataset: train n · valid n · test n (unassigned n)" or "No splits in dataset — assigned per run (default 90/5/5)". The sample browser's split filter uses the default `SplitConfig`.
 - **Recipe form**: a "Data splits" group next to the hyperparameters.
   - When the chosen train dataset has `split_source = "dataset"`, a checked "Use the dataset's splits" toggle with its counts.
-  - Three ratio inputs: train, valid, test, prefilled 70 / 20 / 10 and shown as percentages. They are enabled when the toggle is off or the dataset has no splits.
+  - Three ratio inputs: train, valid, test, prefilled 90 / 5 / 5 and shown as percentages. They are enabled when the toggle is off or the dataset has no splits.
   - A live preview of the resulting row counts, and an inline error when the ratios don't sum to 100.
   - The values are written to `datasets.split` in the YAML.
 - The UI calls the split "valid". The stored and API name stays `val`.

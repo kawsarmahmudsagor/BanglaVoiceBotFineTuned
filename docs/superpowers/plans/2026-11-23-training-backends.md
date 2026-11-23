@@ -1248,7 +1248,7 @@ def test_migration_0002_upgrade_downgrade(...): ...
 
 **Files:**
 - Create: `backend/app/core/splits.py`:
-  - `class SplitRatios(BaseModel)`: `train: float = 0.7`, `val: float = 0.2`, `test: float = 0.1`, with the spec §15.4 validator
+  - `class SplitRatios(BaseModel)`: `train: float = 0.9`, `val: float = 0.05`, `test: float = 0.05`, with the spec §15.4 validator
   - `class SplitConfig(BaseModel)`: `use_dataset_splits: bool = True`, `ratios: SplitRatios = SplitRatios()`
   - `SPLIT_ALIASES: dict[str, str]` (spec §15.2)
   - `normalize_split(value: str | None) -> str | None`: raises `ValueError` for unknown values
@@ -1293,9 +1293,9 @@ def test_migration_0002_upgrade_downgrade(...): ...
 ```python
 def rows(labels): return [{"sample_id": f"{i:016x}", "split": l} for i, l in enumerate(labels)]
 
-def test_no_labels_70_20_10():
+def test_no_labels_90_5_5():
     out = assign(rows([None] * 20000), SplitConfig())
-    assert abs(out.count("train") / 20000 - 0.7) < 0.02 and abs(out.count("val") / 20000 - 0.2) < 0.02
+    assert abs(out.count("train") / 20000 - 0.9) < 0.02 and abs(out.count("val") / 20000 - 0.05) < 0.02
 def test_all_given_kept():
     labels = ["train", "val", "test"] * 10
     assert assign(rows(labels), SplitConfig()) == labels
@@ -1303,16 +1303,16 @@ def test_train_and_test_given_carves_val_from_train():
     labels = ["train"] * 9000 + ["test"] * 1000
     out = assign(rows(labels), SplitConfig())
     assert out[9000:] == ["test"] * 1000
-    assert abs(out[:9000].count("val") / 9000 - 0.2 / 0.9) < 0.02 and "test" not in out[:9000]
-def test_only_test_given_rest_split_70_20():
+    assert abs(out[:9000].count("val") / 9000 - 0.05 / 0.95) < 0.02 and "test" not in out[:9000]
+def test_only_test_given_rest_split_90_5():
     labels = ["test"] * 1000 + [None] * 9000
     out = assign(rows(labels), SplitConfig())
     assert out[:1000] == ["test"] * 1000
-    assert abs(out[1000:].count("train") / 9000 - 0.7 / 0.9) < 0.02
+    assert abs(out[1000:].count("train") / 9000 - 0.9 / 0.95) < 0.02
 def test_ignore_dataset_splits():
     labels = ["test"] * 10000
     out = assign(rows(labels), SplitConfig(use_dataset_splits=False))
-    assert abs(out.count("train") / 10000 - 0.7) < 0.02
+    assert abs(out.count("train") / 10000 - 0.9) < 0.02
 def test_deterministic_and_order_independent():
     r = rows([None] * 500)
     a = dict(zip([x["sample_id"] for x in r], assign(r, SplitConfig())))
@@ -1368,7 +1368,7 @@ def test_normalize_split_unknown(): ...   # "hold" -> ValueError
 - Create: `frontend/src/components/split-fields.tsx` + test:
   - props: `value: SplitConfig`, `onChange`, `dataset: {split_source, given_splits, n_samples} | null`
   - shows the "Use the dataset's splits" toggle only when `split_source === "dataset"`, with its counts
-  - percentage inputs train / valid / test (70 / 20 / 10), disabled while the toggle is on
+  - percentage inputs train / valid / test (90 / 5 / 5), disabled while the toggle is on
   - the live preview line `≈ train n · valid n · test n`
   - the inline error from `ratiosValid`
 - Modify: `frontend/src/components/recipe-editor.tsx`: render `<SplitFields>` in the hyperparameters area, bound to `datasets.split`; block save while `ratiosValid` returns an error
