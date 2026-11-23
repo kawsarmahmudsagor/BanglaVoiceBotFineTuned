@@ -1,0 +1,230 @@
+{
+  "name": "unsloth",
+  "label": "Unsloth (LLM SFT, Whisper LoRA)",
+  "tasks": {
+    "llm-sft": {
+      "methods": [
+        "lora",
+        "qlora",
+        "full"
+      ],
+      "export_formats": [
+        "merged-safetensors",
+        "gguf"
+      ],
+      "serve_formats": [],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "base_model": {
+            "type": "string",
+            "enum": [
+              "Qwen/Qwen3-4B-Instruct-2507",
+              "google/gemma-3-4b-it",
+              "hishab/titulm-llama-3.2-3b-v2.0"
+            ]
+          },
+          "method": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "enum": [
+                  "lora",
+                  "qlora",
+                  "full"
+                ]
+              },
+              "gguf_quant": {
+                "enum": [
+                  "q4_k_m",
+                  "q8_0",
+                  "f16"
+                ],
+                "default": "q4_k_m"
+              }
+            }
+          },
+          "hparams": {
+            "type": "object",
+            "properties": {
+              "learning_rate": {
+                "type": "number",
+                "minimum": 1e-06,
+                "maximum": 0.01
+              },
+              "epochs": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 50
+              },
+              "batch_size": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              "grad_accum": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              "warmup_steps": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "max_steps": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "seed": {
+                "type": "integer"
+              },
+              "gradient_checkpointing": {
+                "type": "boolean"
+              },
+              "eval": {
+                "type": "object"
+              },
+              "prepare": {
+                "type": "object"
+              },
+              "max_seq_len": {
+                "type": "integer",
+                "minimum": 256,
+                "maximum": 8192
+              },
+              "lora_r": {
+                "type": "integer",
+                "minimum": 4,
+                "maximum": 256
+              },
+              "lora_alpha": {
+                "type": "integer",
+                "minimum": 4,
+                "maximum": 512
+              }
+            }
+          }
+        },
+        "if": {
+          "properties": {
+            "method": {
+              "properties": {
+                "type": {
+                  "const": "full"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "method"
+          ]
+        },
+        "then": {
+          "properties": {
+            "hparams": {
+              "properties": {
+                "gradient_checkpointing": {
+                  "const": true
+                }
+              },
+              "required": [
+                "gradient_checkpointing"
+              ]
+            }
+          },
+          "required": [
+            "hparams"
+          ]
+        }
+      }
+    },
+    "asr": {
+      "methods": [
+        "lora"
+      ],
+      "export_formats": [
+        "merged-safetensors",
+        "ct2"
+      ],
+      "serve_formats": [],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "base_model": {
+            "type": "string",
+            "enum": [
+              "openai/whisper-large-v3-turbo",
+              "mozilla-ai/whisper-large-v3-turbo-bn"
+            ]
+          },
+          "method": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "enum": [
+                  "lora"
+                ]
+              },
+              "gguf_quant": {
+                "enum": [
+                  "q4_k_m",
+                  "q8_0",
+                  "f16"
+                ],
+                "default": "q4_k_m"
+              }
+            }
+          },
+          "hparams": {
+            "type": "object",
+            "properties": {
+              "learning_rate": {
+                "type": "number",
+                "minimum": 1e-06,
+                "maximum": 0.01
+              },
+              "epochs": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 50
+              },
+              "batch_size": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              "grad_accum": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              "warmup_steps": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "max_steps": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "seed": {
+                "type": "integer"
+              },
+              "gradient_checkpointing": {
+                "type": "boolean"
+              },
+              "eval": {
+                "type": "object"
+              },
+              "prepare": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
