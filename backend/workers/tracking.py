@@ -54,6 +54,18 @@ class MlflowForwarder(Forwarder):
             # run exists but params failed: keep tracking the run
         return self.mlflow_run_id
 
+    def params(self, params: dict) -> None:
+        if self.mlflow_run_id is None or not params:
+            return
+        try:
+            from mlflow.entities import Param
+
+            flat = [Param(k, v[:_MAX_PARAM_LEN]) for k, v in flatten(params).items()]
+            for i in range(0, len(flat), _PARAM_BATCH):
+                self.client.log_batch(self.mlflow_run_id, params=flat[i : i + _PARAM_BATCH])
+        except Exception:
+            log.exception("mlflow params logging failed")
+
     def metrics(self, items: list[Metric]) -> None:
         if self.mlflow_run_id is None or not items:
             return

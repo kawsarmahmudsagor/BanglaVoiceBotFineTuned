@@ -46,6 +46,12 @@
               "oom": {
                 "type": "boolean"
               },
+              "write_prepared_refs": {
+                "type": "boolean"
+              },
+              "echo_env": {
+                "type": "boolean"
+              },
               "seed": {
                 "type": "integer"
               }
@@ -98,6 +104,12 @@
               "oom": {
                 "type": "boolean"
               },
+              "write_prepared_refs": {
+                "type": "boolean"
+              },
+              "echo_env": {
+                "type": "boolean"
+              },
               "seed": {
                 "type": "integer"
               }
@@ -148,6 +160,12 @@
                 "type": "boolean"
               },
               "oom": {
+                "type": "boolean"
+              },
+              "write_prepared_refs": {
+                "type": "boolean"
+              },
+              "echo_env": {
                 "type": "boolean"
               },
               "seed": {

@@ -17,7 +17,7 @@ from sqlalchemy import select, update
 from app.backends import backend_python
 from app.models import Dataset, DatasetVersion, RecipeVersion, Run, utcnow
 from app.core.contract import (
-    DatasetRef, Metric, RunConfig, RunDir, read_metrics, write_config,
+    DatasetRef, Metric, RunConfig, RunDir, read_metrics, read_prepared_refs, write_config,
 )
 from app.core.recipes import RecipeSpec, parse_dataset_ref
 
@@ -34,12 +34,16 @@ _LOG_TAIL_BYTES = 1_000_000
 
 class Forwarder(Protocol):
     def start(self, run_id: str, params: dict, tags: dict) -> str | None: ...
+    def params(self, params: dict) -> None: ...
     def metrics(self, items: list[Metric]) -> None: ...
     def finish(self, state: str) -> None: ...
 
 
 class NullForwarder:
     def start(self, run_id: str, params: dict, tags: dict) -> str | None:
+        return None
+
+    def params(self, params: dict) -> None:
         return None
 
     def metrics(self, items: list[Metric]) -> None:
@@ -281,6 +285,7 @@ async def _run_phase(session_factory, run_id, settings, python: Path, rd: RunDir
     """Returns (exit_code, metrics_offset, cancelled)."""
     rd.logs_dir.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    env.setdefault("HF_HOME", str(settings.hf_home))
     cancelled = False
     pid_file = rd.logs_dir / PID_FILE
     with (rd.logs_dir / "stdout.log").open("ab") as out, (rd.logs_dir / "stderr.log").open("ab") as err:
@@ -369,6 +374,18 @@ async def execute_run(session_factory, run_id: str, settings, forwarder: Forward
     return state
 
 
+async def _forward_prepared(rd: RunDir, forwarder: Forwarder) -> None:
+    params: dict[str, str] = {}
+    for ref in read_prepared_refs(rd):
+        role = ref.get("role")
+        if role is None:
+            continue
+        params[f"prepared.{role}.spec_hash"] = str(ref.get("spec_hash"))
+        params[f"prepared.{role}.cache_hit"] = str(ref.get("cache_hit"))
+    if params:
+        await _safe_forward(forwarder.params, params)
+
+
 async def _execute(session_factory, run_id: str, settings, forwarder: Forwarder) -> str:
     run, spec, versions, eval_only = await _load(session_factory, run_id)
     python = backend_python(spec.backend, settings)  # BackendMissing -> failed run with message
@@ -414,4 +431,6 @@ async def _execute(session_factory, run_id: str, settings, forwarder: Forwarder)
             error = lines[-1] if lines else f"{phase} exited with code {code}"
             await _update_run(session_factory, run_id, error=error, oom=bool(_OOM_RE.search(text)))
             return "failed"
+        if phase == "prepare":
+            await _forward_prepared(rd, forwarder)
     return "done"

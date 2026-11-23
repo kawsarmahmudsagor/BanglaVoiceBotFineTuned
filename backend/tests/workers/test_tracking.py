@@ -89,6 +89,27 @@ def test_metrics_key_step_timestamp():
     assert any(n == "log_metric" and a[1] == "train/loss" for n, a, _ in c.calls)
 
 
+def test_params_batch_logged_and_truncated():
+    c = StubClient()
+    f = MlflowForwarder("u", client=c)
+    f.start("r", PARAMS, TAGS)
+    f.params({"prepared.train.spec_hash": "ab" * 300, "prepared.train.cache_hit": "True"})
+    batch = [kw for n, _, kw in c.calls if n == "log_batch" and kw["params"]][-1]
+    got = {p.key: p.value for p in batch["params"]}
+    assert got["prepared.train.cache_hit"] == "True"
+    assert len(got["prepared.train.spec_hash"]) == 500
+
+
+def test_params_noop_without_run_and_never_raises():
+    c = StubClient()
+    MlflowForwarder("u", client=c).params({"a": "b"})
+    assert c.calls == []
+    c2 = StubClient(fail_on={"log_batch"})
+    f = MlflowForwarder("u", client=c2)
+    f.mlflow_run_id = "mlf-1"
+    f.params({"a": "b"})
+
+
 def test_finish_status_mapping():
     for state, status in [("done", "FINISHED"), ("failed", "FAILED"), ("cancelled", "KILLED")]:
         c = StubClient()

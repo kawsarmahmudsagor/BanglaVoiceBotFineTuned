@@ -39,6 +39,10 @@ class Settings(BaseSettings):
         return self.data_root / "data" / "prepared"
 
     @property
+    def hf_home(self) -> Path:
+        return self.data_root / "models" / "hf"
+
+    @property
     def runs_dir(self) -> Path:
         return self.data_root / "runs"
 

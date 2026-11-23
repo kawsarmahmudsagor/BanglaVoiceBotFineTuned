@@ -29,3 +29,7 @@ def test_settings_fixture_ignores_a_developer_env_file(tmp_path, monkeypatch, re
     monkeypatch.setitem(Settings.model_config, "env_file", f)
     assert Settings().web_origin == "http://from-dotenv"  # the patch is live
     assert request.getfixturevalue("settings").web_origin == "http://localhost:3000"
+
+
+def test_hf_home_under_data_root(tmp_path):
+    assert Settings(data_root=tmp_path).hf_home == tmp_path / "models" / "hf"

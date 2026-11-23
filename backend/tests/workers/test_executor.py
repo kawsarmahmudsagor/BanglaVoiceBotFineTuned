@@ -20,6 +20,10 @@ class RecordingForwarder:
         self.started = []
         self.metrics_seen: list[Metric] = []
         self.finished: list[str] = []
+        self.params_seen: list[dict] = []
+
+    def params(self, params):
+        self.params_seen.append(params)
 
     def start(self, run_id, params, tags):
         self.started.append((run_id, params, tags))
@@ -331,3 +335,36 @@ async def test_worker_cancellation_sigterms_backend_before_kill(env):
     r = await run_of(env, run.id)
     assert r.state == "failed" and r.error == "worker interrupted"
     assert (await lock_state(env)).holder_kind is None
+
+
+async def test_prepared_refs_forwarded_after_prepare(env):
+    run = await queued_run(env, hparams={"steps": 1, "write_prepared_refs": True})
+    assert await execute_run(env.sf, run.id, env.settings, env.fwd) == "done"
+    assert env.fwd.params_seen == [{
+        "prepared.train.spec_hash": "spec-train",
+        "prepared.train.cache_hit": "True",
+        "prepared.eval.spec_hash": "spec-eval",
+        "prepared.eval.cache_hit": "False",
+    }]
+
+
+async def test_no_params_forwarded_without_prepared_refs(env):
+    run = await queued_run(env, hparams={"steps": 1})
+    assert await execute_run(env.sf, run.id, env.settings, env.fwd) == "done"
+    assert env.fwd.params_seen == []
+
+
+async def test_hf_home_passed_to_backend(env, monkeypatch):
+    monkeypatch.delenv("HF_HOME", raising=False)
+    run = await queued_run(env, hparams={"steps": 1, "echo_env": True})
+    assert await execute_run(env.sf, run.id, env.settings, env.fwd) == "done"
+    out = (RunDir(run.run_dir).logs_dir / "stdout.log").read_text()
+    assert str(env.settings.hf_home) in out
+    assert out.replace("\\", "/").count("models/hf") >= 1
+
+
+async def test_existing_hf_home_is_respected(env, monkeypatch):
+    monkeypatch.setenv("HF_HOME", "/custom/hf")
+    run = await queued_run(env, hparams={"steps": 1, "echo_env": True})
+    assert await execute_run(env.sf, run.id, env.settings, env.fwd) == "done"
+    assert "HF_HOME=/custom/hf" in (RunDir(run.run_dir).logs_dir / "stdout.log").read_text()

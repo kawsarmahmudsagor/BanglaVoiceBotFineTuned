@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import signal
 import sys
 import time
@@ -9,7 +10,7 @@ from pathlib import Path
 
 from app.core.contract import (
     EvalResults, ExportArtifact, ExportManifest, Metric, Phase, RunConfig, RunDir, Status,
-    append_metric, read_config, write_eval_results, write_export_manifest, write_status,
+    append_metric, read_config, write_eval_results, write_export_manifest, write_prepared_refs, write_status,
 )
 
 
@@ -36,6 +37,13 @@ def _write_checkpoint(rd: RunDir, step: int) -> None:
 def prepare(rd: RunDir, cfg: RunConfig) -> int:
     _status(rd, Phase.prepare, message="preparing")
     _maybe_fail(cfg, "prepare")
+    if cfg.hparams.get("echo_env"):
+        print(f"HF_HOME={os.environ.get('HF_HOME')}", flush=True)
+    if cfg.hparams.get("write_prepared_refs"):
+        write_prepared_refs(rd, [
+            {"role": "train", "spec_hash": "spec-train", "cache_hit": True},
+            {"role": "eval", "spec_hash": "spec-eval", "cache_hit": False},
+        ])
     return 0
 
 
