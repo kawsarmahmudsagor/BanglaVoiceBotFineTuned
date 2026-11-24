@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import multiprocessing
 import re
 import unicodedata
 from concurrent.futures import ProcessPoolExecutor
@@ -148,7 +149,7 @@ def validate_audio(root: Path, task: str, *, workers: int = 1) -> tuple[Report, 
     # Pass 2: decode + per-file warnings (in a process pool when workers > 1), merged in metadata order.
     jobs = [(item[4], item[0], item[1]) for item in plan if isinstance(item, tuple)]
     if workers > 1 and len(jobs) > 1:
-        with ProcessPoolExecutor(max_workers=workers) as pool:
+        with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn")) as pool:
             results = list(pool.map(_process_file, jobs, chunksize=16))
     else:
         results = map(_process_file, jobs)
@@ -199,11 +200,6 @@ def _process_file(job: tuple[Path, str, str]) -> dict:
     sample_id = hashlib.sha256((text + "\n" + _sha256_file(path)).encode("utf-8")).hexdigest()[:16]
     return {"error": None, "sample_id": sample_id, "sr": int(sr), "duration": duration,
             "warnings": _file_warnings(rel, mono, int(sr), duration)}
-
-
-def _audio_warnings(report: Report, sid: str, rel: str, x: np.ndarray, sr: int, duration: float) -> None:
-    for code, msg in _file_warnings(rel, x, sr, duration):
-        report.add_warning(Issue(code, msg, sid))
 
 
 def _file_warnings(rel: str, x: np.ndarray, sr: int, duration: float) -> list[tuple[str, str]]:
