@@ -5,6 +5,7 @@ Start-from-checkpoint rules (plan_init, init_meta, read-only init dir) are share
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -14,14 +15,14 @@ from app.core.backend_kit import (
     NanGuard, StopFlag, eval_opts, export_all, init_source, latest_checkpoint, mark_complete,
 )
 from app.core.backend_kit.whisper import (
-    LANGUAGE, TASK, make_transcriber, pad_labels, prepare_whisper,
+    LANGUAGE, TASK, WhisperCollator, make_transcriber, prepare_whisper,
 )
 from app.core.contract import RunConfig, RunDir
 from app.core.evaluation import baseline_metrics, merge_results, run_asr_eval
 
 from .export import _dir_artifact
 from .llm import (
-    _eval_ds, _free_gpu, _require_trainable, _train_ref, _trainer_args, eval_rows, plan_init,
+    _eval_ds, _free_gpu, eval_loss_files, _require_trainable, _train_ref, _trainer_args, eval_rows, plan_init,
     total_steps, write_ckpt_meta,
 )
 
@@ -33,6 +34,7 @@ def asr_trainer_args(cfg: RunConfig, rd: RunDir) -> dict:
     args = _trainer_args(cfg, rd)
     args["label_names"] = ["labels"]
     args["predict_with_generate"] = False
+    args["dataloader_num_workers"] = min(8, os.cpu_count() or 1)
     return args
 
 
@@ -83,18 +85,6 @@ def _load_asr(cfg: RunConfig, rd: RunDir):
     return model
 
 
-def _make_collator(processor, decoder_start_id: int):
-    import numpy as np
-    import torch
-
-    def collate(features: list[dict]) -> dict:
-        feats = np.stack([np.asarray(f["input_features"], dtype=np.float32) for f in features])
-        labels = pad_labels([list(map(int, f["labels"])) for f in features], decoder_start_id)
-        return {"input_features": torch.from_numpy(feats), "labels": torch.tensor(labels, dtype=torch.long)}
-
-    return collate
-
-
 def train_asr(rd: RunDir, cfg: RunConfig, rep) -> int:
     import unsloth  # noqa: F401  (must precede transformers/trl/datasets imports)
     from datasets import load_from_disk
@@ -120,7 +110,7 @@ def train_asr(rd: RunDir, cfg: RunConfig, rep) -> int:
     trainer = Seq2SeqTrainer(
         model=model, args=Seq2SeqTrainingArguments(**asr_trainer_args(cfg, rd)),
         train_dataset=train_ds, eval_dataset=val_ds, processing_class=processor.feature_extractor,
-        data_collator=_make_collator(processor, int(model.config.decoder_start_token_id)),
+        data_collator=WhisperCollator(processor, int(model.config.decoder_start_token_id)),
         callbacks=[_Callback(rep, stop, NanGuard(), total)],
     )
     last = latest_checkpoint(rd) if cfg.resume else None
@@ -150,6 +140,26 @@ def _transcriber(model, cfg: RunConfig):
     return make_transcriber(model, _processor(cfg), _device(model))
 
 
+def _eval_loss(model, cfg: RunConfig, rd: RunDir) -> float | None:
+    from datasets import concatenate_datasets, load_from_disk
+    from transformers import Seq2SeqTrainer, Seq2SeqTrainingArguments
+
+    dirs = [f.with_suffix("") for f in eval_loss_files(rd, cfg)]  # prepared split dirs (llm helper lists <split>.jsonl)
+    parts = [load_from_disk(str(d)) for d in dirs if d.is_dir()]
+    parts = [p for p in parts if len(p)]
+    if not parts:
+        return None
+    processor = _processor(cfg)
+    args = Seq2SeqTrainingArguments(
+        output_dir=str(rd.path / "work" / "eval_tmp"), per_device_eval_batch_size=int(cfg.hparams.get("batch_size", 2)),
+        bf16=True, report_to=[], remove_unused_columns=False, label_names=["labels"], seed=cfg.seed,
+        dataloader_num_workers=min(8, os.cpu_count() or 1))
+    trainer = Seq2SeqTrainer(model=model, args=args, eval_dataset=concatenate_datasets(parts).with_format("numpy"),
+                             processing_class=processor.feature_extractor,
+                             data_collator=WhisperCollator(processor, int(model.config.decoder_start_token_id)))
+    return float(trainer.evaluate()["eval_loss"])
+
+
 def _asr_baseline_key(cfg: RunConfig, max_samples: int | None) -> dict:
     key: dict = {"max_samples": max_samples}
     if cfg.init_from is not None:
@@ -167,7 +177,10 @@ def eval_asr(rd: RunDir, cfg: RunConfig, rep) -> int:
     rows = eval_rows(cfg)
 
     model, _ = _from_pretrained(str(final))
+    loss = _eval_loss(model, cfg, rd)
     tuned = run_asr_eval(rd, rep, rows, _transcriber(model, cfg), max_samples=max_samples)
+    if loss is not None:
+        tuned["eval_loss"] = loss
     del model
     _free_gpu()
 
@@ -181,7 +194,10 @@ def eval_asr(rd: RunDir, cfg: RunConfig, rep) -> int:
             else:
                 m, _ = _from_pretrained(cfg.base_model)
             try:
+                bl = _eval_loss(m, cfg, rd)
                 res = run_asr_eval(rd, rep, rows, _transcriber(m, cfg), prefix="base/", max_samples=max_samples)
+                if bl is not None:
+                    res["base/eval_loss"] = bl
                 return {k.removeprefix("base/"): v for k, v in res.items()}  # baseline_metrics re-adds `base/`
             finally:
                 del m
