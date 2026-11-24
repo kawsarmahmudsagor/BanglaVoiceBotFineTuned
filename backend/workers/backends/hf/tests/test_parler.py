@@ -170,3 +170,73 @@ def test_parler_20_steps_and_synthesize(run_dir, monkeypatch, tmp_path):
     assert (out / "description_tokenizer").is_dir()
     assert (out / "preprocessor_config.json").exists()
     assert rd.export_manifest_path.exists()
+
+
+def test_hop_derivation():
+    from types import SimpleNamespace as NS
+
+    from mlops_backend.prepare.parler import _hop
+
+    assert _hop(NS(config=NS(sampling_rate=44100, frame_rate=86))) == 44100 / 86
+    assert _hop(NS(config=NS(upsampling_ratios=[8, 5, 4, 2]))) == 320
+    assert _hop(NS(config=NS())) == 512
+
+
+def test_trim_codes_per_row_frames():
+    import numpy as np
+
+    from mlops_backend.prepare.parler import trim_codes
+
+    codes = np.arange(2 * 3 * 10).reshape(2, 3, 10)
+    out = trim_codes(codes, [1000, 2500], 512)
+    assert [o.shape for o in out] == [(3, 2), (3, 5)] and out[0].dtype == np.int16
+
+
+def test_iter_records_pipeline_with_fakes():
+    import numpy as np
+
+    from mlops_backend.prepare.parler import iter_records
+
+    def loader(path):
+        if path == "bad":
+            raise OSError("x")
+        return np.zeros(44100, "float32")
+
+    def enc(audios):
+        return [np.ones((3, 4), np.int16) for _ in audios]
+
+    rows = [{"sample_id": "a", "audio_path": "ok", "text": "আমি", "speaker": "r"},
+            {"sample_id": "b", "audio_path": "bad", "text": "আমি"}]
+    skipped, ticks = [], []
+    recs = list(iter_records(rows, "train", skipped, enc, loader, DEFAULT, tok, tok, ticks.append))
+    assert len(recs) == 1 and recs[0]["num_codebooks"] == 3 and len(recs[0]["codes"]) == 12
+    assert skipped[0].reason == "undecodable audio: OSError" and skipped[0].sample_id == "b"
+    assert sum(ticks) == 2
+
+
+def test_baseline_key_has_template(run_dir):
+    from mlops_backend.parler import parler_baseline_key
+
+    a = parler_baseline_key(read_config(run_dir("tts", PARLER)), 5)
+    b = parler_baseline_key(read_config(run_dir("tts", PARLER, {"description_template": "{speaker}!"})), 5)
+    assert a != b and a["max_samples"] == 5
+
+
+@pytest.mark.heavy
+def test_write_split_roundtrip(tmp_path):
+    import numpy as np
+    from datasets import load_from_disk
+
+    from mlops_backend.prepare.parler import write_split
+
+    recs = [{"sample_id": str(i), "prompt_input_ids": [1], "input_ids": [2],
+             "codes": np.ones(6, np.int16), "num_codebooks": 3} for i in range(5)]
+    assert write_split(iter(recs), tmp_path / "train", shard_rows=2) == 5
+    assert len(load_from_disk(str(tmp_path / "train"))) == 5
+    assert not (tmp_path / "train.shards").exists()
+
+
+def test_parler_is_gated():
+    from mlops_backend.models import MODELS
+
+    assert MODELS[PARLER].gated is True

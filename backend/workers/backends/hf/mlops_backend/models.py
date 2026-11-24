@@ -16,5 +16,5 @@ MODELS: dict[str, ModelInfo] = {
     "mozilla-ai/whisper-large-v3-turbo-bn": ModelInfo("asr", "whisper", False),
     "facebook/wav2vec2-xls-r-300m": ModelInfo("asr", "ctc", False),
     "facebook/mms-1b-all": ModelInfo("asr", "ctc-mms", False),
-    "ai4bharat/indic-parler-tts": ModelInfo("tts", "parler", False),
+    "ai4bharat/indic-parler-tts": ModelInfo("tts", "parler", True),
 }

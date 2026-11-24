@@ -68,15 +68,27 @@ def pad_code_labels(items: list[tuple[list[int], int]], eos_id: int) -> list[lis
     return [f + [[IGNORE] * k] * (width - len(f)) for f, k in seqs]
 
 
-def _hop(audio_encoder) -> int:
-    ratios = getattr(audio_encoder.config, "upsampling_ratios", None)
-    return int(math.prod(ratios)) if ratios else 512
+def _hop(audio_encoder) -> float:
+    """Samples per code frame: sampling_rate / frame_rate when the config has them, else the product of the
+    upsampling ratios, else 512."""
+    conf = audio_encoder.config
+    rate, fps = getattr(conf, "sampling_rate", None), getattr(conf, "frame_rate", None)
+    if rate and fps:
+        return float(rate) / float(fps)
+    ratios = getattr(conf, "upsampling_ratios", None)
+    return float(math.prod(ratios)) if ratios else 512.0
+
+
+def trim_codes(codes, lengths: list[int], hop: float) -> list:
+    """codes (bsz, K, T) from a zero-padded batch -> per-row (K, ceil(len/hop)) int16 arrays."""
+    import numpy as np
+
+    return [np.asarray(codes[i, :, :math.ceil(n / hop)]).astype(np.int16) for i, n in enumerate(lengths)]
 
 
 def make_encoder(feature_extractor, audio_encoder) -> Callable[[list], list]:
     """audios (float32 arrays at 44.1 kHz) -> per-row DAC codes of shape (codebooks, frames), on GPU when
     available. Rows are zero-padded to the batch's longest and trimmed to their own frame count."""
-    import numpy as np
     import torch
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -90,7 +102,7 @@ def make_encoder(feature_extractor, audio_encoder) -> Callable[[list], list]:
         codes = out.audio_codes
         codes = codes[0] if codes.ndim == 4 else codes  # (1, bsz, K, T) -> (bsz, K, T)
         codes = codes.cpu().numpy()
-        return [codes[i, :, :math.ceil(len(a) / hop)].astype(np.int16) for i, a in enumerate(audios)]
+        return trim_codes(codes, [len(a) for a in audios], hop)
 
     return encode
 
@@ -108,55 +120,89 @@ def _default_loader(path):
     return load_audio(path, SAMPLE_RATE)
 
 
+SHARD_ROWS = 512
+MAX_TOKENS = 256
+
+
+def iter_records(items: list[dict], split: str, skipped: list, enc: Callable, loader: Callable, template: str,
+                 tok_prompt: Callable, tok_desc: Callable, tick: Callable[[int], None] = lambda n: None):
+    """Stream prepared records (codes flat frames-major int16) for one split; skip reasons go to `skipped`.
+    Light: no datasets/torch. Audio is held for one batch only."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(8) as pool:
+        for lo in range(0, len(items), BATCH):
+            chunk = items[lo:lo + BATCH]
+            audios = list(pool.map(lambda r: _load(loader, r["audio_path"]), chunk))
+            good = []
+            for row, audio in zip(chunk, audios):
+                ex = row_to_example(row, audio, template, tok_prompt, tok_desc)
+                if isinstance(ex, str):
+                    skipped.append(Skip(sample_id=str(row.get("sample_id", "")), split=split, reason=ex))
+                else:
+                    good.append((ex, audio))
+            if good:
+                for (ex, _), c in zip(good, enc([a for _, a in good])):
+                    yield {**ex, "codes": c.T.reshape(-1), "num_codebooks": int(c.shape[0])}
+            tick(len(chunk))
+
+
+def write_split(records, out: Path, shard_rows: int = SHARD_ROWS) -> int:
+    """Stream records into small Dataset shards (from_dict, no generator pickling) and join them into one
+    `datasets` directory at `out`. Returns the row count."""
+    from datasets import Dataset, Features, Sequence, Value, concatenate_datasets, load_from_disk
+
+    feats = Features({"sample_id": Value("string"), "prompt_input_ids": Sequence(Value("int32")),
+                      "input_ids": Sequence(Value("int32")), "codes": Sequence(Value("int16")),
+                      "num_codebooks": Value("int32")})
+    shards_dir = out.with_name(out.name + ".shards")
+    shutil.rmtree(shards_dir, ignore_errors=True)
+    shards: list[Path] = []
+    buf: list[dict] = []
+
+    def flush():
+        if buf:
+            d = shards_dir / f"{len(shards):05d}"
+            Dataset.from_dict({k: [r[k] for r in buf] for k in feats}, features=feats).save_to_disk(str(d))
+            shards.append(d)
+            buf.clear()
+
+    for r in records:
+        buf.append(r)
+        if len(buf) >= shard_rows:
+            flush()
+    flush()
+    n = 0
+    if shards:
+        ds = concatenate_datasets([load_from_disk(str(d)) for d in shards])
+        n = len(ds)
+        ds.save_to_disk(str(out))
+        del ds
+    shutil.rmtree(shards_dir, ignore_errors=True)
+    return n
+
+
 def build_parler(feature_extractor, audio_encoder, prompt_tokenizer, description_tokenizer, template: str,
                  rep=None, *, encode: Callable | None = None,
                  loader: Callable = _default_loader) -> Callable[[dict[str, list[dict]], Path], BuildResult]:
     def tok_prompt(t):
-        return prompt_tokenizer(t).input_ids
+        return prompt_tokenizer(t, truncation=True, max_length=MAX_TOKENS).input_ids
 
     def tok_desc(t):
-        return description_tokenizer(t).input_ids
+        return description_tokenizer(t, truncation=True, max_length=MAX_TOKENS).input_ids
 
     def build(rows: dict[str, list[dict]], out: Path) -> BuildResult:
-        from concurrent.futures import ThreadPoolExecutor
-
-        from datasets import Dataset, Features, Sequence, Value
-
         enc = encode or make_encoder(feature_extractor, audio_encoder)
         out.mkdir(parents=True, exist_ok=True)
         tick = progress_ticker(rep, sum(len(v) for v in rows.values()))
-        feats = Features({"sample_id": Value("string"), "prompt_input_ids": Sequence(Value("int32")),
-                          "input_ids": Sequence(Value("int32")), "codes": Sequence(Value("int16")),
-                          "num_codebooks": Value("int32")})
         counts: dict[str, int] = {}
         skipped: list[Skip] = []
-        with ThreadPoolExecutor(8) as pool:
-            for split, items in rows.items():
-                def gen(items=items, split=split):
-                    for lo in range(0, len(items), BATCH):
-                        chunk = items[lo:lo + BATCH]
-                        audios = list(pool.map(lambda r: _load(loader, r["audio_path"]), chunk))
-                        good = []
-                        for row, audio in zip(chunk, audios):
-                            ex = row_to_example(row, audio, template, tok_prompt, tok_desc)
-                            if isinstance(ex, str):
-                                skipped.append(Skip(sample_id=str(row.get("sample_id", "")), split=split, reason=ex))
-                            else:
-                                good.append((ex, audio))
-                        if good:
-                            codes = enc([a for _, a in good])
-                            for (ex, _), c in zip(good, codes):
-                                yield {**ex, "codes": c.T.reshape(-1), "num_codebooks": int(c.shape[0])}
-                        tick(len(chunk))
-
-                tmp = out / f".gen-{split}"  # fresh cache dir: never a stale fingerprint hit that skips gen()
-                ds = Dataset.from_generator(gen, features=feats, cache_dir=str(tmp))
-                if len(ds) == 0:
-                    raise PrepareError(f"split {split} is empty after prepare ({len(skipped)} rows skipped)")
-                ds.save_to_disk(str(out / split))
-                counts[split] = len(ds)
-                del ds
-                shutil.rmtree(tmp, ignore_errors=True)
+        for split, items in rows.items():
+            recs = iter_records(items, split, skipped, enc, loader, template, tok_prompt, tok_desc, tick)
+            n = write_split(recs, out / split)
+            if n == 0:
+                raise PrepareError(f"split {split} is empty after prepare ({len(skipped)} rows skipped)")
+            counts[split] = n
         return BuildResult(counts=counts, skipped=skipped, files=list(rows))
 
     return build

@@ -266,6 +266,11 @@ def _eval_loss(model, cfg: RunConfig, rd: RunDir, ptok, dtok) -> float:
     return float(trainer.evaluate()["eval_loss"])
 
 
+def parler_baseline_key(cfg: RunConfig, max_samples: int | None) -> dict:
+    """max_samples + init (as ASR) plus the description template, which changes the synthesized voice."""
+    return {**asr_baseline_key(cfg, max_samples), "description_template": template_of(cfg)}
+
+
 def eval_parler(rd: RunDir, cfg: RunConfig, rep) -> int:
     final = _require_final(rd)
     do_baseline, max_samples = eval_opts(cfg)
@@ -295,7 +300,7 @@ def eval_parler(rd: RunDir, cfg: RunConfig, rep) -> int:
                 del m
                 free_gpu()
 
-        base = baseline_metrics(cfg, ds, asr_baseline_key(cfg, max_samples), compute)
+        base = baseline_metrics(cfg, ds, parler_baseline_key(cfg, max_samples), compute)
     merge_results(rd, tuned, base)
     return 0
 
