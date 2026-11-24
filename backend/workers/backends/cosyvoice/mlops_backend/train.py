@@ -22,6 +22,11 @@ the epoch field of epoch n-1, so a resume REPEATS epoch n from its start with th
 upstream does not save optimizer state). A finished component is `<component>-final/model.pt` (inference format: no epoch/step
 keys; hifigan = generator only, no `generator.` prefix) and its epoch dirs are removed. `final/` is assembled at the
 end (see assemble_final). Every complete dir carries init_meta.json (format `cosyvoice-pt`) before `.complete`.
+
+Resume semantics (upstream saves WEIGHTS ONLY): a resume restores the weights and the step counter (scheduler position)
+but restarts the optimizer state (Adam moments) and the GradScaler. A mid-epoch save (save_steps, SIGTERM, max_steps) makes
+the resume repeat that epoch from its start; the step counter is NOT rolled back, so the repeated epoch's steps count
+again (total steps can exceed epochs x steps-per-epoch).
 """
 from __future__ import annotations
 
@@ -39,6 +44,7 @@ from app.core.backend_kit import (
 )
 from app.core.contract import Phase, RunConfig, RunDir, read_prepared_refs
 
+from .compat import ensure_deepspeed_stub
 from .files import link_or_copy, link_tree
 
 BACKEND = "cosyvoice"
@@ -255,6 +261,40 @@ def load_weights(model, component: str, path: Path) -> tuple[int, int]:
     return step, epoch
 
 
+_ENV_KEYS = ("MASTER_ADDR", "MASTER_PORT", "RANK", "LOCAL_RANK", "WORLD_SIZE", "LOCAL_WORLD_SIZE", "onnx_path")
+
+
+def snapshot_env() -> dict[str, str | None]:
+    return {k: os.environ.get(k) for k in _ENV_KEYS}
+
+
+def restore_env(snap: dict[str, str | None]) -> None:
+    for k, v in snap.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
+def train_metrics(info: dict, gan: bool, seen: dict) -> list[tuple[str, float]]:
+    """(name, value) train metrics of one upstream log_per_step call; [] when it is not an optimizer-step boundary.
+    Upstream's loss is divided by accum_grad in batch_backward: multiplied back here. The GAN loop logs twice per batch
+    (discriminator turn, then generator turn): `loss_d` / `loss_g`, with lr only on the generator turn."""
+    if info["tag"] != "TRAIN" or (info["batch_idx"] + 1) % info["accum_grad"] != 0:
+        return []
+    ld = info["loss_dict"]
+    loss = float(ld["loss"]) * info["accum_grad"]
+    if not gan:
+        out = [("loss", loss)]
+        if "acc" in ld:
+            out.append(("acc", float(ld["acc"])))
+        return out + [("lr", float(info["lr"]))]
+    key = (info.get("epoch"), info["batch_idx"])
+    generator = seen.get("batch") == key  # second call for this batch
+    seen["batch"] = key
+    return [("loss_g", loss), ("lr", float(info["lr"]))] if generator else [("loss_d", loss)]
+
+
 def make_component_final(rd: RunDir, cfg: RunConfig, component: str) -> Path:
     """`<component>-final/model.pt` from the latest complete epoch dir; the epoch dirs are removed afterwards."""
     import torch
@@ -325,10 +365,12 @@ def train_component(name: str, cfg: RunConfig, rd: RunDir, rep, stop: StopFlag, 
     if not use_amp:
         raise RuntimeError("CosyVoice fine-tuning needs a CUDA GPU")
 
+    env_snap = snapshot_env()
     os.environ.update({"MASTER_ADDR": "127.0.0.1", "MASTER_PORT": str(_free_port()), "RANK": "0", "LOCAL_RANK": "0",
                        "WORLD_SIZE": "1", "LOCAL_WORLD_SIZE": "1", "onnx_path": str(base_dir)})
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stderr)
 
+    ensure_deepspeed_stub()
     from cosyvoice.utils import executor as ex_mod
     from cosyvoice.utils.executor import Executor
     from cosyvoice.utils.train_utils import (
@@ -358,7 +400,17 @@ def train_component(name: str, cfg: RunConfig, rd: RunDir, rep, stop: StopFlag, 
                      save_states="model_only", timeout=60)
     tc.update(vars(args))
 
-    init_distributed(args)
+    try:
+        init_distributed(args)
+    except Exception as e:  # noqa: BLE001 - the free port can be taken between probe and bind: retry once
+        print(f"cosyvoice: init_distributed failed ({e}); retrying on a new port", file=sys.stderr)
+        if dist.is_initialized():
+            dist.destroy_process_group()
+        os.environ["MASTER_PORT"] = str(_free_port())
+        init_distributed(args)
+    halted = None
+    model = optimizer = scheduler = optimizer_d = scheduler_d = scaler = executor = None
+    train_loader = cv_loader = train_dataset = info_dict = None
     try:
         train_dataset, _, train_loader, cv_loader = init_dataset_and_dataloader(args, configs, gan, False)
         configs = check_modify_and_save_config(args, configs)
@@ -385,7 +437,10 @@ def train_component(name: str, cfg: RunConfig, rd: RunDir, rep, stop: StopFlag, 
     finally:
         if dist.is_initialized():
             dist.destroy_process_group()
-    del model, optimizer, scheduler, train_loader, cv_loader, train_dataset
+        restore_env(env_snap)
+    # drop every reference to GPU tensors before emptying the cache
+    model = optimizer = scheduler = optimizer_d = scheduler_d = scaler = executor = None
+    train_loader = cv_loader = train_dataset = info_dict = configs = None
     gc.collect()
     torch.cuda.empty_cache()
     if halted == "stop":
@@ -425,18 +480,18 @@ def _run_epochs(name, cfg, rd, rep, stop, ex_mod, executor, model, optimizer, sc
         else:  # "halt"
             publish(model_, "step", e, executor.step)
 
+    gan_seen: dict = {}
+
     def log_per_step(writer, info):
         orig["log_per_step"](writer, info)
-        if info["tag"] != "TRAIN" or (info["batch_idx"] + 1) % info["accum_grad"] != 0:
+        metrics = train_metrics(info, gan, gan_seen)
+        if not metrics:
             return
         step = int(info["step"]) + 1  # optimizer updates done (executor.step is incremented right after this call)
-        ld = info["loss_dict"]
-        loss = float(ld["loss"]) * info["accum_grad"]  # batch_backward divided it by accum_grad
-        rep.metric(step, "train", "loss", loss)
-        if "acc" in ld:
-            rep.metric(step, "train", "acc", float(ld["acc"]))
-        rep.metric(step, "train", "lr", float(info["lr"]))
-        nan.feed(loss)
+        for mname, value in metrics:
+            rep.metric(step, "train", mname, value)
+            if mname.startswith("loss"):
+                nan.feed(value)
         rep.status(Phase.train, step, total["v"], f"{name}: epoch {int(info['epoch']) + 1}")
         if max_steps is not None and step >= max_steps:
             halt.reason = "max"
@@ -450,6 +505,8 @@ def _run_epochs(name, cfg, rd, rep, stop, ex_mod, executor, model, optimizer, sc
             rep.metric(executor.step, "eval", f"eval_loss_{name}", float(loss))
 
     def cosyvoice_join(group, info):
+        if stop.requested and halt.reason is None:
+            halt.reason = "stop"  # checked at every batch start: bounded stop latency
         return halt.reason is not None
 
     orig_cv = executor.cv
@@ -460,6 +517,7 @@ def _run_epochs(name, cfg, rd, rep, stop, ex_mod, executor, model, optimizer, sc
             return None
         return orig_cv(model_, loader, writer, info, on_batch_end=on_batch_end)
 
+    had_cv = "cv" in vars(executor)
     executor.cv = cv
     ex_mod.log_per_step, ex_mod.log_per_save = log_per_step, log_per_save
     ex_mod.save_model, ex_mod.cosyvoice_join = save_model, cosyvoice_join
@@ -475,12 +533,18 @@ def _run_epochs(name, cfg, rd, rep, stop, ex_mod, executor, model, optimizer, sc
             else:
                 executor.train_one_epoc(model, optimizer, scheduler, train_loader, cv_loader, None, info_dict, scaler,
                                         None)
+            if halt.reason is None and stop.requested:
+                halt.reason = "stop"  # the epoch (and its end-of-epoch save) is complete: nothing more to save
             if halt.reason is not None:
                 break
             if total["v"] is None:  # steps per epoch are known after the first epoch of this attempt
                 total["v"] = start_step + (executor.step - start_step) * (epochs - start_epoch - 1)
         return halt.reason
     finally:
+        if had_cv:
+            executor.cv = orig_cv
+        else:
+            del executor.cv
         ex_mod.log_per_step, ex_mod.log_per_save = orig["log_per_step"], orig["log_per_save"]
         ex_mod.save_model, ex_mod.cosyvoice_join = orig["save_model"], orig["cosyvoice_join"]
 

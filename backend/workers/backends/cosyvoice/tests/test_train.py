@@ -207,6 +207,221 @@ def test_link_or_copy_hardlinks_same_filesystem(tmp_path):
     assert src.stat().st_ino == dst.stat().st_ino or src.stat().st_nlink == 1  # link where the FS supports it
 
 
+def test_link_or_copy_follows_hf_style_symlink(tmp_path):
+    blobs, snap = tmp_path / "blobs", tmp_path / "snapshots" / "rev"
+    blobs.mkdir()
+    snap.mkdir(parents=True)
+    (blobs / "abc123").write_bytes(b"blob")
+    try:
+        (snap / "llm.pt").symlink_to("../../blobs/abc123")  # relative, like the HF cache
+    except OSError:
+        pytest.skip("symlinks not permitted")
+    dst = tmp_path / "out" / "llm.pt"
+    link_or_copy(snap / "llm.pt", dst)
+    assert dst.is_file() and not dst.is_symlink() and dst.read_bytes() == b"blob"
+    (snap / "llm.pt").unlink()
+    assert dst.read_bytes() == b"blob"  # survives removing the symlink
+
+
+# ---- deepspeed stub ----------------------------------------------------------------------------------------------
+
+def _drop_deepspeed(monkeypatch):
+    import sys
+
+    for k in [k for k in sys.modules if k == "deepspeed" or k.startswith("deepspeed.")]:
+        monkeypatch.delitem(sys.modules, k)
+
+
+def test_deepspeed_stub_provides_import_time_names_and_raises(monkeypatch):
+    import sys
+
+    from mlops_backend.compat import ensure_deepspeed_stub
+
+    _drop_deepspeed(monkeypatch)
+    monkeypatch.setattr("importlib.util.find_spec", lambda name, *a, **k: None)
+    ensure_deepspeed_stub()
+    from deepspeed.runtime.zero.stage_1_and_2 import estimate_zero2_model_states_mem_needs_all_live
+
+    import deepspeed
+
+    for fn in (estimate_zero2_model_states_mem_needs_all_live, deepspeed.init_distributed, deepspeed.initialize,
+               deepspeed.add_config_arguments):
+        with pytest.raises(RuntimeError, match="deepspeed engine not supported"):
+            fn()
+    assert deepspeed.runtime.zero.stage_1_and_2 is sys.modules["deepspeed.runtime.zero.stage_1_and_2"]
+    ensure_deepspeed_stub()  # idempotent
+    for k in [k for k in sys.modules if k == "deepspeed" or k.startswith("deepspeed.")]:
+        monkeypatch.delitem(sys.modules, k)
+
+
+def test_deepspeed_stub_leaves_a_real_install_alone(monkeypatch):
+    import sys
+    import types
+
+    from mlops_backend.compat import ensure_deepspeed_stub
+
+    real = types.ModuleType("deepspeed")
+    monkeypatch.setitem(sys.modules, "deepspeed", real)
+    monkeypatch.setattr("importlib.util.find_spec", lambda name, *a, **k: object())
+    ensure_deepspeed_stub()
+    assert sys.modules["deepspeed"] is real
+
+
+# ---- epoch loop hooks (fake executor) ----------------------------------------------------------------------------
+
+class _Stop:
+    requested = False
+
+
+def _info(step, batch_idx, epoch=0, loss=0.5):
+    return {"tag": "TRAIN", "step": step, "epoch": epoch, "batch_idx": batch_idx, "accum_grad": 1, "lr": 1e-5,
+            "loss_dict": {"loss": loss, "acc": 0.9}}
+
+
+def _fake_world(tmp_path, stop, stop_after_batch=None, n_batches=5):
+    import types
+
+    calls = {"cv": 0, "save": []}
+
+    def fake_save(m, name, info):
+        calls["save"].append((name, dict(info)))
+        (tmp_path / "work" / "save.pt").write_bytes(b"w")
+
+    ex_mod = types.SimpleNamespace(log_per_step=lambda w, i: None, log_per_save=lambda w, i: None,
+                                   save_model=fake_save, cosyvoice_join=lambda g, i: False)
+    originals = dict(vars(ex_mod))
+
+    class Ex:
+        step, epoch = 0, 0
+
+        def cv(self, *a, **k):
+            calls["cv"] += 1
+
+        def train_one_epoc(self, model, *a):
+            info = None
+            for b in range(n_batches):
+                if stop_after_batch is not None and b == stop_after_batch:
+                    stop.requested = True
+                info = _info(self.step, b, self.epoch)
+                if ex_mod.cosyvoice_join(None, info):
+                    break
+                ex_mod.log_per_step(None, info)
+                self.step += 1
+            self.cv(model, None, None, info)
+
+        train_one_epoc_gan = train_one_epoc
+
+    (tmp_path / "work").mkdir(exist_ok=True)
+    return ex_mod, originals, Ex(), calls
+
+
+def _run(run_dir, tmp_path, stop, ex_mod, ex, max_steps=None, epochs=2):
+    from app.core.backend_kit import Reporter
+
+    from mlops_backend.train import _run_epochs
+
+    rd, cfg = _cfg(run_dir)
+    info_dict = {"max_epoch": epochs if max_steps is None else 10 ** 6}
+
+    class DS:
+        def set_epoch(self, e):
+            pass
+
+    work = tmp_path / "work"
+    halted = _run_epochs("llm", cfg, rd, Reporter(rd), stop, ex_mod, ex, None, None, None, None, None, DS(), None,
+                         None, info_dict, None, work, 0, -1, max_steps, epochs, 1)
+    return halted, rd
+
+
+def test_run_epochs_stop_halts_saves_midepoch_and_restores_names(run_dir, tmp_path):
+    stop = _Stop()
+    ex_mod, originals, ex, calls = _fake_world(tmp_path, stop, stop_after_batch=2)
+    halted, rd = _run(run_dir, tmp_path, stop, ex_mod, ex)
+    assert halted == "stop"
+    assert ex.step == 2 and calls["cv"] == 0  # join broke the loop at batch 2; the cv wrapper saved, no CV pass
+    assert [n for n, _ in calls["save"]] == ["save"]
+    assert calls["save"][0][1]["epoch"] == -1 and calls["save"][0][1]["step"] == 2  # resume repeats epoch 0
+    assert (epoch_dir(rd, "llm", 1, 2) / ".complete").exists()
+    for k, v in originals.items():
+        assert getattr(ex_mod, k) is v  # the four names are restored
+    assert "cv" not in vars(ex)  # the instance override is removed again
+
+
+def test_run_epochs_restores_names_when_a_hook_raises(run_dir, tmp_path):
+    import math
+
+    from app.core.backend_kit import TrainingDiverged
+
+    stop = _Stop()
+    ex_mod, originals, ex, calls = _fake_world(tmp_path, stop)
+
+    def bad(model, *a):
+        for b in range(4):
+            ex_mod.log_per_step(None, _info(b, b, loss=math.nan))
+
+    ex.train_one_epoc = bad
+    with pytest.raises(TrainingDiverged):
+        _run(run_dir, tmp_path, stop, ex_mod, ex)
+    for k, v in originals.items():
+        assert getattr(ex_mod, k) is v
+
+
+def test_run_epochs_stop_between_epochs_returns_stop(run_dir, tmp_path):
+    stop = _Stop()
+    ex_mod, originals, ex, calls = _fake_world(tmp_path, stop, n_batches=2)
+    orig = ex.train_one_epoc
+
+    def epoch(model, *a):
+        orig(model, *a)
+        stop.requested = True
+
+    ex.train_one_epoc = epoch
+    halted, _ = _run(run_dir, tmp_path, stop, ex_mod, ex, epochs=3)
+    assert halted == "stop" and ex.epoch == 0 and calls["cv"] == 1
+
+
+def test_run_epochs_max_steps_halts_with_max(run_dir, tmp_path):
+    stop = _Stop()
+    ex_mod, originals, ex, calls = _fake_world(tmp_path, stop)
+    halted, rd = _run(run_dir, tmp_path, stop, ex_mod, ex, max_steps=3)
+    assert halted == "max" and ex.step == 3
+    assert (epoch_dir(rd, "llm", 1, 3) / ".complete").exists()
+
+
+def test_train_metrics_gan_reports_d_and_g_turns_separately():
+    from mlops_backend.train import train_metrics
+
+    seen: dict = {}
+    d = train_metrics(_info(4, 0), True, seen)
+    g = train_metrics(_info(4, 0), True, seen)
+    assert [n for n, _ in d] == ["loss_d"] and sorted(n for n, _ in g) == ["loss_g", "lr"]
+    assert [n for n, _ in train_metrics(_info(5, 1), True, seen)] == ["loss_d"]  # new batch: D turn first again
+    assert dict(d)["loss_d"] == 0.5
+
+
+def test_train_metrics_non_gan_and_accum_boundary():
+    from mlops_backend.train import train_metrics
+
+    assert dict(train_metrics(_info(0, 0), False, {})) == {"loss": 0.5, "acc": 0.9, "lr": 1e-5}
+    info = _info(0, 0)
+    info["accum_grad"] = 2
+    assert train_metrics(info, False, {}) == []  # not an accumulation boundary
+
+
+def test_env_restored_after_snapshot(monkeypatch):
+    import os
+
+    from mlops_backend.train import restore_env, snapshot_env
+
+    monkeypatch.setenv("RANK", "7")
+    monkeypatch.delenv("MASTER_PORT", raising=False)
+    snap = snapshot_env()
+    os.environ["RANK"] = "0"
+    os.environ["MASTER_PORT"] = "1234"
+    restore_env(snap)
+    assert os.environ["RANK"] == "7" and "MASTER_PORT" not in os.environ
+
+
 # ---- text --------------------------------------------------------------------------------------------------------
 
 def test_split_sentences_on_danda():

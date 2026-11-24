@@ -23,6 +23,7 @@ from app.core.evaluation import baseline_metrics, merge_results, run_tts_eval
 from app.core.text import bn_normalize
 from app.core.tts_refs import DEFAULT_SPEAKER
 
+from .compat import ensure_deepspeed_stub
 from .prepare.cosyvoice import INSTRUCT, _safe
 from .train import (
     CKPT_FORMAT, WEIGHT_FILE, base_model_dir, check_init, load_configs, load_weights, patched_yaml, prepared_dir,
@@ -113,6 +114,7 @@ def eval_loss(rd: RunDir, cfg: RunConfig, component: str, weights: Path, base_di
     import torch
     from argparse import Namespace
 
+    ensure_deepspeed_stub()
     from cosyvoice.utils.train_utils import batch_forward, init_dataset_and_dataloader
 
     os.environ["onnx_path"] = str(base_dir)
