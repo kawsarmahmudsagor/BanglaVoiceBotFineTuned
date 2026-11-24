@@ -17,11 +17,35 @@ class FakeTok:
             out += "<|assistant|>"
         return out
 
-    def __call__(self, text, add_special_tokens=False, **kw):
-        return {"input_ids": [ord(c) for c in text]}
+    def __call__(self, text, add_special_tokens=False, return_offsets_mapping=False, **kw):
+        out = {"input_ids": [ord(c) for c in text]}
+        if return_offsets_mapping:
+            out["offset_mapping"] = [(i, i + 1) for i in range(len(text))]
+        return out
 
     def decode(self, ids):
         return "".join(chr(i) for i in ids)
+
+
+class RewritingTok(FakeTok):
+    """Template wraps non-final assistant turns in parens, so prefixes are not stable."""
+
+    def apply_chat_template(self, messages, tools=None, tokenize=False, add_generation_prompt=False, **kw):
+        last = max((i for i, m in enumerate(messages) if m["role"] == "assistant"), default=-1)
+        out = "".join(
+            f"<|{m['role']}|>" + (f"({m['content']})" if m["role"] == "assistant" and i != last else m["content"])
+            for i, m in enumerate(messages))
+        return out + ("<|assistant|>" if add_generation_prompt else "")
+
+
+class DroppingTok(FakeTok):
+    """Template drops earlier assistant content entirely."""
+
+    def apply_chat_template(self, messages, tools=None, tokenize=False, add_generation_prompt=False, **kw):
+        last = max((i for i, m in enumerate(messages) if m["role"] == "assistant"), default=-1)
+        out = "".join(f"<|{m['role']}|>" + ("" if m["role"] == "assistant" and i != last else m["content"])
+                      for i, m in enumerate(messages))
+        return out + ("<|assistant|>" if add_generation_prompt else "")
 
 
 def _build(rows, max_len=1000, tok=None, tmp=None):
@@ -76,6 +100,43 @@ def test_tools_passed_to_template(tmp_path):
     assert tok.tools_seen and all(t == tools for t in tok.tools_seen)
 
 
+_TWO = [{"role": "user", "content": "q1"}, {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "q2"}, {"role": "assistant", "content": "a2"}]
+
+
+def test_unstable_template_falls_back_to_offsets(tmp_path):
+    tok, res = _build([_row(_TWO)], tok=RewritingTok(), tmp=tmp_path)
+    assert res.counts == {"train": 1} and not res.skipped
+    assert _labeled(tok, _read(tmp_path)[0]) == "a1a2"
+
+
+def test_unstable_template_content_not_found_skipped(tmp_path):
+    _, res = _build([_row(_TWO)], tok=DroppingTok(), tmp=tmp_path)
+    assert res.counts == {"train": 0}
+    assert [s.reason for s in res.skipped] == ["chat template is not prefix-stable"]
+
+
+def test_no_assistant_turn_skipped(tmp_path):
+    _, res = _build([_row([{"role": "user", "content": "q"}])], tmp=tmp_path)
+    assert [s.reason for s in res.skipped] == ["no assistant turn"]
+
+
+def test_gated_access_error_surfaces(run_dir, monkeypatch):
+    from app.core.contract import read_config
+    from app.core.prepare import PrepareError
+
+    rd = run_dir("llm-sft", "google/gemma-3-4b-it")
+
+    def deny(repo):
+        raise PrepareError(f"no access to {repo}: accept its terms on Hugging Face and set HF_TOKEN")
+
+    monkeypatch.setattr("app.core.backend_kit.hf_access.check_hf_access", deny)
+    with pytest.raises(PrepareError) as ei:
+        prepare_llm(rd, read_config(rd), None)
+    assert str(ei.value) == ("no access to google/gemma-3-4b-it: accept its terms on Hugging Face "
+                             "and set HF_TOKEN")
+
+
 def test_chat_spec():
     cfg = type("C", (), {"base_model": "Qwen/Qwen3-4B-Instruct-2507", "hparams": {"max_seq_len": 512}})()
     spec = chat_spec(cfg)
@@ -104,9 +165,15 @@ def test_qwen3_real_template_masks_assistant_only(tmp_path):
     from transformers import AutoTokenizer
 
     tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507")
-    msgs = [{"role": "user", "content": "hi there"}, {"role": "assistant", "content": "hello friend"}]
+    msgs = [{"role": "system", "content": "be terse SYSTEMTEXT"},
+            {"role": "user", "content": "hi there"},
+            {"role": "assistant", "content": "<think>x</think>hello friend"},
+            {"role": "user", "content": "and again"},
+            {"role": "assistant", "content": "second reply"}]
     build_chat(tok, 512)({"train": [_row(msgs)]}, tmp_path)
     rec = _read(tmp_path)[0]
     text = tok.decode([t for t in rec["labels"] if t != -100])
-    assert "hello friend" in text
-    assert "hi there" not in text and "user" not in text
+    assert text.index("hello friend") < text.index("second reply")
+    assert text.count("<|im_end|>") == 2
+    for bad in ("<|im_start|>user", "SYSTEMTEXT", "hi there", "and again"):
+        assert bad not in text
