@@ -461,3 +461,31 @@ def test_cosyvoice_20_steps_llm_and_synthesize(run_dir, tiny_tts_ds, monkeypatch
     out = rd.export_dir / "cosyvoice-dir"
     assert (out / "llm.pt").is_file() and (out / "refs").is_dir()
     assert json.loads((out / "serve.json").read_text()) == {"serve_with": "cosyvoice"}
+
+
+def test_download_model_uses_the_default_hf_cache(monkeypatch, tmp_path):
+    import sys
+    import types
+
+    from mlops_backend.cosyvoice import download_model
+
+    seen = {}
+    hub = types.ModuleType("huggingface_hub")
+    hub.snapshot_download = lambda repo, **kw: (seen.update(kw), str(tmp_path))[1]
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
+    assert download_model("a/b") == tmp_path
+    assert seen.get("cache_dir") is None
+
+
+def test_check_finds_snapshot_under_hf_home_hub(monkeypatch, tmp_path):
+    from mlops_backend import check
+
+    snap = tmp_path / "hf" / "hub" / check._REPO_DIR / "snapshots" / "abc"
+    snap.mkdir(parents=True)
+    (snap / "cosyvoice3.yaml").write_text("x")
+    monkeypatch.delenv("HF_HUB_CACHE", raising=False)
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
+    assert check._model_dir() == snap
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "elsewhere"))
+    assert check._model_dir() is None

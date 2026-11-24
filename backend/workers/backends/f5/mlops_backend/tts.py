@@ -278,20 +278,16 @@ def load_weights(model, sd: dict) -> None:
     check_load_result(list(res.missing_keys), list(res.unexpected_keys))
 
 
-def _hf_cache() -> str | None:
-    return os.environ.get("HF_HOME") or None
-
-
 def hub_files(repo: str) -> tuple[Path, Path]:
-    """(weights file, vocab file) of the base model repo, downloaded into HF_HOME. The raw DiT weights are
+    """(weights file, vocab file) of the base model repo, downloaded into the default hub cache ($HF_HOME/hub;
+    cache_dir is not passed so `hf cache scan` sees the files and nothing is stored twice). The raw DiT weights are
     found with list_repo_files (IndicF5 ships them inside a trust_remote_code wrapper repo)."""
     from huggingface_hub import hf_hub_download, list_repo_files
 
     files = list_repo_files(repo)
     weights = pick_weights_file(files)
     vocab = pick_vocab_file(files)
-    return (Path(hf_hub_download(repo, weights, cache_dir=_hf_cache())),
-            Path(hf_hub_download(repo, vocab, cache_dir=_hf_cache())))
+    return Path(hf_hub_download(repo, weights)), Path(hf_hub_download(repo, vocab))
 
 
 def read_weights(path: Path) -> dict:

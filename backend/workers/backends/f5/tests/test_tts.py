@@ -436,3 +436,25 @@ def test_f5_stop_then_resume_and_retention(run_dir, monkeypatch, tmp_path):
     ck = torch.load(str(final / "model_last.pt"), map_location="cpu", weights_only=True)
     assert set(ck) == {"ema_model_state_dict"}
     assert not (rd.path / "work" / "f5_ckpt").exists()
+
+
+def test_hub_downloads_use_the_default_hf_cache(monkeypatch):
+    """cache_dir stays None: HF_HOME applies through $HF_HOME/hub, the cache `hf cache scan` sees."""
+    import sys
+    import types
+
+    from mlops_backend import f5 as p
+    import mlops_backend.tts as t
+
+    calls = []
+    hub = types.ModuleType("huggingface_hub")
+    hub.list_repo_files = lambda repo: ["model.safetensors", "vocab.txt"]
+    hub.hf_hub_download = lambda repo, name, **kw: (calls.append(kw), name)[1]
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+    monkeypatch.setenv("HF_HOME", "/data/models/hf")
+    monkeypatch.setattr(t, "pick_weights_file", lambda files: "model.safetensors")
+    monkeypatch.setattr(t, "pick_vocab_file", lambda files: "vocab.txt")
+    t.hub_files("x/y")
+    monkeypatch.setattr(p, "read_vocab", lambda path: ["a"])
+    p.hub_vocab("x/y")
+    assert calls and all(kw.get("cache_dir") is None for kw in calls)

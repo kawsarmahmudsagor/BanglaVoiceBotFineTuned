@@ -13,13 +13,11 @@ from .prepare.f5 import build_f5, f5_spec, pick_vocab_file, read_vocab, vocab_ha
 
 
 def hub_vocab(repo: str) -> list[str]:
-    """The base vocabulary: the repo's vocab file, downloaded into HF_HOME."""
-    import os
-
+    """The base vocabulary: the repo's vocab file, downloaded into the default hub cache ($HF_HOME/hub)."""
     from huggingface_hub import hf_hub_download, list_repo_files
 
     name = pick_vocab_file(list_repo_files(repo))
-    return read_vocab(Path(hf_hub_download(repo, name, cache_dir=os.environ.get("HF_HOME") or None)))
+    return read_vocab(Path(hf_hub_download(repo, name)))
 
 
 def base_vocab(rd: RunDir, cfg: RunConfig, download=None) -> list[str]:

@@ -20,15 +20,16 @@ def _upstream_commit() -> str:
 
 
 def _model_dir() -> Path | None:
-    """Local snapshot of the base model under HF_HOME, or None when not downloaded yet."""
-    hf_home = os.environ.get("HF_HOME")
-    if not hf_home:
-        return None
-    for root in (Path(hf_home) / "hub", Path(hf_home)):
-        snaps = sorted((root / _REPO_DIR / "snapshots").glob("*/cosyvoice3.yaml"))
-        if snaps:
-            return snaps[-1].parent
-    return None
+    """Local snapshot of the base model in the hub cache (HF_HUB_CACHE, else $HF_HOME/hub, where
+    download_model puts it), or None when not downloaded yet."""
+    root = os.environ.get("HF_HUB_CACHE")
+    if not root:
+        hf_home = os.environ.get("HF_HOME")
+        if not hf_home:
+            return None
+        root = str(Path(hf_home) / "hub")
+    snaps = sorted((Path(root) / _REPO_DIR / "snapshots").glob("*/cosyvoice3.yaml"))
+    return snaps[-1].parent if snaps else None
 
 
 def _load_config() -> bool:

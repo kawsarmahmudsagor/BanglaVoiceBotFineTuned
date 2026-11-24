@@ -3,7 +3,6 @@ and are re-exported below.
 huggingface_hub is imported inside functions only."""
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from app.core.backend_kit import max_skip_share
@@ -19,10 +18,10 @@ MODEL_PATTERNS = ["llm.pt", "flow.pt", "hift.pt", "speech_tokenizer_v3.onnx", "c
 
 
 def download_model(repo: str) -> Path:
-    """The model snapshot directory in HF_HOME; its basename is the revision (commit hash)."""
+    """The model snapshot directory in the default hub cache ($HF_HOME/hub); its basename is the revision."""
     from huggingface_hub import snapshot_download
 
-    return Path(snapshot_download(repo, allow_patterns=MODEL_PATTERNS, cache_dir=os.environ.get("HF_HOME") or None))
+    return Path(snapshot_download(repo, allow_patterns=MODEL_PATTERNS))
 
 
 def prepare_cosyvoice(rd: RunDir, cfg: RunConfig, rep, download=None) -> int:

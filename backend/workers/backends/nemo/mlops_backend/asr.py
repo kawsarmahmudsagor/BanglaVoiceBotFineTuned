@@ -35,7 +35,7 @@ from .prepare.manifest import build_manifest, manifest_spec, tokenizer_hash
 
 def restore_model(base_model: str):
     """Load the model on CPU. A local .nemo path is restored directly; a Hugging Face repo holding a .nemo file
-    is downloaded into HF_HOME first; anything else goes through from_pretrained."""
+    is downloaded into the hub cache ($HF_HOME/hub) first; anything else goes through from_pretrained."""
     from nemo.collections.asr.models import ASRModel
 
     if Path(base_model).is_file():
@@ -44,8 +44,7 @@ def restore_model(base_model: str):
     from huggingface_hub.errors import HfHubHTTPError, RepositoryNotFoundError
 
     try:
-        local = Path(snapshot_download(base_model, allow_patterns=["*.nemo"],
-                                       cache_dir=os.environ.get("HF_HOME") or None))
+        local = Path(snapshot_download(base_model, allow_patterns=["*.nemo"]))  # default cache: $HF_HOME/hub
     except (RepositoryNotFoundError, HfHubHTTPError, ValueError) as e:  # not an HF repo: NGC / from_pretrained
         print(f"nemo: no .nemo download for {base_model} ({type(e).__name__}); trying from_pretrained", file=sys.stderr)
         local = None
