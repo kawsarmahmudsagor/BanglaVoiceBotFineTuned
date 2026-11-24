@@ -67,8 +67,8 @@ def test_undecodable_audio_skipped(tmp_path):
 
 
 def test_long_and_empty_skipped(tmp_path):
-    res = build_manifest(None, None, probe=ok)(
-        {"train": [arow("আ"), arow("আ", sid="l", dur=31.0), arow("  ", sid="e")]}, tmp_path)
+    res = build_manifest(None, None, probe=lambda p: 31.0 if p == "/x/long.wav" else 1.0)(
+        {"train": [arow("আ"), arow("আ", "/x/long.wav", sid="l", dur=31.0), arow("  ", sid="e")]}, tmp_path)
     assert [s.reason for s in res.skipped] == ["duration 31.0 s > 30 s", "empty text"]
 
 
