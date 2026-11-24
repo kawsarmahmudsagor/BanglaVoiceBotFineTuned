@@ -6,7 +6,7 @@ import sys
 
 from . import export, listen, roundtrip_cosyvoice, select
 from .sources import bengaliai
-from .steps import audio_stats, brouhaha, dnsmos, text
+from .steps import audio_stats, brouhaha, dnsmos, speakers, text
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -17,6 +17,7 @@ def main(argv: list[str] | None = None) -> int:
     audio_stats.add_parser(commands)
     dnsmos.add_parser(commands)
     brouhaha.add_parser(commands)
+    speakers.add_parser(commands)
     listen.add_parser(commands)
     select.add_parser(commands)
     export.add_parser(commands)
