@@ -149,6 +149,35 @@
             "if": {
               "properties": {
                 "base_model": {
+                  "const": "facebook/mms-1b-all"
+                }
+              },
+              "required": [
+                "base_model"
+              ]
+            },
+            "then": {
+              "properties": {
+                "method": {
+                  "properties": {
+                    "type": {
+                      "const": "adapter"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                }
+              },
+              "required": [
+                "method"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "base_model": {
                   "enum": [
                     "openai/whisper-large-v3-turbo",
                     "mozilla-ai/whisper-large-v3-turbo-bn"

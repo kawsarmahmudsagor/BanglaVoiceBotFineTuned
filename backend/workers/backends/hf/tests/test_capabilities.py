@@ -94,3 +94,12 @@ def test_eval_documents_max_val_samples():
         mvs = ev["properties"]["max_val_samples"]
         assert (mvs["type"], mvs["minimum"], mvs["default"]) == ("integer", 1, 2000)
         assert {"baseline", "max_samples"} <= set(ev["properties"])
+
+
+def test_mms_requires_adapter_method():
+    v = Draft202012Validator(CAPS["tasks"]["asr"]["schema"])
+    errs = list(v.iter_errors({"base_model": MMS, "method": {"type": "full"}, "hparams": {}}))
+    assert errs and any("adapter" in e.message for e in errs)
+    assert list(v.iter_errors({"base_model": MMS, "method": {}, "hparams": {}}))  # type must be given
+    assert not list(v.iter_errors({"base_model": "facebook/wav2vec2-xls-r-300m", "method": {"type": "full"},
+                                   "hparams": {}}))

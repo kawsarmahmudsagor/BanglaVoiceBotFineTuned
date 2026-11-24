@@ -240,3 +240,18 @@ def test_parler_is_gated():
     from mlops_backend.models import MODELS
 
     assert MODELS[PARLER].gated is True
+
+
+def test_build_raises_when_a_split_is_empty_after_prepare(tmp_path, monkeypatch):
+    import mlops_backend.prepare.parler as pp
+    from app.core.prepare import PrepareError
+
+    monkeypatch.setattr(pp, "write_split", lambda recs, out: sum(1 for _ in recs))
+
+    def loader(path):
+        raise OSError("undecodable")
+
+    build = pp.build_parler(None, None, tok, tok, DEFAULT, encode=lambda audios: [], loader=loader)
+    rows = {"train": [{"sample_id": "a", "audio_path": "x", "text": "আমি"}]}
+    with pytest.raises(PrepareError, match=r"^split train is empty after prepare \(1 rows skipped\)$"):
+        build(rows, tmp_path / "out")
