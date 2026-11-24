@@ -24,3 +24,9 @@ def write_wav(path: Path, audio: np.ndarray, sr: int) -> None:
 
 def duration_s(path: str | Path) -> float:
     return float(sf.info(str(path)).duration)
+
+
+def write_flac(path: Path, audio: np.ndarray, sr: int) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(str(path), audio, sr, format="FLAC", subtype="PCM_16")
