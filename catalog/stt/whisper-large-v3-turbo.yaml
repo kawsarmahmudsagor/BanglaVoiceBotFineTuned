@@ -61,7 +61,6 @@ recipe_template:
     learning_rate: 1.0e-5
     epochs: 3
     warmup_steps: 500
-    max_steps: 10000
   export: [ct2]
 sources:
   - title: openai/whisper-large-v3-turbo model card

@@ -63,3 +63,11 @@ def test_recipe_templates_validate_against_backend_schemas():
         # template hparams use only names the backend schema knows
         known = set(task["schema"]["properties"]["hparams"]["properties"])
         assert set(tpl.hparams) <= known, f"{entry.id}: unknown hparams {set(tpl.hparams) - known}"
+
+
+def test_templates_set_epochs_or_max_steps_not_both():
+    """max_steps overrides epochs; a template with both hides which one decides the run length."""
+    entries, _ = load_catalog(REPO / "catalog")
+    for entry in entries:
+        hp = entry.recipe_template.hparams
+        assert not ("epochs" in hp and "max_steps" in hp), entry.id
