@@ -111,6 +111,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "bangla-voice-backend", extra = ["audio"] },
+    { name = "bnunicodenormalizer" },
     { name = "librosa" },
     { name = "pandas" },
     { name = "pyarrow" },
@@ -150,6 +151,7 @@ dev = [
 requires-dist = [
     { name = "accelerate", marker = "extra == 'cosyvoice'" },
     { name = "bangla-voice-backend", extras = ["audio"], editable = "../../backend" },
+    { name = "bnunicodenormalizer" },
     { name = "conformer", marker = "extra == 'cosyvoice'", specifier = "==0.3.2" },
     { name = "diffusers", marker = "extra == 'cosyvoice'", specifier = "==0.29.0" },
     { name = "huggingface-hub", marker = "extra == 'cosyvoice'" },
@@ -232,6 +234,15 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "soxr" },
+]
+
+[[package]]
+name = "bnunicodenormalizer"
+version = "0.1.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/35/b4/b93d9cd7dc3906eaceafc340cb9e834f9f54fac84d51e00045bd6cb9d3e6/bnunicodenormalizer-0.1.7.tar.gz", hash = "sha256:86a3489cc81c73d2afb4e265bd2d0d8bc52fc8a2374e210c899e0260940bc091", size = 28520, upload-time = "2024-05-26T16:54:50.979Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e9/37/df46a2375c462623ebf17258926cacb94e01a6159c93f9144a6b42bc33fe/bnunicodenormalizer-0.1.7-py3-none-any.whl", hash = "sha256:42b6a9720bca52c02a944a0876770e86694eb081a096f3c644ccd8add40f7cee", size = 23661, upload-time = "2024-05-26T16:54:48.092Z" },
 ]
 
 [[package]]

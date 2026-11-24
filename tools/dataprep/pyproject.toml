@@ -6,6 +6,7 @@ requires-python = ">=3.12,<3.13"
 # Base install: what the pure-Python steps and the tests need.
 dependencies = [
   "bangla-voice-backend[audio]",
+  "bnunicodenormalizer",  # MIT
   "librosa>=0.10",
   "pandas",
   "pyarrow",
