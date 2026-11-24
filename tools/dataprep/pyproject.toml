@@ -9,6 +9,7 @@ dependencies = [
   "bnunicodenormalizer",  # MIT
   "librosa>=0.10",
   "pandas",
+  "pydantic>=2",
   "pyarrow",
   "pyloudnorm",
   "pyyaml",

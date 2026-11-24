@@ -1,0 +1,13 @@
+name: voice
+task: tts
+cer_labeller: null
+drop_latin: false
+filters:
+  - {kind: range, column: dur, min: 1, max: 20}
+  - {kind: range, column: clip_frac, max: 0.001, max_exclusive: true}
+# Spec §6.3 "(flag)": reported by check-voice, not applied by select.
+flags:
+  - {kind: range, column: cer, max: 0.02}
+  - {kind: range, column: dnsmos_ovrl, min: 3.5}
+  - {kind: range, column: snr_db, min: 35}
+  - {kind: range, column: max_pause_s, max: 1.0}

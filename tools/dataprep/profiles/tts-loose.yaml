@@ -1,0 +1,13 @@
+name: tts-loose
+task: tts
+cer_labeller: null
+drop_latin: true
+min_speaker_minutes: 5
+filters:
+  - {kind: range, column: dur, min: 1, max: 15}
+  - {kind: range, column: clip_frac, max: 0.001, max_exclusive: true}
+  - {kind: percentile, column: cps, lo: 1, hi: 99}
+  - {kind: range, column: cer, max: 0.05}
+  - {kind: range, column: dnsmos_ovrl, min: 2.6}
+  - {kind: range, column: dnsmos_bak, min: 3.0}
+  - {kind: range, column: max_pause_s, max: 1.5}

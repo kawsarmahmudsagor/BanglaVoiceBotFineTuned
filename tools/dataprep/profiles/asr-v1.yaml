@@ -1,0 +1,7 @@
+name: asr-v1
+task: asr
+cer_labeller: null
+drop_latin: false
+filters:
+  - {kind: range, column: dur, min: 0.5, max: 30}
+  - {kind: percentile, column: cps, lo: 0.5, hi: 99.5}

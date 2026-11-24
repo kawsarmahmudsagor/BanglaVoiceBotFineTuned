@@ -115,6 +115,7 @@ dependencies = [
     { name = "librosa" },
     { name = "pandas" },
     { name = "pyarrow" },
+    { name = "pydantic" },
     { name = "pyloudnorm" },
     { name = "pyyaml" },
 ]
@@ -169,6 +170,7 @@ requires-dist = [
     { name = "openai-whisper", marker = "extra == 'cosyvoice'", specifier = "==20231117" },
     { name = "pandas" },
     { name = "pyarrow" },
+    { name = "pydantic", specifier = ">=2" },
     { name = "pyloudnorm" },
     { name = "pyworld", marker = "extra == 'cosyvoice'", specifier = "==0.3.4" },
     { name = "pyyaml" },
