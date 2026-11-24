@@ -11,7 +11,6 @@ split on the danda here, one sentence per call.
 """
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
 
@@ -23,7 +22,7 @@ from app.core.evaluation import baseline_metrics, merge_results, run_tts_eval
 from app.core.text import bn_normalize
 from app.core.tts_refs import DEFAULT_SPEAKER
 
-from .compat import ensure_deepspeed_stub
+from .compat import ensure_deepspeed_stub, use_offline_features
 from .prepare.cosyvoice import INSTRUCT, _safe
 from .train import (
     CKPT_FORMAT, WEIGHT_FILE, base_model_dir, check_init, load_configs, load_weights, patched_yaml, prepared_dir,
@@ -117,7 +116,7 @@ def eval_loss(rd: RunDir, cfg: RunConfig, component: str, weights: Path, base_di
     ensure_deepspeed_stub()
     from cosyvoice.utils.train_utils import batch_forward, init_dataset_and_dataloader
 
-    os.environ["onnx_path"] = str(base_dir)
+    use_offline_features()  # see compat.use_offline_features
     work.mkdir(parents=True, exist_ok=True)
     yaml_path = patched_yaml(base_dir, work, cfg.hparams)
     configs = load_configs(component, yaml_path, base_dir)

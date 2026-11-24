@@ -314,6 +314,27 @@ def test_preload_cuda_libs_is_a_noop_off_linux(monkeypatch, tmp_path):
     assert preload_cuda_libs([tmp_path]) == 0
 
 
+def test_use_offline_features_unsets_onnx_path(monkeypatch):
+    import os
+
+    from mlops_backend.compat import use_offline_features
+
+    monkeypatch.setenv("onnx_path", "/models/cosyvoice3")
+    use_offline_features()
+    assert "onnx_path" not in os.environ
+    use_offline_features()  # idempotent when already unset
+
+
+def test_train_and_eval_never_set_onnx_path():
+    """onnx_path switches upstream to online token extraction (needs an unpublished batch onnx)."""
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1] / "mlops_backend"
+    for name in ("train.py", "eval.py"):
+        text = (src / name).read_text(encoding="utf-8")
+        assert '"onnx_path": ' not in text and 'environ["onnx_path"]' not in text, name
+
+
 def test_deepspeed_stub_leaves_a_real_install_alone(monkeypatch):
     import sys
     import types

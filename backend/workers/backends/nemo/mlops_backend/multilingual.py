@@ -50,11 +50,25 @@ def monolingual_config(cfg: dict, lang: str, tokenizer_dir: str) -> dict:
     no language-id outputs, and no dataset paths from the authors' cluster. Vocabulary sizes and lists are
     recomputed by the model from the tokenizer."""
     out = copy.deepcopy(cfg)
-    if lang not in (multilingual_langs(cfg) or []):
+    langs = multilingual_langs(cfg) or []
+    if lang not in langs:
         raise ValueError(f"language {lang!r} not in the multilingual tokenizer")
     out["tokenizer"] = {"dir": str(tokenizer_dir), "type": "bpe"}
     for path, keys in _FORK_KEYS.items():
         _drop(out, path, keys)
+    # heads were sized for every language; the model re-derives vocabulary lists but keeps these counts
+    total = int((cfg.get("joint") or {}).get("num_classes") or (cfg.get("decoder") or {}).get("vocab_size") or 0)
+    if total and total % len(langs) == 0:
+        vocab = total // len(langs)
+        if isinstance(out.get("decoder"), dict):
+            out["decoder"]["vocab_size"] = vocab
+        if isinstance(out.get("joint"), dict):
+            out["joint"]["num_classes"] = vocab
+            out["joint"].pop("vocabulary", None)
+        ctc = (out.get("aux_ctc") or {}).get("decoder")
+        if isinstance(ctc, dict):
+            ctc["num_classes"] = vocab
+            ctc.pop("vocabulary", None)
     for ds in ("train_ds", "validation_ds", "test_ds"):
         if isinstance(out.get(ds), dict):
             out[ds].pop("return_language_id", None)

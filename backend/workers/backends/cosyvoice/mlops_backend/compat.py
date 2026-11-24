@@ -33,6 +33,16 @@ def ensure_deepspeed_stub() -> None:
     sys.modules.update(mods)
 
 
+def use_offline_features() -> None:
+    """Upstream turns on "online feature" mode when the `onnx_path` env var is set at import of
+    cosyvoice.utils.onnx: speech tokens are then extracted during training with speech_tokenizer_v3.batch.onnx,
+    which the published CosyVoice3 checkpoint does not ship. Prepare already stores speech tokens and CAM++
+    embeddings, so make sure the variable is unset before any cosyvoice import."""
+    import os
+
+    os.environ.pop("onnx_path", None)
+
+
 def _nvidia_lib_dirs() -> list:
     from pathlib import Path
 

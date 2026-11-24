@@ -45,6 +45,8 @@ def test_monolingual_config_strips_fork_keys_and_cluster_paths():
     assert out["validation_ds"]["manifest_filepath"] is None
     assert out["train_ds"]["batch_size"] == 8 and "labels" not in out
     assert out["target"] == src["target"]
+    assert out["decoder"]["vocab_size"] == 4 and out["joint"]["num_classes"] == 4  # 12 classes / 3 languages
+    assert out["aux_ctc"]["decoder"]["num_classes"] == 4
     assert src["tokenizer"]["type"] == "multilingual"  # input untouched
 
 
