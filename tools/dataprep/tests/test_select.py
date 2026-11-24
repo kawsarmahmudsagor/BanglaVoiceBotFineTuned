@@ -211,6 +211,23 @@ def test_shipped_profiles_load():
     assert all(p.cer_labeller is None for p in ps.values())
 
 
+def test_select_drops_short_speech_span(tmp_path):
+    wd = make_wd(tmp_path, n=2)
+    StepFile.write(
+        wd.step_path("brouhaha"),
+        pd.DataFrame({
+            "id": ["r0", "r1"], "snr_db": 30.0, "c50_db": 50.0, "max_pause_s": 0.1,
+            # r0 trims to 0.1999 + 2 * 0.15 = 0.4999 s (< 0.5); r1 to 3.0 + 0.3 s
+            "speech_segments": [[[1.0, 1.1999]], [[1.0, 4.0]]], "error": None,
+        }),
+        step="brouhaha", version=1, params={},
+    )
+    p = Profile(name="t", task="tts", filters=[Range(column="speech_span_s", min=0.5)])
+    res = select(wd, p)
+    assert list(res.rows["id"]) == ["r1"]
+    assert steps(res)["speech_span_s in [0.5, inf]"]["rows_after"] == 1
+
+
 def test_load_profile_by_path(tmp_path):
     y = tmp_path / "mine.yaml"
     y.write_text("name: mine\ntask: asr\nfilters:\n  - {kind: range, column: dur, min: 2}\n")

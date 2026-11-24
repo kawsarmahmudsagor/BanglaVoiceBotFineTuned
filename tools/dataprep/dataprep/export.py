@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import re
@@ -18,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .audio_proc import MIN_SPAN_S, speech_span_s
 from .pool import run_rows
@@ -39,6 +41,63 @@ BENGALIAI_PROVENANCE = {
 
 class ExportError(RuntimeError):
     pass
+
+
+class Provenance(BaseModel):
+    """The backend ingest form's `Provenance` model (backend/app/routers/datasets.py), mirrored: fields must match."""
+
+    model_config = ConfigDict(extra="forbid")
+    source: str = Field(min_length=1)
+    license: str = Field(min_length=1)
+    consent: str = Field(min_length=1)
+    commercial_ok: bool = False
+    notes: str = ""
+
+
+def _provenance(wd: WorkDir, given: dict | None) -> dict:
+    """The given block (validated), else Bengali.AI's default when that is the work dir's source.
+
+    The source kind is the `source` param of clips.parquet's import metadata. A work dir imported before the
+    param existed has none and is treated as Bengali.AI (the only source then).
+    """
+    if given is None:
+        kind = StepFile._meta(wd.clips_path)["params"].get("source", "bengaliai")
+        if kind != "bengaliai":
+            raise ExportError(
+                f"work dir source is '{kind}': pass --provenance <json file> with source, license, consent, "
+                "commercial_ok and notes (the ingest form's fields); only Bengali.AI has a default"
+            )
+        return BENGALIAI_PROVENANCE
+    try:
+        return Provenance.model_validate(given).model_dump()
+    except ValidationError as e:
+        raise ExportError(f"invalid provenance: {e}") from e
+
+
+def _hash_key(sample_id: str) -> str:
+    return hashlib.sha256(sample_id.encode("utf-8")).hexdigest()
+
+
+def pick_test_ids(ids: list[str], categories: dict[str, str] | None, count: int) -> list[str]:
+    """`count` ids for the test split (spec 9.4): hash order, round-robin across categories when given.
+
+    Categories are visited in sorted order and each yields its next id in hash order, so every category is
+    represented once `count` >= the number of categories; exhausted categories drop out.
+    """
+    if count > len(ids):
+        raise ExportError(f"--test-count {count} is more than the {len(ids)} selected take(s) with no split")
+    if not categories:
+        return sorted(ids, key=_hash_key)[:count]
+    queues: dict[str, list[str]] = {}
+    for i in sorted(ids, key=_hash_key):
+        queues.setdefault(categories.get(i, ""), []).append(i)
+    picked: list[str] = []
+    order = [queues[c] for c in sorted(queues)]
+    while len(picked) < count:
+        for q in order:
+            if q and len(picked) < count:
+                picked.append(q.pop(0))
+    return picked
 
 
 @dataclass(frozen=True)
@@ -143,7 +202,7 @@ def _tts_inputs(
 
 def export(
     wd: WorkDir, profile: Profile, dataset: str, *, workers: int = 1, out: Path | None = None,
-    speaker: str | None = None,
+    speaker: str | None = None, provenance: dict | None = None, test_count: int | None = None,
 ) -> Path:
     sel_path = wd.selection_path(profile.name)
     report_path = sel_path.with_name(f"{profile.name}.report.json")
@@ -158,6 +217,13 @@ def export(
     missing = [i for i in sel["id"] if i not in src.index]
     if missing:
         raise ExportError(f"selected ids not in clips.parquet (stale selection? rerun `select`): {missing[:10]}")
+
+    provenance = _provenance(wd, provenance)
+    splits = dict(zip(sel["id"], sel["src_split"]))
+    if test_count:
+        free = [i for i, sp in splits.items() if pd.isna(sp) or not sp]
+        cats = clips.set_index("id")["category"].to_dict() if "category" in clips.columns else None
+        splits.update({i: "test" for i in pick_test_ids(free, cats, test_count)})
 
     tts = profile.task == "tts"
     layout = TTS_LAYOUT if tts else ASR_LAYOUT
@@ -184,7 +250,8 @@ def export(
         with open(tmp, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             w.writerow(layout.columns)
-            for rid, text, split in zip(sel["id"], sel["text_clean"], sel["src_split"]):
+            for rid, text in zip(sel["id"], sel["text_clean"]):
+                split = splits[rid]
                 row = [f"{layout.subdir}/{rid}{layout.suffix}", text]
                 if tts:
                     row.append(speakers if isinstance(speakers, str) else speakers[rid])
@@ -204,7 +271,7 @@ def export(
         "step_versions": _step_versions(wd),
         "report": report,
         "tool_commit": _tool_commit(),
-        "provenance": BENGALIAI_PROVENANCE,
+        "provenance": provenance,
     }
     if tts:
         curation["band_limited"] = sum(1 for r in results if r["band_limited"])
@@ -219,8 +286,12 @@ def _cmd(args: argparse.Namespace) -> int:
     wd = WorkDir(args.work)
     try:
         profile = load_profile(args.profile)
-        dest = export(wd, profile, args.dataset, workers=args.workers, out=args.out, speaker=args.speaker)
-    except (ExportError, FileNotFoundError) as e:
+        provenance = json.loads(args.provenance.read_text(encoding="utf-8")) if args.provenance else None
+        dest = export(
+            wd, profile, args.dataset, workers=args.workers, out=args.out, speaker=args.speaker,
+            provenance=provenance, test_count=args.test_count,
+        )
+    except (ExportError, FileNotFoundError, ValueError) as e:
         print(f"export: {e}")
         return 1
     print(f"exported to {dest}")
@@ -244,5 +315,11 @@ def add_parser(commands) -> None:
     p.add_argument("--speaker", default=None,
                    help="single speaker name for every clip (tts, e.g. the voice profile); "
                         "default: pseudo-speakers from speakers.parquet")
+    p.add_argument("--provenance", type=Path, default=None,
+                   help="JSON file with the ingest form's provenance fields (source, license, consent, "
+                        "commercial_ok, notes); required unless the work dir is Bengali.AI")
+    p.add_argument("--test-count", type=int, default=None,
+                   help="hold out this many takes as split=test (round-robin over `category` when present, "
+                        "else hash order); the rest keep an empty split for the platform's default ratios")
     p.add_argument("--workers", type=int, default=os.cpu_count() or 1, help="parallel transcode workers")
     p.set_defaults(func=_cmd)

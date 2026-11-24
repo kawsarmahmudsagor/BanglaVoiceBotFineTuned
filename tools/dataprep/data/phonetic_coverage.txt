@@ -1,0 +1,69 @@
+# Phonetic coverage targets for the stage-B voice script (spec 9.2).
+# One target per line; counted as a substring of the NFC text_clean. `check-voice` reports targets seen < 20 times.
+
+# Vowel signs
+া
+ি
+ী
+ু
+ূ
+ৃ
+ে
+ৈ
+ো
+ৌ
+
+# Diacritics
+ং
+ঃ
+ঁ
+
+# Common conjuncts
+ক্ষ
+জ্ঞ
+ন্ত
+স্ত
+ন্দ
+ম্ব
+ক্ত
+প্র
+ত্র
+শ্র
+ব্দ
+দ্ধ
+ষ্ট
+ঙ্গ
+চ্ছ
+ল্প
+স্ক
+স্প
+ন্ধ
+ম্প
+ক্র
+গ্র
+ব্র
+দ্র
+ভ্র
+স্ব
+ন্ন
+ম্ম
+ত্ত
+ল্ল
+ক্ক
+ণ্ড
+ন্ট
+ঞ্চ
+ঞ্জ
+হ্ম
+ত্য
+দ্য
+ন্য
+ম্ন
+
+# Retroflex contrasts
+ট
+ঠ
+ড
+ঢ
+ণ
+ড়

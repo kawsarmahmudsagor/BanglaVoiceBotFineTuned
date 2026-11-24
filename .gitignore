@@ -5,6 +5,7 @@ __pycache__/
 node_modules/
 .next/
 data/
+!tools/dataprep/data/
 runs/
 models/
 mlruns/
