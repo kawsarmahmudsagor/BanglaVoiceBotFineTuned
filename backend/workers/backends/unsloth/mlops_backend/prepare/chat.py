@@ -56,7 +56,7 @@ def _encode(tokenizer, messages: list[dict], tools) -> tuple[list[int], list[int
     turns = [i for i, m in enumerate(messages) if m.get("role") == "assistant"]
     if not turns:
         return NO_ASSISTANT
-    if any(not messages[i].get("content") for i in turns):
+    if any(not messages[i].get("content") and not messages[i].get("tool_calls") for i in turns):
         return EMPTY_ASSISTANT
     full = render(messages)
     pairs = []
@@ -83,7 +83,8 @@ def _encode(tokenizer, messages: list[dict], tools) -> tuple[list[int], list[int
     spans = []
     cursor = 0
     for i, m in enumerate(messages):
-        content = m.get("content") or ""
+        content = m.get("content")
+        content = content if isinstance(content, str) else ""
         if m.get("role") != "assistant":
             # Anchor the cursor past this turn; templates may rewrite system/tool text, so a miss is fine.
             at = full.find(content, cursor) if content else -1

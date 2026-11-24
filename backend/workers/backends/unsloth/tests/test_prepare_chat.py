@@ -6,13 +6,20 @@ from app.core.prepare import PrepSpec
 from mlops_backend.prepare.chat import build_chat, chat_spec, prepare_llm
 
 
+def _c(m):
+    out = str(m.get("content") or "")
+    if m.get("tool_calls"):
+        out += json.dumps(m["tool_calls"])
+    return out
+
+
 class FakeTok:
     def __init__(self):
         self.tools_seen = []
 
     def apply_chat_template(self, messages, tools=None, tokenize=False, add_generation_prompt=False, **kw):
         self.tools_seen.append(tools)
-        out = "".join(f"<|{m['role']}|>{m['content']}" for m in messages)
+        out = "".join(f"<|{m['role']}|>{_c(m)}" for m in messages)
         if add_generation_prompt:
             out += "<|assistant|>"
         return out
@@ -33,7 +40,7 @@ class RewritingTok(FakeTok):
     def apply_chat_template(self, messages, tools=None, tokenize=False, add_generation_prompt=False, **kw):
         last = max((i for i, m in enumerate(messages) if m["role"] == "assistant"), default=-1)
         out = "".join(
-            f"<|{m['role']}|>" + (f"({m['content']})" if m["role"] == "assistant" and i != last else m["content"])
+            f"<|{m['role']}|>" + (f"({_c(m)})" if m["role"] == "assistant" and i != last else _c(m))
             for i, m in enumerate(messages))
         return out + ("<|assistant|>" if add_generation_prompt else "")
 
@@ -148,6 +155,30 @@ def test_empty_assistant_turn_skipped_both_paths(tmp_path):
                 {"role": "user", "content": "r"}, {"role": "assistant", "content": "a"}]
         _, res = _build([_row(msgs)], tok=tok, tmp=tmp_path)
         assert [s.reason for s in res.skipped] == ["empty assistant turn"]
+
+
+_TC = [{"id": "1", "function": {"name": "f", "arguments": "{}"}}]
+
+
+def test_tool_call_turn_without_content_kept_in_fast_path(tmp_path):
+    msgs = [{"role": "user", "content": "q"}, {"role": "assistant", "content": None, "tool_calls": _TC}]
+    tok, res = _build([_row(msgs)], tmp=tmp_path)
+    assert res.counts == {"train": 1} and not res.skipped
+    assert _labeled(tok, _read(tmp_path)[0]) == json.dumps(_TC)
+
+
+def test_tool_call_turn_without_content_skipped_in_fallback(tmp_path):
+    msgs = [{"role": "user", "content": "q"}, {"role": "assistant", "content": None, "tool_calls": _TC},
+            {"role": "user", "content": "r"}, {"role": "assistant", "content": "a"}]
+    _, res = _build([_row(msgs)], tok=RewritingTok(), tmp=tmp_path)
+    assert [s.reason for s in res.skipped] == ["chat template is not prefix-stable"]
+
+
+def test_non_string_user_content_does_not_crash_fallback(tmp_path):
+    msgs = [{"role": "user", "content": [{"type": "text", "text": "q"}]}, {"role": "assistant", "content": "a1"},
+            {"role": "user", "content": "r"}, {"role": "assistant", "content": "a2"}]
+    tok, res = _build([_row(msgs)], tok=RewritingTok(), tmp=tmp_path)
+    assert res.counts == {"train": 1}
 
 
 def test_unstable_template_content_not_found_skipped(tmp_path):
