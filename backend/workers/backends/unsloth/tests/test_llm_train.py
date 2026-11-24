@@ -3,7 +3,7 @@ import json
 import pytest
 
 from app.core.backend_kit import read_init_meta
-from mlops_backend.llm import _trainer_args, plan_init, total_steps, write_ckpt_meta
+from mlops_backend.llm import _trainer_args, merged_init_dir, plan_init, total_steps, write_ckpt_meta
 
 QWEN = "Qwen/Qwen3-4B-Instruct-2507"
 
@@ -18,7 +18,8 @@ def test_trainer_args_from_hparams(run_dir):
     rd = run_dir("llm-sft", QWEN, {"learning_rate": 1e-4, "epochs": 3, "batch_size": 2, "grad_accum": 2,
                                    "warmup_steps": 5}, method={"type": "full"})
     _refs(rd, 16)
-    cfg = __import__("app.core.contract", fromlist=["read_config"]).read_config(rd)
+    from app.core.contract import read_config
+    cfg = read_config(rd)
     a = _trainer_args(cfg, rd)
     assert a["output_dir"] == str(rd.checkpoints_dir)
     assert a["optim"] == "adamw_8bit"
@@ -77,6 +78,13 @@ def test_write_ckpt_meta(run_dir, method, fmt):
     m = read_init_meta(d)
     assert m["format"] == fmt and m["backend"] == "unsloth" and m["step"] == 7
     assert m["base_model"] == QWEN and m["method"] == method
+
+
+def test_merged_init_dir_outside_init_dir(run_dir):
+    rd = run_dir("llm-sft", QWEN)
+    d = merged_init_dir(rd)
+    assert rd.init_dir not in d.parents and d != rd.init_dir
+    assert rd.path in d.parents
 
 
 @pytest.mark.heavy

@@ -82,6 +82,16 @@ def _trainer_args(cfg: RunConfig, rd: RunDir) -> dict:
     return args
 
 
+def merged_init_dir(rd: RunDir) -> Path:
+    """Scratch dir for a merged hf-peft init (never rd.init_dir, which is read-only)."""
+    return rd.path / "work" / "merged_init"
+
+
+def _require_trainable(model) -> None:
+    if not any(p.requires_grad for p in model.parameters()):
+        raise RuntimeError("model has no trainable parameters; check the init checkpoint and method")
+
+
 def write_ckpt_meta(ckpt_dir: Path, cfg: RunConfig, step: int) -> None:
     method = _method(cfg)
     write_init_meta(ckpt_dir, backend=BACKEND, base_model=cfg.base_model, method=method,
@@ -118,9 +128,16 @@ def _load_model(cfg: RunConfig, rd: RunDir, max_seq_len: int):
         for n, p in model.named_parameters():
             if "lora_" in n:
                 p.requires_grad_(True)
+        _require_trainable(model)
     elif plan == "merge_adapter":
         model, tok = load(src, four_bit=False, full=False)
         model = model.merge_and_unload()
+        scratch = merged_init_dir(rd)
+        scratch.mkdir(parents=True, exist_ok=True)
+        model.save_pretrained(str(scratch))
+        tok.save_pretrained(str(scratch))
+        del model
+        model, tok = load(str(scratch), four_bit=False, full=True)
     elif plan == "full_weights":
         model, tok = load(src, four_bit=False, full=True)
     else:  # full_then_adapter
@@ -130,6 +147,7 @@ def _load_model(cfg: RunConfig, rd: RunDir, max_seq_len: int):
 
 
 def train_llm(rd: RunDir, cfg: RunConfig, rep) -> int:
+    import unsloth  # noqa: F401  (must precede transformers/trl/datasets imports)
     from datasets import load_dataset
     from transformers import DataCollatorForSeq2Seq
     from trl import SFTConfig, SFTTrainer
@@ -140,6 +158,7 @@ def train_llm(rd: RunDir, cfg: RunConfig, rep) -> int:
     max_seq_len = int(cfg.hparams.get("max_seq_len", 2048))
     model, tok = _load_model(cfg, rd, max_seq_len)
 
+    _require_trainable(model)
     prepared = Path(_train_ref(rd)["path"])
     data = load_dataset("json", data_files={"train": str(prepared / "train.jsonl"),
                                             "val": str(prepared / "val.jsonl")})
