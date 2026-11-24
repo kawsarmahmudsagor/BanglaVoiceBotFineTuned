@@ -22,7 +22,7 @@ from app.core.backend_kit import (
     write_init_meta,
 )
 from app.core.backend_kit.runutil import (
-    dir_artifact, eval_ds, eval_loss_files, eval_rows, free_gpu, stopped_early, total_steps, trainer_args,
+    cap_val, dir_artifact, eval_ds, eval_loss_files, eval_rows, free_gpu, stopped_early, total_steps, trainer_args,
     train_ref,
 )
 from app.core.backend_kit.whisper import asr_baseline_key, dataloader_workers, processor_kwarg
@@ -212,7 +212,7 @@ def train_parler(rd: RunDir, cfg: RunConfig, rep) -> int:
     freeze_encoders(model, bool(cfg.hparams.get("freeze_text_encoder", True)))
     ptok, dtok = load_tokenizers(cfg.base_model)
     train_ds = _load_concat(_split_dirs(rd, ["train"]))
-    val_ds = _load_concat(_split_dirs(rd, ["val"]))
+    val_ds = cap_val(_load_concat(_split_dirs(rd, ["val"])), cfg)  # seeded subset, see max_val_samples
     total = total_steps(cfg, rd)
     collator = ParlerCollator(ptok, dtok, int(model.config.decoder.eos_token_id))
     fe = _feature_extractor(cfg)

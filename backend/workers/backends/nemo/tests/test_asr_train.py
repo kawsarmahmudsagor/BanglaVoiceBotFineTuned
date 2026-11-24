@@ -191,3 +191,22 @@ def test_nemo_checkpoints_resume_and_warm_start(run_dir, monkeypatch, tmp_path):
     shutil.copy2(rd.prepared_refs_path, rd2.prepared_refs_path)
     assert asr.train(rd2, cfg3, rep) == 0
     assert (rd2.checkpoints_dir / "final" / "model.nemo").exists()
+
+
+def test_val_manifest_capped_to_seeded_subset(tmp_path):
+    prep, work = tmp_path / "prep", tmp_path / "work"
+    prep.mkdir()
+    (prep / "train.jsonl").write_text("{}\n")
+    (prep / "val.jsonl").write_text("".join(json.dumps({"i": i}) + "\n" for i in range(10)))
+    m = FakeModel()
+    assert asr.apply_data_config(m, prep, batch_size=2, val_cap=4, seed=3, work_dir=work) is True
+    val_path = Path(m.calls[1][1]["manifest_filepath"])
+    assert val_path.parent == work
+    lines = val_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 4
+    m2 = FakeModel()
+    asr.apply_data_config(m2, prep, batch_size=2, val_cap=4, seed=3, work_dir=tmp_path / "work2")
+    assert Path(m2.calls[1][1]["manifest_filepath"]).read_text(encoding="utf-8").splitlines() == lines
+    m3 = FakeModel()  # small val: the prepared manifest is used as is
+    asr.apply_data_config(m3, prep, batch_size=2, val_cap=50, seed=3, work_dir=work)
+    assert m3.calls[1][1]["manifest_filepath"] == str(prep / "val.jsonl")

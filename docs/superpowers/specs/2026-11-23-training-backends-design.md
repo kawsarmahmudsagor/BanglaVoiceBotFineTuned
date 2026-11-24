@@ -213,14 +213,18 @@ Each format is exported on its own. If one fails, the error goes to the log and 
 | Task | Metrics | Sample line |
 |---|---|---|
 | llm-sft | `eval_loss`, `perplexity`. Then greedy generation (max 512 new tokens) for up to 200 prompts, scored with `bangla_script_share`, `markdown_rate`, `emoji_rate`, `avg_reply_chars`. | `prompt`, `reference`, `reply` |
-| asr | `wer`, `cer` after `bn_normalize(mode="asr")`, overall and `wer/<slice>=<value>` for `region`, `channel` and `noise` when present; `rtf` | `sample_id`, `reference`, `hypothesis`, `wer` |
+| asr | `wer`, `cer` after `bn_normalize(mode="asr")`, overall and `wer/<slice>=<value>` for `region`, `channel` and `noise` when present; `rtf`. Up to 2000 eval rows unless `hparams.eval.max_samples` says otherwise. | `sample_id`, `reference`, `hypothesis`, `wer` |
 | tts | `eval_loss`; `rtf` over up to 20 synthesized eval sentences | `sample_id`, `text`, `audio` |
 
 ### 8.3 Baseline
 
 - Before training, the eval phase scores the untouched base model on the same data. Its metrics are stored with a `base/` prefix.
 - Recipe `hparams.eval.baseline: false` skips this.
-- The baseline is cached per (base model, eval dataset hash, eval spec) under `prepared_root/_baselines/`, so it is not recomputed for every run.
+- The baseline is cached per (base model, eval dataset hash, eval spec) under `prepared_root/_baselines/`, so it is not recomputed for every run. For ASR the eval spec includes the backend, the effective `max_samples` and `max_val_samples`.
+
+### 8.4 Validation during training
+
+- Training-time validation (every save interval) and the whisper eval-phase loss use a seeded random subset of at most `hparams.eval.max_val_samples` rows (default 2000) of the val split, not the whole split.
 
 ## 9. API and UI
 

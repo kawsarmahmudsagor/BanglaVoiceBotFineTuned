@@ -13,7 +13,7 @@ from app.core.backend_kit import (
 from app.core.backend_kit.runutil import eval_ds as _eval_ds  # noqa: F401
 from app.core.backend_kit.runutil import eval_loss_files, eval_rows  # noqa: F401
 from app.core.backend_kit.runutil import free_gpu as _free_gpu  # noqa: F401
-from app.core.backend_kit.runutil import stopped_early, total_steps, train_ref as _train_ref, trainer_args  # noqa: F401
+from app.core.backend_kit.runutil import cap_val, stopped_early, total_steps, train_ref as _train_ref, trainer_args  # noqa: F401
 from app.core.contract import RunConfig, RunDir
 from app.core.evaluation import baseline_metrics, merge_results, run_llm_eval
 
@@ -136,7 +136,7 @@ def train_llm(rd: RunDir, cfg: RunConfig, rep) -> int:
     sft_args = SFTConfig(**_trainer_args(cfg, rd), max_length=max_seq_len,
                          dataset_kwargs={"skip_prepare_dataset": True})
     trainer = SFTTrainer(
-        model=model, args=sft_args, train_dataset=data["train"], eval_dataset=data["val"],
+        model=model, args=sft_args, train_dataset=data["train"], eval_dataset=cap_val(data["val"], cfg),
         processing_class=tok, data_collator=DataCollatorForSeq2Seq(tok, label_pad_token_id=-100),
         callbacks=[_Callback(rep, stop, NanGuard(), total)],
     )

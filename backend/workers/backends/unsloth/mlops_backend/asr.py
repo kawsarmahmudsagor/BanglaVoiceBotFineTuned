@@ -11,7 +11,7 @@ from pathlib import Path
 from app.core.backend_kit import (
     NanGuard, StopFlag, eval_opts, export_all, init_source, latest_checkpoint, mark_complete,
 )
-from app.core.backend_kit.runutil import stopped_early
+from app.core.backend_kit.runutil import cap_val, max_val_samples, stopped_early
 from app.core.backend_kit.whisper import (
     TASK, WhisperCollator, asr_baseline_key, check_prepared_audio, check_prepared_refs,  # noqa: F401
     dataloader_workers, ct2_command, load_processor, load_train_val, make_transcriber, prepare_whisper, run_ct2,
@@ -92,6 +92,7 @@ def train_asr(rd: RunDir, cfg: RunConfig, rep) -> int:
     _require_trainable(model)
     processor = _processor(cfg)
     train_ds, val_ds, _ = load_train_val(rd)
+    val_ds = cap_val(val_ds, cfg)  # eval every save_steps: a seeded subset, not the whole val split
     total = total_steps(cfg, rd)
 
     trainer = Seq2SeqTrainer(
@@ -130,7 +131,8 @@ def _transcriber(model, cfg: RunConfig):
 def _eval_loss(model, cfg: RunConfig, rd: RunDir) -> float | None:
     dirs = [f.with_suffix("") for f in eval_loss_files(rd, cfg)]  # prepared split dirs (llm helper lists <split>.jsonl)
     return whisper_eval_loss(model, _processor(cfg), dirs, batch_size=int(cfg.hparams.get("batch_size", 2)),
-                             seed=cfg.seed, work_dir=rd.path / "work" / "eval_tmp")
+                             seed=cfg.seed, work_dir=rd.path / "work" / "eval_tmp",
+                             max_rows=max_val_samples(cfg.hparams))
 
 
 def eval_asr(rd: RunDir, cfg: RunConfig, rep) -> int:

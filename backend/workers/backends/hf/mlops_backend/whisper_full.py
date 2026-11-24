@@ -16,8 +16,8 @@ from app.core.backend_kit import (
     NanGuard, StopFlag, eval_opts, export_all, init_source, latest_checkpoint, mark_complete, write_init_meta,
 )
 from app.core.backend_kit.runutil import (
-    dir_artifact, eval_ds, eval_loss_files, eval_rows, free_gpu, stopped_early, total_steps,
-    trainer_args,
+    cap_val, dir_artifact, eval_ds, eval_loss_files, eval_rows, free_gpu, max_val_samples, stopped_early,
+    total_steps, trainer_args,
 )
 from app.core.backend_kit.whisper import (
     WhisperCollator, asr_baseline_key, check_prepared_refs, dataloader_workers, load_processor, load_train_val,
@@ -93,6 +93,7 @@ def train_whisper(rd: RunDir, cfg: RunConfig, rep) -> int:
     model.config.use_cache = False  # incompatible with gradient checkpointing
     processor = _processor(cfg)
     train_ds, val_ds, _ = load_train_val(rd)
+    val_ds = cap_val(val_ds, cfg)  # eval every save_steps: a seeded subset, not the whole val split
     total = total_steps(cfg, rd)
 
     trainer = Seq2SeqTrainer(
@@ -123,7 +124,8 @@ def _device(model):
 def _eval_loss(model, cfg: RunConfig, rd: RunDir) -> float | None:
     dirs = [f.with_suffix("") for f in eval_loss_files(rd, cfg)]
     return whisper_eval_loss(model, _processor(cfg), dirs, batch_size=int(cfg.hparams.get("batch_size", 2)),
-                             seed=cfg.seed, work_dir=rd.path / "work" / "eval_tmp")
+                             seed=cfg.seed, work_dir=rd.path / "work" / "eval_tmp",
+                             max_rows=max_val_samples(cfg.hparams))
 
 
 def _eval_model(model, cfg: RunConfig, rd: RunDir, rep, rows, prefix: str, max_samples) -> dict[str, float]:

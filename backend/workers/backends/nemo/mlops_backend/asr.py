@@ -20,7 +20,9 @@ from app.core.backend_kit import (
     max_skip_share, write_init_meta,
 )
 from app.core.backend_kit.lightning import ContractCheckpoint, ContractLightningCallback
-from app.core.backend_kit.runutil import dir_artifact, eval_ds, eval_rows, free_gpu, total_steps, train_ref
+from app.core.backend_kit.runutil import (
+    dir_artifact, eval_ds, eval_rows, free_gpu, max_val_samples, total_steps, train_ref, val_subset_indices,
+)
 from app.core.backend_kit.whisper import asr_baseline_key
 from app.core.contract import RunConfig, RunDir, write_prepared_refs
 from app.core.evaluation import baseline_metrics, merge_results, run_asr_eval
@@ -138,15 +140,36 @@ def data_config(manifest: Path, *, batch_size: int, shuffle: bool, cpu_count: in
             "max_duration": MAX_DURATION, "pin_memory": True}
 
 
-def apply_data_config(model, prepared_dir: Path, *, batch_size: int) -> bool:
-    """Point the model at train.jsonl (+ val.jsonl when non-empty). Only the data loaders are configured: the
-    aux_ctc weight and the encoder streaming keys (att_context_size, conv_context_size) stay as in the
-    checkpoint. Returns whether a validation set was set up."""
+def capped_val_manifest(prepared_dir: Path, cap: int, seed: int, work_dir: Path) -> Path:
+    """val.jsonl, or (when it has more than `cap` rows) a seeded subset of `cap` rows written to work_dir.
+    The prepared cache is shared between runs and is never written here."""
+    src = Path(prepared_dir) / "val.jsonl"
+    with src.open(encoding="utf-8") as f:
+        lines = [line.rstrip("\r\n") for line in f if line.strip()]
+    idx = val_subset_indices(len(lines), cap, seed)
+    if idx is None:
+        return src
+    work_dir = Path(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    out = work_dir / "val_capped.jsonl"
+    tmp = out.with_suffix(".jsonl.tmp")
+    tmp.write_text("".join(lines[i] + "\n" for i in idx), encoding="utf-8", newline="\n")
+    os.replace(tmp, out)
+    return out
+
+
+def apply_data_config(model, prepared_dir: Path, *, batch_size: int, val_cap: int | None = None, seed: int = 0,
+                      work_dir: Path | None = None) -> bool:
+    """Point the model at train.jsonl (+ val.jsonl when non-empty; a seeded subset of at most `val_cap` rows when
+    given). Only the data loaders are configured: the aux_ctc weight and the encoder streaming keys
+    (att_context_size, conv_context_size) stay as in the checkpoint. Returns whether a validation set was set up."""
     d = Path(prepared_dir)
     model.setup_training_data(data_config(d / "train.jsonl", batch_size=batch_size, shuffle=True))
     has_val = has_val_manifest(d)
     if has_val:
-        model.setup_validation_data(data_config(d / "val.jsonl", batch_size=batch_size, shuffle=False))
+        val = (capped_val_manifest(d, val_cap, seed, work_dir) if val_cap is not None and work_dir is not None
+               else d / "val.jsonl")
+        model.setup_validation_data(data_config(val, batch_size=batch_size, shuffle=False))
     return has_val
 
 
@@ -257,7 +280,8 @@ def train(rd: RunDir, cfg: RunConfig, rep) -> int:
         log_every_n_steps=1,  # keeps train_loss in callback_metrics at every optimizer step (the contract callback reads it)
         limit_val_batches=1.0 if has_val else 0)
     model.set_trainer(trainer)
-    apply_data_config(model, prepared, batch_size=batch)
+    apply_data_config(model, prepared, batch_size=batch, val_cap=max_val_samples(hp), seed=cfg.seed,
+                      work_dir=rd.path / "work")
     # Keep the checkpoint's optimizer/scheduler config; Lightning builds it via model.setup_optimization().
     if model.cfg.get("optim") is None:
         print("nemo: model config has no optim section; leaving optimizer settings to NeMo defaults", file=sys.stderr)

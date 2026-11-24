@@ -64,3 +64,12 @@ def test_every_task_has_keep_checkpoints():
     for task in CAPS["tasks"].values():
         kc = task["schema"]["properties"]["hparams"]["properties"]["keep_checkpoints"]
         assert kc == {"type": "integer", "minimum": 1, "default": 2}
+
+
+def test_eval_documents_max_val_samples():
+    for task in CAPS["tasks"].values():
+        ev = task["schema"]["properties"]["hparams"]["properties"]["eval"]
+        assert ev["type"] == "object"
+        mvs = ev["properties"]["max_val_samples"]
+        assert (mvs["type"], mvs["minimum"], mvs["default"]) == ("integer", 1, 2000)
+        assert {"baseline", "max_samples"} <= set(ev["properties"])

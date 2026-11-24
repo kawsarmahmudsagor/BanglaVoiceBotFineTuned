@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from app.core.backend_kit import Reporter
 
 _SLICE_COLS = ("region", "channel", "noise")
+ASR_MAX_SAMPLES = 2000  # ASR eval cap when hparams.eval.max_samples is unset (LLM: 200, TTS: 20)
 
 
 def _mean(xs: list[float]) -> float:
@@ -63,7 +64,7 @@ def run_llm_eval(rd: RunDir, rep: "Reporter", rows: list[dict], generate: Callab
 
 def run_asr_eval(rd: RunDir, rep: "Reporter", rows: list[dict], transcribe: Callable[[list[str]], list[str]], *,
                  prefix: str = "", batch_size: int = 16, max_samples: int | None = None) -> dict[str, float]:
-    rows = rows[:max_samples] if max_samples is not None else rows
+    rows = rows[:max_samples if max_samples is not None else ASR_MAX_SAMPLES]
     if prefix == "":
         reset_eval_samples(rd)
     refs: list[str] = []

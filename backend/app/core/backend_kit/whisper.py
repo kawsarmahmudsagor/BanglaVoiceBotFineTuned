@@ -198,8 +198,10 @@ def dataloader_workers() -> int:
     return min(8, os.cpu_count() or 1)
 
 
-def whisper_eval_loss(model, processor, split_dirs, *, batch_size: int, seed: int, work_dir) -> float | None:
-    """Eval loss over prepared split dirs (collator decodes audio per batch); None when they are all empty."""
+def whisper_eval_loss(model, processor, split_dirs, *, batch_size: int, seed: int, work_dir,
+                      max_rows: int | None = None) -> float | None:
+    """Eval loss over prepared split dirs (collator decodes audio per batch); None when they are all empty.
+    With `max_rows`, over a seeded subset of at most that many rows (hparams.eval.max_val_samples)."""
     from datasets import concatenate_datasets, load_from_disk
     from transformers import Seq2SeqTrainer, Seq2SeqTrainingArguments
 
@@ -210,14 +212,25 @@ def whisper_eval_loss(model, processor, split_dirs, *, batch_size: int, seed: in
     args = Seq2SeqTrainingArguments(
         output_dir=str(work_dir), per_device_eval_batch_size=batch_size, bf16=True, report_to=[],
         remove_unused_columns=False, label_names=["labels"], seed=seed, dataloader_num_workers=dataloader_workers())
-    trainer = Seq2SeqTrainer(model=model, args=args, eval_dataset=concatenate_datasets(parts),
+    data = concatenate_datasets(parts)
+    if max_rows is not None:
+        from app.core.backend_kit.runutil import val_subset_indices
+
+        idx = val_subset_indices(len(data), max_rows, seed)
+        data = data if idx is None else data.select(idx)
+    trainer = Seq2SeqTrainer(model=model, args=args, eval_dataset=data,
                              data_collator=WhisperCollator(processor, int(model.config.decoder_start_token_id)),
                              **processor_kwarg(Seq2SeqTrainer, processor.feature_extractor))
     return float(trainer.evaluate()["eval_loss"])
 
 
 def asr_baseline_key(cfg, max_samples: int | None) -> dict:
-    key: dict = {"max_samples": max_samples, "backend": cfg.backend}  # each backend's loader computes its own base/
+    from app.core.backend_kit.runutil import max_val_samples
+    from app.core.evaluation import ASR_MAX_SAMPLES
+
+    key: dict = {"max_samples": max_samples if max_samples is not None else ASR_MAX_SAMPLES,  # effective cap
+                 "max_val_samples": max_val_samples(cfg.hparams),  # eval-loss subset
+                 "backend": cfg.backend}  # each backend's loader computes its own base/
     if cfg.init_from is not None:
         key["init"] = [cfg.init_from.source_run, cfg.init_from.checkpoint]
     return key

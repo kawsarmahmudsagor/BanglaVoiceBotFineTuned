@@ -20,7 +20,7 @@ from app.core.backend_kit import (
 )
 from app.core.backend_kit.audio_refs import SAMPLE_RATE, check_audio_refs
 from app.core.backend_kit.runutil import (
-    dir_artifact, eval_ds, eval_rows, free_gpu, stopped_early, total_steps, trainer_args, train_ref,
+    cap_val, dir_artifact, eval_ds, eval_rows, free_gpu, stopped_early, total_steps, trainer_args, train_ref,
 )
 from app.core.backend_kit.whisper import asr_baseline_key, dataloader_workers, processor_kwarg
 from app.core.contract import RunConfig, RunDir, write_prepared_refs
@@ -142,6 +142,9 @@ class RowsDataset:
     def __getitem__(self, i: int) -> dict:
         path, dur, text = self.rows[i]
         return {"audio_path": path, "duration_s": dur, "text": text}
+
+    def select(self, indices) -> "RowsDataset":
+        return RowsDataset([self.rows[i] for i in indices])
 
 
 def check_prepared_refs(rd: RunDir) -> None:
@@ -349,6 +352,7 @@ def train_ctc(rd: RunDir, cfg: RunConfig, rep) -> int:
     vocab = read_vocab(rd)
     model = new_model(cfg, rd, vocab, train=True)
     train_ds, val_ds = load_train_val(rd)
+    val_ds = cap_val(val_ds, cfg)  # eval every save_steps: a seeded subset, not the whole val split
     total = total_steps(cfg, rd)
     mms = is_mms(cfg)
 

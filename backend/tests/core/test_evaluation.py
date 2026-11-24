@@ -135,3 +135,16 @@ def test_rerun_clears_stale_tts_wavs(rd, rep):
     run_tts_eval(rd, rep, [{"sample_id": "new", "text": "y"}], syn, loss=None)
     assert [p.name for p in rd.eval_audio_dir.glob("*.wav")] == ["new.wav"]
     assert read_eval_samples(rd, 0, 10)[1] == 1
+
+
+def test_asr_eval_caps_at_2000_when_max_samples_unset(rd, rep, monkeypatch):
+    import app.core.evaluation as ev
+    assert ev.ASR_MAX_SAMPLES == 2000
+    monkeypatch.setattr(ev, "ASR_MAX_SAMPLES", 3)
+    rows = [{"sample_id": str(i), "text": "x", "duration_s": 1, "audio_path": str(i)} for i in range(5)]
+    seen: list[str] = []
+    run_asr_eval(rd, rep, rows, lambda p: (seen.extend(p), ["x"] * len(p))[1], prefix="base/")
+    assert seen == ["0", "1", "2"]
+    seen.clear()
+    run_asr_eval(rd, rep, rows, lambda p: (seen.extend(p), ["x"] * len(p))[1], prefix="base/", max_samples=5)
+    assert len(seen) == 5  # an explicit eval.max_samples still wins

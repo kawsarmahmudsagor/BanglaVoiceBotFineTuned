@@ -237,3 +237,16 @@ def test_adapter_key_mismatch_names_keys():
     check_adapter_keys(["a", "b"], ["b", "a"])
     with pytest.raises(RuntimeError, match=r"missing \['b'\].*unexpected \['c'\]"):
         check_adapter_keys(["a", "b"], ["a", "c"])
+
+
+def test_rows_dataset_select_for_val_cap():
+    from app.core.backend_kit.runutil import cap_val
+    from app.core.contract import RunConfig
+    from mlops_backend.ctc import RowsDataset
+
+    ds = RowsDataset([(f"a{i}.wav", 1.0, "x") for i in range(10)])
+    cfg = RunConfig(run_id="r", attempt=1, resume=False, task="asr", backend="hf", base_model="m", method={},
+                    hparams={"eval": {"max_val_samples": 3}}, export=[], seed=1, datasets={}, prepared_root="/x")
+    sub = cap_val(ds, cfg)
+    assert isinstance(sub, RowsDataset) and len(sub) == 3
+    assert all(sub[i]["audio_path"] in {r[0] for r in ds.rows} for i in range(3))

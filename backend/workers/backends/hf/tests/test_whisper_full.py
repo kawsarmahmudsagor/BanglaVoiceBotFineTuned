@@ -103,6 +103,7 @@ def test_baseline_key_varies(run_dir):
                                                     method="full", format="hf-full")})
     assert asr_baseline_key(w, None)["init"] == ["r0", "final"]
     assert a["backend"] == cfg.backend
+    assert a["max_samples"] == 2000 and a["max_val_samples"] == 2000  # effective caps, not None
     assert asr_baseline_key(cfg.model_copy(update={"backend": "unsloth"}), None) != a
 
 

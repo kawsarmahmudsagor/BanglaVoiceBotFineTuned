@@ -5,6 +5,7 @@ Light: torch is imported inside free_gpu only. The package __init__ does not imp
 from __future__ import annotations
 
 import math
+import random
 from pathlib import Path
 
 from app.core.backend_kit import StopFlag, keep_checkpoints
@@ -65,6 +66,27 @@ def stopped_early(stop: StopFlag, trainer) -> bool:
     state = trainer.state
     max_steps = int(getattr(state, "max_steps", 0) or 0)
     return max_steps <= 0 or int(state.global_step) < max_steps
+
+
+MAX_VAL_SAMPLES = 2000  # default hparams.eval.max_val_samples: validation rows used during training
+
+
+def max_val_samples(hp: dict) -> int:
+    return max(1, int((hp.get("eval") or {}).get("max_val_samples", MAX_VAL_SAMPLES)))
+
+
+def val_subset_indices(n: int, cap: int, seed: int) -> list[int] | None:
+    """Sorted indices of a seeded random subset of `cap` out of `n` rows; None when n <= cap (use them all)."""
+    if n <= cap:
+        return None
+    return sorted(random.Random(seed).sample(range(n), cap))
+
+
+def cap_val(ds, cfg: RunConfig):
+    """The validation set used during training: at most hparams.eval.max_val_samples rows (seeded subset).
+    `ds` needs __len__ and select(indices) (datasets.Dataset, ctc RowsDataset)."""
+    idx = val_subset_indices(len(ds), max_val_samples(cfg.hparams), cfg.seed)
+    return ds if idx is None else ds.select(idx)
 
 
 def eval_ds(cfg: RunConfig) -> tuple[DatasetRef, list[str]]:

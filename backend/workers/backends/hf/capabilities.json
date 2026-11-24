@@ -79,7 +79,25 @@
                 "type": "boolean"
               },
               "eval": {
-                "type": "object"
+                "type": "object",
+                "properties": {
+                  "baseline": {
+                    "type": "boolean",
+                    "default": true
+                  },
+                  "max_samples": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 2000,
+                    "description": "eval-phase samples (generated / transcribed / synthesized)"
+                  },
+                  "max_val_samples": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 2000,
+                    "description": "validation rows used during training and for the eval-phase loss (seeded subset)"
+                  }
+                }
               },
               "prepare": {
                 "type": "object"
@@ -190,7 +208,25 @@
                 "type": "boolean"
               },
               "eval": {
-                "type": "object"
+                "type": "object",
+                "properties": {
+                  "baseline": {
+                    "type": "boolean",
+                    "default": true
+                  },
+                  "max_samples": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 20,
+                    "description": "eval-phase samples (generated / transcribed / synthesized)"
+                  },
+                  "max_val_samples": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 2000,
+                    "description": "validation rows used during training and for the eval-phase loss (seeded subset)"
+                  }
+                }
               },
               "prepare": {
                 "type": "object"
