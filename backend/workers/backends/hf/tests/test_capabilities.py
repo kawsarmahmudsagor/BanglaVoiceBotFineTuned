@@ -63,15 +63,19 @@ def test_phase_dispatch_unknown_model_fails(tmp_path):
     assert "unsupported base_model 'x/y' for backend hf" in r.stderr
 
 
-def test_phase_not_implemented_is_clean(tmp_path):
+def test_phase_not_implemented_is_clean(tmp_path, monkeypatch, capsys):
+    # Point the family at a module that will never exist, so this stays true after asr.py/tts.py land.
+    from app.core.contract import Phase
+    from mlops_backend import phases
+
+    monkeypatch.setitem(phases._FAMILY_MODULE, "whisper", "_no_such_module")
     rd = RunDir(tmp_path / "run")
     rd.ensure()
-    write_config(rd, RunConfig(
+    cfg = RunConfig(
         run_id="r1", attempt=1, resume=False, task="asr", backend="hf",
         base_model="openai/whisper-large-v3-turbo",
-        method={"type": "full"}, hparams={}, export=[], seed=1, datasets={}, prepared_root="prepared"))
-    r = subprocess.run([sys.executable, "-m", "mlops_backend", "train", "--run-dir", str(rd.path)],
-                       capture_output=True, text=True, timeout=60)
-    assert r.returncode == 1
-    assert "Traceback" not in r.stderr
-    assert "not installed" in r.stderr or "not implemented" in r.stderr
+        method={"type": "full"}, hparams={}, export=[], seed=1, datasets={}, prepared_root="prepared")
+    assert phases._dispatch(Phase.train)(rd, cfg, None) == 1
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert "support not installed" in err

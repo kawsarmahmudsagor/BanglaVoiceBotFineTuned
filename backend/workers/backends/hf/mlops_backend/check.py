@@ -17,7 +17,9 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         print(f"torch import failed: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
-    for mod in ["transformers", "datasets", "parler_tts", "ctranslate2"]:
+    if not torch.__version__.startswith("2.7.1"):
+        print(f"warning: expected torch 2.7.1+cu128, got {torch.__version__}", file=sys.stderr)
+    for mod in ["torchaudio", "transformers", "datasets", "parler_tts", "ctranslate2"]:
         try:
             import_module(mod)
             print(f"{mod} {metadata.version(mod.replace('_', '-'))}")
