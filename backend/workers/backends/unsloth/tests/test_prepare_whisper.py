@@ -57,3 +57,7 @@ def test_whisper_lora_20_steps(run_dir, tiny_audio_ds):
     meta = json.loads((rd.checkpoints_dir / "final" / "init_meta.json").read_text())
     assert meta["format"] == "hf-peft"
     assert eval_asr(rd, cfg, rep) == 0
+    from app.core.contract import read_eval_results
+    m = read_eval_results(rd).metrics
+    for k in ("eval_loss", "wer", "base/wer"):
+        assert k in m

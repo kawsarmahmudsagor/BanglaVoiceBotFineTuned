@@ -21,8 +21,11 @@ def test_whisper_spec_includes_normalizer_version(run_dir):
 
 
 def test_whisper_module_import_is_light():
-    import app.core.backend_kit.whisper  # noqa: F401
-    assert "transformers" not in sys.modules and "datasets" not in sys.modules
+    import subprocess
+    code = ("import sys, app.core.backend_kit.whisper; "
+            "bad = [m for m in ('transformers', 'datasets', 'torch') if m in sys.modules]; "
+            "sys.exit(1 if bad else 0)")
+    assert subprocess.run([sys.executable, "-c", code]).returncode == 0
 
 
 def _ex(row, *, probed=1.0, probe=None, tokens=5):
@@ -106,9 +109,16 @@ def test_build_whisper_assembles_split_results(monkeypatch, tmp_path):
     class Proc:
         tokenizer = Tok()
 
-    monkeypatch.setattr(w, "_write_split", lambda items, out, probe, tok: (
-        len(items) - 1, [Skip(sample_id="b", split=out.name, reason="r")]))
-    res = w.build_whisper(Proc())({"train": [{}, {}], "val": [{}, {}, {}]}, tmp_path)
+    monkeypatch.setattr(w, "_write_split", lambda items, out, probe, tok, tick: (
+        tick(len(items)) or len(items) - 1, [Skip(sample_id="b", split=out.name, reason="r")]))
+    statuses = []
+
+    class Rep:
+        def status(self, phase, step, total, message):
+            statuses.append((step, total, message))
+
+    res = w.build_whisper(Proc(), Rep())({"train": [{}, {}], "val": [{}, {}, {}]}, tmp_path)
+    assert statuses[-1] == (5, 5, "prepared 5/5 rows")
     assert res.counts == {"train": 1, "val": 2} and res.files == ["train", "val"]
     assert [s.split for s in res.skipped] == ["train", "val"]
 
@@ -162,3 +172,63 @@ def test_asr_trainer_args(run_dir):
     rd.prepared_refs_path.write_text('[{"role": "train", "path": "/p", "counts": {"train": 8, "val": 2}}]')
     a = asr_trainer_args(read_config(rd), rd)
     assert a["max_steps"] == 20 and a["dataloader_num_workers"] >= 1 and a["remove_unused_columns"] is False and a["label_names"] == ["labels"]
+
+
+def test_check_audio_refs(tmp_path):
+    from app.core.backend_kit.whisper import check_audio_refs
+    (tmp_path / "a.wav").write_bytes(b"x")
+    check_audio_refs([str(tmp_path / "a.wav")], "c")
+    with pytest.raises(RuntimeError, match=r"prepared cache /c points at missing audio .*b\.wav; delete the cache and re-run prepare"):
+        check_audio_refs([str(tmp_path / "a.wav"), str(tmp_path / "b.wav")], "/c")
+
+
+def test_check_prepared_audio_uses_first_and_last(tmp_path):
+    from mlops_backend.asr import check_prepared_audio
+    (tmp_path / "a.wav").write_bytes(b"x")
+    ds = [{"audio_path": str(tmp_path / "a.wav")}, {"audio_path": str(tmp_path / "gone.wav")}]
+    with pytest.raises(RuntimeError, match="gone.wav"):
+        check_prepared_audio(ds, tmp_path)
+    check_prepared_audio(ds[:1], tmp_path)
+
+
+def test_write_split_empty_after_skips_raises(tmp_path):
+    from app.core.backend_kit.whisper import _write_split
+    from app.core.prepare import PrepareError
+
+    def boom(p):
+        raise OSError("x")
+
+    rows = [{"sample_id": str(i), "audio_path": "p", "text": "x"} for i in range(3)]
+    with pytest.raises(PrepareError, match=r"split val is empty after prepare \(3 rows skipped\)"):
+        _write_split(rows, tmp_path / "val", boom, lambda t: [1])
+    with pytest.raises(PrepareError, match=r"split val is empty after prepare \(0 rows skipped\)"):
+        _write_split([], tmp_path / "val", boom, lambda t: [1])
+
+
+def test_write_split_reports_ticks_per_chunk(tmp_path):
+    from app.core.backend_kit.whisper import _write_split
+    from app.core.prepare import PrepareError
+    ticks = []
+    rows = [{"sample_id": "a", "audio_path": "p", "text": "x"}] * 2500
+
+    def boom(p):
+        raise OSError
+
+    with pytest.raises(PrepareError):
+        _write_split(rows, tmp_path / "t", boom, lambda t: [1], ticks.append)
+    assert ticks == [1000, 1000, 500]
+
+
+class _FakeProcessor:
+    class feature_extractor:  # noqa: N801 - class used as a plain namespace
+        pass
+
+    class tokenizer:  # noqa: N801
+        pass
+
+
+def test_whisper_collator_is_picklable():
+    import pickle
+    from app.core.backend_kit.whisper import WhisperCollator
+    c = pickle.loads(pickle.dumps(WhisperCollator(_FakeProcessor(), 1)))
+    assert c.start_id == 1

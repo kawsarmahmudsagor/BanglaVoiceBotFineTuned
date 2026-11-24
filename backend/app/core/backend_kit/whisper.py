@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from app.core.prepare import BuildResult, PrepSpec, Skip, ensure_prepared
+from app.core.prepare import BuildResult, PrepareError, PrepSpec, Skip, ensure_prepared
 from app.core.text import BN_NORMALIZE_VERSION, bn_normalize
 
 SAMPLE_RATE = 16000
@@ -98,31 +98,85 @@ class WhisperCollator:
         return {"input_features": feats.input_features, "labels": torch.tensor(labels, dtype=torch.long)}
 
 
-def _write_split(items: list[dict], out_dir: Path, probe: Callable, tokenize: Callable) -> tuple[int, list[Skip]]:
-    """Metadata-only dataset (tens of MB for ~1M clips): plain loop, columns accumulated in memory."""
-    from datasets import Dataset
+PROBE_THREADS = 16
+PROGRESS_EVERY = 10_000
+_CHUNK = 1000
+
+
+def check_audio_refs(paths: list[str], cache: str = "") -> None:
+    """Raise if a prepared dataset's audio files are gone (the cache outlived its source files)."""
+    from pathlib import Path as _P
+
+    for p in paths:
+        if not _P(p).exists():
+            raise RuntimeError(f"prepared cache {cache} points at missing audio {p}; "
+                               "delete the cache and re-run prepare")
+
+
+def _attempt(probe: Callable):
+    def run(path):
+        try:
+            return probe(path)
+        except Exception as e:  # noqa: BLE001 - reported as an undecodable skip by row_to_example
+            return e
+
+    return run
+
+
+def _write_split(items: list[dict], out_dir: Path, probe: Callable, tokenize: Callable,
+                 tick: Callable[[int], None] = lambda n: None) -> tuple[int, list[Skip]]:
+    """Metadata-only dataset (tens of MB for ~1M clips): files are probed by a thread pool (row order kept),
+    columns accumulated in memory."""
+    from concurrent.futures import ThreadPoolExecutor
 
     cols: dict[str, list] = {"sample_id": [], "audio_path": [], "duration_s": [], "labels": []}
     skips: list[Skip] = []
-    for row in items:
-        ex = row_to_example(row, probe=probe, tokenize=tokenize)
-        if isinstance(ex, str):
-            skips.append(Skip(sample_id=str(row.get("sample_id", "")), split=out_dir.name, reason=ex))
-            continue
-        for k in cols:
-            cols[k].append(ex[k])
+    run = _attempt(probe)
+    with ThreadPoolExecutor(PROBE_THREADS) as pool:
+        for lo in range(0, len(items), _CHUNK):
+            chunk = items[lo:lo + _CHUNK]
+            probed = list(pool.map(run, [r["audio_path"] for r in chunk]))
+            for row, res in zip(chunk, probed):
+                def cached(_path, res=res):
+                    if isinstance(res, Exception):
+                        raise res
+                    return res
+
+                ex = row_to_example(row, probe=cached, tokenize=tokenize)
+                if isinstance(ex, str):
+                    skips.append(Skip(sample_id=str(row.get("sample_id", "")), split=out_dir.name, reason=ex))
+                    continue
+                for k in cols:
+                    cols[k].append(ex[k])
+            tick(len(chunk))
+    if not cols["sample_id"]:
+        raise PrepareError(f"split {out_dir.name} is empty after prepare ({len(skips)} rows skipped)")
+    from datasets import Dataset
+
     Dataset.from_dict(cols).save_to_disk(str(out_dir))
     return len(cols["sample_id"]), skips
 
 
-def build_whisper(processor) -> Callable[[dict[str, list[dict]], Path], BuildResult]:
+def build_whisper(processor, rep=None) -> Callable[[dict[str, list[dict]], Path], BuildResult]:
     def build(rows: dict[str, list[dict]], out: Path) -> BuildResult:
+        from app.core.contract import Phase
+
         tok = processor.tokenizer
         tok.set_prefix_tokens(language=LANGUAGE, task=TASK)
+        total = sum(len(v) for v in rows.values())
+        state = {"done": 0, "reported": 0}
+
+        def tick(n: int) -> None:
+            state["done"] += n
+            if rep is not None and (state["done"] - state["reported"] >= PROGRESS_EVERY or state["done"] == total):
+                state["reported"] = state["done"]
+                rep.status(Phase.prepare, state["done"], total, f"prepared {state['done']}/{total} rows")
+
         counts: dict[str, int] = {}
         skipped: list[Skip] = []
         for split, items in rows.items():
-            counts[split], skips = _write_split(items, out / split, probe_duration, lambda t: tok(t).input_ids)
+            counts[split], skips = _write_split(items, out / split, probe_duration,
+                                                lambda t: tok(t).input_ids, tick)
             skipped.extend(skips)
         return BuildResult(counts=counts, skipped=skipped, files=list(rows))
 
@@ -154,7 +208,7 @@ def prepare_whisper(rd, cfg, rep) -> int:
 
     processor = WhisperProcessor.from_pretrained(cfg.base_model)
     spec = whisper_spec(cfg)
-    build = build_whisper(processor)
+    build = build_whisper(processor, rep)
     share = max_skip_share(cfg)
     refs = []
     for role, key, splits in (("train", "train", ["train", "val"]), ("eval", "eval", None)):
@@ -168,4 +222,4 @@ def prepare_whisper(rd, cfg, rep) -> int:
 
 
 __all__ = ["whisper_spec", "row_to_example", "pad_labels", "build_whisper", "make_transcriber",
-           "prepare_whisper", "WhisperCollator", "batch_parts", "probe_duration"]
+           "prepare_whisper", "WhisperCollator", "batch_parts", "probe_duration", "check_audio_refs"]

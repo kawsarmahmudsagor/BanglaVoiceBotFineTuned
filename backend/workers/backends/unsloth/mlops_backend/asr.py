@@ -15,7 +15,7 @@ from app.core.backend_kit import (
     NanGuard, StopFlag, eval_opts, export_all, init_source, latest_checkpoint, mark_complete,
 )
 from app.core.backend_kit.whisper import (
-    LANGUAGE, TASK, WhisperCollator, make_transcriber, prepare_whisper,
+    LANGUAGE, TASK, WhisperCollator, check_audio_refs, make_transcriber, prepare_whisper,
 )
 from app.core.contract import RunConfig, RunDir
 from app.core.evaluation import baseline_metrics, merge_results, run_asr_eval
@@ -85,6 +85,19 @@ def _load_asr(cfg: RunConfig, rd: RunDir):
     return model
 
 
+def check_prepared_audio(ds, prepared) -> None:
+    """First and last audio_path of a prepared split must still exist."""
+    if len(ds):
+        check_audio_refs([ds[0]["audio_path"], ds[len(ds) - 1]["audio_path"]], str(prepared))
+
+
+def _check_prepared_refs(rd: RunDir) -> None:
+    from datasets import load_from_disk
+
+    prepared = Path(_train_ref(rd)["path"])
+    check_prepared_audio(load_from_disk(str(prepared / "train")), prepared)
+
+
 def train_asr(rd: RunDir, cfg: RunConfig, rep) -> int:
     import unsloth  # noqa: F401  (must precede transformers/trl/datasets imports)
     from datasets import load_from_disk
@@ -97,8 +110,9 @@ def train_asr(rd: RunDir, cfg: RunConfig, rep) -> int:
     _require_trainable(model)
     processor = _processor(cfg)
     prepared = Path(_train_ref(rd)["path"])
-    train_ds = load_from_disk(str(prepared / "train")).with_format("numpy")
-    val_ds = load_from_disk(str(prepared / "val")).with_format("numpy")
+    train_ds = load_from_disk(str(prepared / "train"))
+    check_prepared_audio(train_ds, prepared)
+    val_ds = load_from_disk(str(prepared / "val"))
     total = total_steps(cfg, rd)
 
     class _Callback(ContractCallback):
@@ -154,7 +168,7 @@ def _eval_loss(model, cfg: RunConfig, rd: RunDir) -> float | None:
         output_dir=str(rd.path / "work" / "eval_tmp"), per_device_eval_batch_size=int(cfg.hparams.get("batch_size", 2)),
         bf16=True, report_to=[], remove_unused_columns=False, label_names=["labels"], seed=cfg.seed,
         dataloader_num_workers=min(8, os.cpu_count() or 1))
-    trainer = Seq2SeqTrainer(model=model, args=args, eval_dataset=concatenate_datasets(parts).with_format("numpy"),
+    trainer = Seq2SeqTrainer(model=model, args=args, eval_dataset=concatenate_datasets(parts),
                              processing_class=processor.feature_extractor,
                              data_collator=WhisperCollator(processor, int(model.config.decoder_start_token_id)))
     return float(trainer.evaluate()["eval_loss"])
@@ -175,6 +189,7 @@ def eval_asr(rd: RunDir, cfg: RunConfig, rep) -> int:
 
     do_baseline, max_samples = eval_opts(cfg)
     rows = eval_rows(cfg)
+    _check_prepared_refs(rd)
 
     model, _ = _from_pretrained(str(final))
     loss = _eval_loss(model, cfg, rd)
