@@ -61,6 +61,7 @@ class Ingest(Base):
     provenance: Mapped[dict] = mapped_column(JSON, default=dict)
     state: Mapped[str] = mapped_column(String, default="pending")  # pending|running|done|failed
     report: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    progress: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {"done", "total"} files validated
     version_id: Mapped[int | None] = mapped_column(ForeignKey("dataset_version.id"), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[dt.datetime] = _ts(default=utcnow)

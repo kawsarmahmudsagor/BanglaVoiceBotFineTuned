@@ -76,6 +76,69 @@ async def test_ingest_local_ok(client, session_factory, settings, import_root):
     assert v["split_source"] == "dataset" and v["n_samples"] == 2
 
 
+async def test_ingest_progress_in_api(client, session_factory, settings, import_root):
+    make_dataset(import_root)
+    r = await client.post("/api/datasets/ingest-local", json=body("ds1"))
+    pending = (await client.get(f"/api/ingests/{r.json()['ingest_id']}")).json()
+    assert pending["progress"] is None
+    ing = await run(client, session_factory, settings, body("ds1", name="other"))
+    assert ing["state"] == "done" and ing["progress"] == {"done": 2, "total": 2}
+
+
+async def test_ingest_progress_stored_while_running(client, session_factory, settings, import_root, monkeypatch):
+    import asyncio
+    import threading
+
+    import app.datasets.versions as versions
+    from app.models import Ingest
+
+    make_dataset(import_root)
+    monkeypatch.setattr(versions, "PROGRESS_INTERVAL_S", 0.02)
+    loop = asyncio.get_running_loop()
+    seen = []
+
+    async def read_progress(iid):
+        async with session_factory() as s:
+            return (await s.get(Ingest, iid)).progress
+
+    real = versions.ingest_dir
+
+    def slow_ingest_dir(src, task, dest_root, disk_min_gb, workers, progress=None):
+        progress(0, 4)
+        progress(3, 4)
+        threading.Event().wait(0.3)  # let the throttled writer store it
+        seen.append(asyncio.run_coroutine_threadsafe(read_progress(iid), loop).result(5))
+        return real(src, task, dest_root, disk_min_gb, workers, progress)
+
+    monkeypatch.setattr(versions, "ingest_dir", slow_ingest_dir)
+    r = await client.post("/api/datasets/ingest-local", json=body("ds1"))
+    iid = r.json()["ingest_id"]
+    async with session_factory() as s:
+        await run_ingest(s, iid, settings)
+    assert seen == [{"done": 3, "total": 4}]
+    ing = (await client.get(f"/api/ingests/{iid}")).json()
+    assert ing["state"] == "done" and ing["progress"] == {"done": 2, "total": 2}
+
+
+async def test_run_ingest_rechecks_containment(client, session_factory, settings, import_root, tmp_path):
+    from app.models import Ingest
+
+    make_dataset(import_root)
+    r = await client.post("/api/datasets/ingest-local", json=body("ds1"))
+    iid = r.json()["ingest_id"]
+    outside = make_dataset(tmp_path, "outside")
+    async with session_factory() as s:  # the path no longer resolves inside the import root at run time
+        (await s.get(Ingest, iid)).source_path = str(outside)
+        await s.commit()
+    async with session_factory() as s:
+        await run_ingest(s, iid, settings)
+    ing = (await client.get(f"/api/ingests/{iid}")).json()
+    assert ing["state"] == "failed" and ing["error"] == "path is not allowed"
+    assert str(outside) not in (ing["error"] or "")
+    assert not (settings.datasets_dir / "local-ds").exists() or not any(
+        p.name != ".staging" for p in (settings.datasets_dir / "local-ds").iterdir())
+
+
 async def test_ingest_local_absolute_path(client, session_factory, settings, import_root):
     d = make_dataset(import_root)
     assert (await run(client, session_factory, settings, body(str(d))))["state"] == "done"

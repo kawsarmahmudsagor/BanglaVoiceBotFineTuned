@@ -68,3 +68,29 @@ def test_migration_0002_upgrade_downgrade(tmp_path):
     cols = {c["name"] for c in sa.inspect(eng).get_columns("dataset_version")}
     assert "split_source" not in cols and "given_splits" not in cols
     command.upgrade(cfg, "head")
+
+
+def test_migration_0004_upgrade_downgrade(tmp_path):
+    db = tmp_path / "mig.db"
+    cfg = Config(str(Path(__file__).parents[2] / "alembic.ini"))
+    cfg.set_main_option("sqlalchemy.url", f"sqlite+aiosqlite:///{db.as_posix()}")
+    command.upgrade(cfg, "0003")
+    eng = sa.create_engine(f"sqlite:///{db.as_posix()}")
+    with eng.begin() as c:
+        c.execute(sa.text("insert into upload (id, filename, length, state, created_at) "
+                          "values ('u1', 'a.zip', 1, 'complete', '2026-01-01')"))
+        c.execute(sa.text("insert into ingest (id, upload_id, dataset_name, task, eval_only, provenance, state, "
+                          "created_at) values (1, 'u1', 'd', 'asr', 0, '{}', 'pending', '2026-01-01')"))
+    command.upgrade(cfg, "0004")
+    cols = {c["name"]: c for c in sa.inspect(eng).get_columns("ingest")}
+    assert {"source_path", "progress"} <= set(cols) and cols["upload_id"]["nullable"]
+    with eng.begin() as c:
+        c.execute(sa.text("insert into ingest (id, source_path, dataset_name, task, eval_only, provenance, state, "
+                          "progress, created_at) values (2, '/x', 'd', 'asr', 0, '{}', 'running', "
+                          "'{\"done\": 1, \"total\": 2}', '2026-01-01')"))
+    command.downgrade(cfg, "0003")
+    cols = {c["name"]: c for c in sa.inspect(eng).get_columns("ingest")}
+    assert "source_path" not in cols and "progress" not in cols and not cols["upload_id"]["nullable"]
+    with eng.connect() as c:
+        assert c.execute(sa.text("select id from ingest")).all() == [(1,)]
+    command.upgrade(cfg, "head")

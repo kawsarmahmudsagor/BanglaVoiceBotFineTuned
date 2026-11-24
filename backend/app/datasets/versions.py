@@ -11,11 +11,11 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Dataset, DatasetVersion, Ingest, Upload
-from .ingest import _version_hash, ingest, ingest_dir
+from .ingest import ImportPathError, _version_hash, ingest, ingest_dir, resolve_import_path
 from .validate_audio import _sha256_file
 
 log = logging.getLogger(__name__)
@@ -37,6 +37,31 @@ async def _fail(session, ingest_id: int, *, error: str | None = None, report: di
     await session.commit()
 
 
+PROGRESS_INTERVAL_S = 1.0  # validation progress is stored at most this often
+
+
+async def _progress_writer(session, ingest_id: int, latest: list[tuple[int, int]]) -> None:
+    """Store the newest (done, total) on the ingest row every PROGRESS_INTERVAL_S while the ingest runs.
+
+    Uses its own session on the same engine: the caller's session stays idle in the meantime, but it must not
+    be shared across tasks. Failures are logged, never raised (progress is best effort).
+    """
+    last = None
+    while True:
+        await asyncio.sleep(PROGRESS_INTERVAL_S)
+        cur = latest[-1] if latest else None
+        if cur is None or cur == last:
+            continue
+        try:
+            async with AsyncSession(bind=session.bind, expire_on_commit=False) as s:
+                await s.execute(update(Ingest).where(Ingest.id == ingest_id)
+                                .values(progress={"done": cur[0], "total": cur[1]}))
+                await s.commit()
+            last = cur
+        except Exception:  # noqa: BLE001
+            log.warning("could not store progress of ingest %s", ingest_id, exc_info=True)
+
+
 async def run_ingest(session, ingest_id: int, settings) -> None:
     """Execute one ingest request. Never raises: failures are recorded on the ingest row."""
     try:
@@ -48,19 +73,42 @@ async def run_ingest(session, ingest_id: int, settings) -> None:
 
         dest_root = settings.datasets_dir / row.dataset_name
         upload_dir = None
-        if row.source_path is not None:  # local-path ingest: the source is never touched or deleted
-            result = await asyncio.to_thread(
-                ingest_dir, Path(row.source_path), row.task, dest_root, settings.disk_min_gb,
-                settings.ingest_workers,
-            )
-        else:
-            upload_dir = settings.incoming_dir / row.upload_id
-            files = [p for p in upload_dir.iterdir() if p.is_file()]
-            if len(files) != 1:
-                raise RuntimeError(f"expected exactly one file for upload {row.upload_id}, found {len(files)}")
-            result = await asyncio.to_thread(
-                ingest, files[0], row.task, dest_root, settings.disk_min_gb, settings.ingest_workers,
-            )
+        latest: list[tuple[int, int]] = []  # written by the ingest thread, read by the progress writer
+
+        def on_progress(done: int, total: int) -> None:
+            latest.append((done, total))
+            del latest[:-1]
+
+        writer = asyncio.create_task(_progress_writer(session, ingest_id, latest))
+        try:
+            if row.source_path is not None:  # local-path ingest: the source is never touched or deleted
+                try:  # re-check containment: the tree may have changed since the request was accepted
+                    src = resolve_import_path(row.source_path, settings.import_root)
+                except ImportPathError as e:
+                    await _fail(session, ingest_id, error=str(e))  # the generic message, never the path
+                    return
+                result = await asyncio.to_thread(
+                    ingest_dir, src, row.task, dest_root, settings.disk_min_gb, settings.ingest_workers,
+                    on_progress,
+                )
+            else:
+                upload_dir = settings.incoming_dir / row.upload_id
+                files = [p for p in upload_dir.iterdir() if p.is_file()]
+                if len(files) != 1:
+                    raise RuntimeError(f"expected exactly one file for upload {row.upload_id}, found {len(files)}")
+                result = await asyncio.to_thread(
+                    ingest, files[0], row.task, dest_root, settings.disk_min_gb, settings.ingest_workers,
+                    on_progress,
+                )
+        finally:
+            writer.cancel()
+            try:
+                await writer
+            except asyncio.CancelledError:
+                pass
+        if latest:  # the final count, committed now so a failed validation keeps it too
+            row.progress = {"done": latest[-1][0], "total": latest[-1][1]}
+            await session.commit()
         report = asdict(result.report)
         if not result.report.ok:
             await _fail(session, ingest_id, report=report)

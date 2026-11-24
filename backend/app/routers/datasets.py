@@ -221,7 +221,7 @@ async def get_ingest(ingest_id: int, session: AsyncSession = Depends(get_session
         v = await session.get(DatasetVersion, row.version_id)
         version = _summary(v, await _parent_number(session, v))
     return {"id": row.id, "state": row.state, "report": row.report, "version": version, "error": row.error,
-            "dataset": row.dataset_name, "created_at": iso(row.created_at)}
+            "dataset": row.dataset_name, "created_at": iso(row.created_at), "progress": row.progress}
 
 
 @router.get("/datasets")
