@@ -65,12 +65,12 @@ def pad_ctc_labels(label_lists: list[list[int]]) -> list[list[int]]:
     return [r + [IGNORE] * (width - len(r)) for r in label_lists]
 
 
-def ctc_greedy_decode(ids: list[int], inv_vocab: dict[int, str], pad_id: int) -> str:
-    """Collapse repeats, drop blanks (pad), `|` -> space."""
+def ctc_greedy_decode(ids: list[int], inv_vocab: dict[int, str], pad_id: int, unk_id: int | None = None) -> str:
+    """Collapse repeats, drop blanks (pad) and unknowns, `|` -> space."""
     out: list[str] = []
     prev = None
     for i in ids:
-        if i != prev and i != pad_id:
+        if i != prev and i != pad_id and i != unk_id:
             out.append(inv_vocab.get(int(i), ""))
         prev = i
     return "".join(out).replace(DELIM, " ").strip()
@@ -83,6 +83,8 @@ def _row_result(row: dict, res, text: str, vocab: dict, mode: str) -> dict | str
     seconds = float(given) if given else float(res)
     if seconds > MAX_SECONDS:
         return f"duration {seconds:.1f} s > {MAX_SECONDS} s"
+    if not text:
+        return "empty text"
     if mode == "fixed":
         missing = sorted(set(text.replace(" ", DELIM)) - vocab.keys())
         if missing:
@@ -128,3 +130,20 @@ def mms_vocab(processor) -> dict[str, int]:
 def read_jsonl(path: Path) -> list[dict]:
     with Path(path).open(encoding="utf-8") as f:
         return [json.loads(line) for line in f if line.strip()]
+
+
+def first_last_lines(path: Path) -> list[dict]:
+    """First and last record of a JSONL file without parsing the rest (the last is read by seeking from the end)."""
+    with Path(path).open("rb") as f:
+        first = f.readline()
+        if not first.strip():
+            return []
+        end = f.seek(0, 2)
+        pos, tail = end, b""
+        while pos > 0 and tail.count(b"\n") < 2:
+            step = min(4096, pos)
+            pos -= step
+            f.seek(pos)
+            tail = f.read(step) + tail
+        last = [ln for ln in tail.splitlines() if ln.strip()][-1]
+    return [json.loads(first), json.loads(last)]

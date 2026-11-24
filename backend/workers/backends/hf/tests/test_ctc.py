@@ -209,6 +209,31 @@ def test_mms_adapter_only_trains_adapter(run_dir, monkeypatch, tmp_path):
     assert c.train(rd, cfg, rep) == 0
     final = rd.checkpoints_dir / "final"
     assert (final / "adapter.ben.safetensors").exists()
+    assert not (final / "model.safetensors").exists()  # adapter-only (R20)
     assert json.loads((final / "init_meta.json").read_text())["format"] == "hf-mms-adapter"
     assert c.export(rd, cfg, rep) == 0
     assert (rd.export_dir / "adapter-safetensors" / "adapter.ben.safetensors").exists()
+
+
+def test_prediction_loss_only(run_dir):
+    from mlops_backend.ctc import ctc_trainer_args
+
+    rd = run_dir("asr", W2V, {"max_steps": 2})
+    rd.prepared_refs_path.write_text('[{"role": "train", "path": "/p", "counts": {"train": 8}}]')
+    assert ctc_trainer_args(read_config(rd), rd)["prediction_loss_only"] is True
+
+
+def test_checkpoint_files_per_family():
+    from mlops_backend.ctc import checkpoint_files
+
+    assert "adapter.ben.safetensors" in checkpoint_files(True) and "model.safetensors" not in checkpoint_files(True)
+    assert "model.safetensors" in checkpoint_files(False) and "adapter.ben.safetensors" not in checkpoint_files(False)
+    assert {"vocab.json", "init_meta.json", ".complete"} <= set(checkpoint_files(True))
+
+
+def test_adapter_key_mismatch_names_keys():
+    from mlops_backend.ctc import check_adapter_keys
+
+    check_adapter_keys(["a", "b"], ["b", "a"])
+    with pytest.raises(RuntimeError, match=r"missing \['b'\].*unexpected \['c'\]"):
+        check_adapter_keys(["a", "b"], ["a", "c"])

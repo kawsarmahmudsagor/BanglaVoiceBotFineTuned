@@ -28,7 +28,7 @@ from app.core.prepare import PrepareError, ensure_prepared, iter_rows
 from .models import MODELS
 from .prepare.ctc import (
     build_ctc, build_ctc_vocab, ctc_greedy_decode, ctc_labels, ctc_spec, mms_vocab, pad_ctc_labels,
-    read_jsonl, special_ids,
+    first_last_lines, special_ids,
 )
 
 BACKEND = "hf"
@@ -119,31 +119,41 @@ def read_vocab(rd: RunDir) -> dict[str, int]:
 
 
 class RowsDataset:
-    """Prepared rows in memory (a few hundred bytes each); audio is decoded by the collator."""
+    """Prepared rows in memory as compact (audio_path, duration_s, text) tuples; audio is decoded by the collator."""
 
-    def __init__(self, rows: list[dict]):
+    def __init__(self, rows: list[tuple[str, float, str]]):
         self.rows = rows
+
+    @classmethod
+    def from_jsonl(cls, path: Path) -> "RowsDataset":
+        rows = []
+        with Path(path).open(encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    r = json.loads(line)
+                    rows.append((r["audio_path"], float(r["duration_s"]), r["text"]))
+        return cls(rows)
 
     def __len__(self) -> int:
         return len(self.rows)
 
     def __getitem__(self, i: int) -> dict:
-        return self.rows[i]
+        path, dur, text = self.rows[i]
+        return {"audio_path": path, "duration_s": dur, "text": text}
+
+
+def check_prepared_refs(rd: RunDir) -> None:
+    """First and last audio_path of train.jsonl must still exist (reads two lines, not the file)."""
+    prepared = Path(train_ref(rd)["path"])
+    ends = first_last_lines(prepared / "train.jsonl")
+    if ends:
+        check_audio_refs([r["audio_path"] for r in ends], str(prepared))
 
 
 def load_train_val(rd: RunDir) -> tuple[RowsDataset, RowsDataset]:
     prepared = Path(train_ref(rd)["path"])
-    train = read_jsonl(prepared / "train.jsonl")
-    if train:
-        check_audio_refs([train[0]["audio_path"], train[-1]["audio_path"]], str(prepared))
-    return RowsDataset(train), RowsDataset(read_jsonl(prepared / "val.jsonl"))
-
-
-def check_prepared_refs(rd: RunDir) -> None:
-    prepared = Path(train_ref(rd)["path"])
-    rows = read_jsonl(prepared / "train.jsonl")
-    if rows:
-        check_audio_refs([rows[0]["audio_path"], rows[-1]["audio_path"]], str(prepared))
+    check_prepared_refs(rd)
+    return RowsDataset.from_jsonl(prepared / "train.jsonl"), RowsDataset.from_jsonl(prepared / "val.jsonl")
 
 
 def _default_loader(path):
@@ -208,6 +218,37 @@ def _ctc_kwargs(vocab: dict[str, int]) -> dict:
             "ctc_zero_infinity": True, "layerdrop": 0.0}
 
 
+def check_adapter_keys(expected, loaded) -> None:
+    """Raise naming the keys when an adapter file does not match the adapter parameters of the model."""
+    exp, got = set(expected), set(loaded)
+    if exp != got:
+        raise RuntimeError(f"adapter checkpoint does not match the model: missing {sorted(exp - got)}, "
+                           f"unexpected {sorted(got - exp)}")
+
+
+def load_adapter_into(model, path: Path) -> None:
+    """Load adapter.ben.safetensors into a model that has adapter layers; keys must match exactly."""
+    from safetensors.torch import load_file
+
+    state = load_file(str(path))
+    check_adapter_keys(model._get_adapters().keys(), state.keys())
+    model.load_state_dict(state, strict=False)  # only adapter keys are given; they were checked above
+
+
+def build_mms(cfg: RunConfig, vocab: dict[str, int], adapter: Path | None = None, *, fresh: bool = False):
+    """MMS base + `ben` target head. `adapter`: fresh adapter layers then that adapter file (warm start, eval,
+    export). `fresh`: new adapter layers (training from scratch). Neither: the pretrained `ben` adapter."""
+    from transformers import Wav2Vec2ForCTC
+
+    model = Wav2Vec2ForCTC.from_pretrained(cfg.base_model, target_lang="ben", ignore_mismatched_sizes=True,
+                                           **_ctc_kwargs(vocab))
+    if adapter is not None or fresh:
+        model.init_adapter_layers()
+    if adapter is not None:
+        load_adapter_into(model, adapter)
+    return model
+
+
 def new_model(cfg: RunConfig, rd: RunDir, vocab: dict[str, int], *, train: bool):
     """Model at the start of this run (init checkpoint when set, else the base model).
     `train=True` prepares it for training; False gives the starting point used for the baseline."""
@@ -218,15 +259,8 @@ def new_model(cfg: RunConfig, rd: RunDir, vocab: dict[str, int], *, train: bool)
     choice = init_source(cfg.model_copy(update={"resume": False}), rd)
     plan = plan_ctc_init(choice.meta, mms) if choice is not None else "base"
     if mms:
-        model = Wav2Vec2ForCTC.from_pretrained(cfg.base_model, target_lang="ben", ignore_mismatched_sizes=True,
-                                               **_ctc_kwargs(vocab))
-        if plan == "adapter":
-            from safetensors.torch import load_file
-
-            model.init_adapter_layers()
-            model.load_state_dict(load_file(str(choice.path / ADAPTER_FILE)), strict=False)
-        elif train:
-            model.init_adapter_layers()  # a fresh adapter; the baseline keeps the pretrained `ben` one
+        adapter = choice.path / ADAPTER_FILE if plan == "adapter" else None
+        model = build_mms(cfg, vocab, adapter, fresh=train and adapter is None)
         if train:
             freeze_to_adapter(model)
     else:
@@ -237,6 +271,12 @@ def new_model(cfg: RunConfig, rd: RunDir, vocab: dict[str, int], *, train: bool)
     if not train:
         model.to(torch.bfloat16)
     return model
+
+
+def checkpoint_files(mms: bool) -> list[str]:
+    """Files every complete checkpoint of a family holds beyond Trainer state: MMS is adapter-only (R20)."""
+    common = ["config.json", "vocab.json", "init_meta.json", ".complete"]
+    return common + (["adapter.ben.safetensors"] if mms else ["model.safetensors"])
 
 
 def freeze_to_adapter(model) -> None:
@@ -253,12 +293,35 @@ def trainable_param_count(model) -> int:
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def load_checkpoint_model(path: Path, vocab: dict, *, bf16: bool = False):
+def load_final_model(cfg: RunConfig, rd: RunDir, final: Path, *, bf16: bool = False):
+    """The trained model from a complete checkpoint: full weights (wav2vec2) or base + adapter (MMS)."""
     import torch
     from transformers import Wav2Vec2ForCTC
 
+    if is_mms(cfg):
+        model = build_mms(cfg, read_vocab(rd), final / ADAPTER_FILE)
+        return model.to(torch.bfloat16) if bf16 else model
     kw = {"torch_dtype": torch.bfloat16} if bf16 else {}
-    return Wav2Vec2ForCTC.from_pretrained(str(path), **kw)
+    return Wav2Vec2ForCTC.from_pretrained(str(final), **kw)
+
+
+def adapter_trainer_cls():
+    """Trainer whose checkpoints hold only config + adapter (the MMS base is 1B params; R20)."""
+    import os
+
+    from transformers import Trainer
+
+    class AdapterTrainer(Trainer):
+        def _save(self, output_dir=None, state_dict=None):
+            out = output_dir or self.args.output_dir
+            os.makedirs(out, exist_ok=True)
+            self.model.config.save_pretrained(out)
+            save_adapter(self.model, Path(out))
+
+        def _load_from_checkpoint(self, resume_from_checkpoint, model=None):
+            load_adapter_into(self.model if model is None else model, Path(resume_from_checkpoint) / ADAPTER_FILE)
+
+    return AdapterTrainer
 
 
 # ---------------------------------------------------------------- train
@@ -268,6 +331,7 @@ def ctc_trainer_args(cfg: RunConfig, rd: RunDir) -> dict:
     if "learning_rate" not in cfg.hparams:
         args["learning_rate"] = 1e-3 if is_mms(cfg) else 1e-4
     args["label_names"] = ["labels"]
+    args["prediction_loss_only"] = True
     args["dataloader_num_workers"] = dataloader_workers()
     args["gradient_checkpointing"] = bool(cfg.hparams.get("gradient_checkpointing", True))
     args["gradient_checkpointing_kwargs"] = {"use_reentrant": False}
@@ -288,12 +352,10 @@ def train_ctc(rd: RunDir, cfg: RunConfig, rep) -> int:
 
     def write_meta(d: Path, step: int) -> None:
         shutil.copyfile(_vocab_path(rd), d / "vocab.json")
-        if mms:
-            save_adapter(model, d)  # every checkpoint is a valid hf-mms-adapter init source
         write_ckpt_meta(d, cfg, step)
 
     fe = _feature_extractor(cfg)
-    trainer = Trainer(
+    trainer = (adapter_trainer_cls() if mms else Trainer)(
         model=model, args=TrainingArguments(**ctc_trainer_args(cfg, rd)),
         train_dataset=train_ds, eval_dataset=val_ds, data_collator=CtcCollator(fe, vocab),
         callbacks=[MetaContractCallback(rep, stop, NanGuard(), total, write_meta)],
@@ -305,10 +367,9 @@ def train_ctc(rd: RunDir, cfg: RunConfig, rep) -> int:
         return 143  # the callback already saved a complete checkpoint; resume continues from it
 
     final = rd.checkpoints_dir / "final"
-    trainer.save_model(str(final))
+    trainer.save_model(str(final))  # MMS: config + adapter only
     save_processor(cfg, _vocab_path(rd), final)
-    if mms:
-        save_adapter(model, final)
+    shutil.copyfile(_vocab_path(rd), final / "vocab.json")
     write_ckpt_meta(final, cfg, trainer.state.global_step)  # meta before .complete
     mark_complete(final)
     return 0
@@ -318,7 +379,7 @@ def train_ctc(rd: RunDir, cfg: RunConfig, rep) -> int:
 
 def make_ctc_transcriber(model, feature_extractor, vocab: dict[str, int], device) -> Callable[[list[str]], list[str]]:
     inv = {v: k for k, v in vocab.items()}
-    _, pad_id = special_ids(vocab)
+    unk_id, pad_id = special_ids(vocab)
 
     def transcribe(paths: list[str]) -> list[str]:
         import torch
@@ -329,7 +390,7 @@ def make_ctc_transcriber(model, feature_extractor, vocab: dict[str, int], device
         with torch.no_grad():
             logits = model(input_values=b.input_values.to(device=device, dtype=model.dtype),
                            attention_mask=b.attention_mask.to(device)).logits
-        return [ctc_greedy_decode(r, inv, pad_id) for r in logits.argmax(-1).cpu().tolist()]
+        return [ctc_greedy_decode(r, inv, pad_id, unk_id) for r in logits.argmax(-1).cpu().tolist()]
 
     return transcribe
 
@@ -354,7 +415,7 @@ def eval_ctc(rd: RunDir, cfg: RunConfig, rep) -> int:
         return run_asr_eval(rd, rep, rows, make_ctc_transcriber(model, fe, vocab, "cuda"),
                             prefix=prefix, max_samples=max_samples)
 
-    model = load_checkpoint_model(final, vocab, bf16=True)
+    model = load_final_model(cfg, rd, final, bf16=True)
     tuned = run(model, "")
     del model
     free_gpu()
@@ -381,19 +442,15 @@ def eval_ctc(rd: RunDir, cfg: RunConfig, rep) -> int:
 
 def ctc_exporters(rd: RunDir, cfg: RunConfig) -> dict:
     """safetensors for both families; adapter-safetensors for MMS only. ct2 is never offered (R19)."""
-    def model_from_final():
-        final = _require_final(rd)
-        return final, load_checkpoint_model(final, {})
-
     def safetensors(out: Path):
-        _, model = model_from_final()
+        model = load_final_model(cfg, rd, _require_final(rd))  # MMS: rebuilt from base + adapter
         model.save_pretrained(str(out), safe_serialization=True)
         save_processor(cfg, _vocab_path(rd), out)
         return [dir_artifact(rd, "safetensors", out, "transformers")]
 
     def adapter(out: Path):
-        _, model = model_from_final()
-        save_adapter(model, out)
+        final = _require_final(rd)
+        shutil.copyfile(final / ADAPTER_FILE, out / ADAPTER_FILE)
         shutil.copyfile(_vocab_path(rd), out / "vocab.json")
         return [dir_artifact(rd, "adapter-safetensors", out, "transformers")]
 

@@ -118,3 +118,25 @@ def test_prepare_ctc_cold_end_to_end(run_dir):
 
     assert (Path(train["path"]) / "vocab.json").exists() and (Path(train["path"]) / "train.jsonl").exists()
     assert not list(Path(train["path"]).glob("*.wav"))
+
+
+def test_greedy_decode_drops_unk():
+    inv = {0: "আ", 1: "[UNK]", 2: "[PAD]"}
+    assert ctc_greedy_decode([0, 1, 0, 2, 1], inv, pad_id=2, unk_id=1) == "আআ"
+
+
+def test_empty_text_skipped(tmp_path):
+    res = build_ctc(V, "new", probe=ok)({"train": [row("আ"), row("  ", sid="e")]}, tmp_path)
+    assert res.counts["train"] == 1 and res.skipped[0].reason == "empty text"
+
+
+def test_first_last_lines(tmp_path):
+    from mlops_backend.prepare.ctc import first_last_lines
+
+    p = tmp_path / "t.jsonl"
+    p.write_text("".join(json.dumps({"i": i, "pad": "x" * 5000}) + "\n" for i in range(5)), encoding="utf-8")
+    assert [r["i"] for r in first_last_lines(p)] == [0, 4]
+    p.write_text(json.dumps({"i": 9}) + "\n")
+    assert [r["i"] for r in first_last_lines(p)] == [9, 9]
+    p.write_text("")
+    assert first_last_lines(p) == []
