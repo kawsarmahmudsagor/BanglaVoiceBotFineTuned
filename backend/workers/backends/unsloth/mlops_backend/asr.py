@@ -11,6 +11,7 @@ from pathlib import Path
 from app.core.backend_kit import (
     NanGuard, StopFlag, eval_opts, export_all, init_source, latest_checkpoint, mark_complete,
 )
+from app.core.backend_kit.runutil import stopped_early
 from app.core.backend_kit.whisper import (
     TASK, WhisperCollator, asr_baseline_key, check_prepared_audio, check_prepared_refs,  # noqa: F401
     dataloader_workers, ct2_command, load_processor, load_train_val, make_transcriber, prepare_whisper, run_ct2,
@@ -101,7 +102,7 @@ def train_asr(rd: RunDir, cfg: RunConfig, rep) -> int:
     )
     last = latest_checkpoint(rd) if cfg.resume else None
     trainer.train(resume_from_checkpoint=str(last) if last else None)
-    if stop.requested:
+    if stopped_early(stop, trainer):
         return 143  # the callback already saved a complete checkpoint; resume continues from it
 
     final = rd.checkpoints_dir / "final"

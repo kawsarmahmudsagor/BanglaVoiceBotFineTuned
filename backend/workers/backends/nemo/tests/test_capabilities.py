@@ -27,7 +27,7 @@ def test_methods_exports_and_hparams():
     assert ASR["methods"] == ["full"]
     assert ASR["export_formats"] == ["nemo"]
     hp = ASR["schema"]["properties"]["hparams"]["properties"]
-    assert set(hp) == {"learning_rate", "epochs", "batch_size", "grad_accum", "max_steps", "warmup_steps", "save_steps", "seed", "eval", "prepare"}
+    assert set(hp) == {"learning_rate", "epochs", "batch_size", "grad_accum", "max_steps", "warmup_steps", "save_steps", "keep_checkpoints", "seed", "eval", "prepare"}
 
 
 def _cfg(model):
@@ -58,3 +58,9 @@ def test_phase_not_implemented_is_clean(tmp_path, monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "Traceback" not in err
     assert "support not installed" in err
+
+
+def test_every_task_has_keep_checkpoints():
+    for task in CAPS["tasks"].values():
+        kc = task["schema"]["properties"]["hparams"]["properties"]["keep_checkpoints"]
+        assert kc == {"type": "integer", "minimum": 1, "default": 2}

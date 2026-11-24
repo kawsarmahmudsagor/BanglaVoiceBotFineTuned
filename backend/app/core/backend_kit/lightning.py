@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.core.backend_kit import NanGuard, Reporter, StopFlag, mark_complete, write_init_meta
+from app.core.backend_kit import NanGuard, Reporter, StopFlag, mark_complete, prune_checkpoints, write_init_meta
 from app.core.contract import Phase, RunDir
 
 try:  # pragma: no cover - exercised on the VM
@@ -22,6 +22,7 @@ except ImportError:  # light venv
 
 CKPT_NAME = "model.ckpt"
 CKPT_FORMAT = "lightning-ckpt"  # spec §14.4
+STEP_PATTERN = r"step-(\d+)"
 
 
 def _num(v) -> float | None:
@@ -58,9 +59,11 @@ class ContractCheckpoint(ModelCheckpoint):
     """Saves `checkpoints/step-<n>/model.ckpt` and marks it complete only after Lightning wrote the file.
 
     (Callback.on_save_checkpoint fires while the checkpoint dict is built, before the file exists.)
+    After each save, older complete `step-<n>` dirs are pruned to the latest `keep` (Lightning's save_top_k is
+    not used: there is no monitor and it ignores `.complete`).
     """
 
-    def __init__(self, rd: RunDir, base_model: str, every_n_train_steps: int | None = None):
+    def __init__(self, rd: RunDir, base_model: str, every_n_train_steps: int | None = None, keep: int = 2):
         if ModelCheckpoint is not object:
             super().__init__(dirpath=str(rd.checkpoints_dir), filename="step-{step}/" + Path(CKPT_NAME).stem,
                              save_top_k=-1, every_n_train_steps=every_n_train_steps, save_on_train_epoch_end=False,
@@ -68,10 +71,16 @@ class ContractCheckpoint(ModelCheckpoint):
                              enable_version_counter=False)  # re-save at a step never becomes model-v1.ckpt
         self.rd = rd
         self.base_model = base_model
+        self.keep = keep
+
+    def _write(self, trainer, filepath: str) -> None:
+        super()._save_checkpoint(trainer, filepath)
 
     def _save_checkpoint(self, trainer, filepath: str) -> None:
-        super()._save_checkpoint(trainer, filepath)
+        self._write(trainer, filepath)
         finalize_checkpoint(Path(filepath), base_model=self.base_model, step=int(trainer.global_step))
+        if _rank0(trainer):
+            prune_checkpoints(self.rd.checkpoints_dir, STEP_PATTERN, getattr(self, "keep", 2))
 
     def save_now(self, trainer) -> Path:
         path = self.rd.checkpoints_dir / f"step-{int(trainer.global_step)}" / CKPT_NAME

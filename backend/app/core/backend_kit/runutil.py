@@ -7,6 +7,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+from app.core.backend_kit import StopFlag, keep_checkpoints
 from app.core.contract import DatasetRef, ExportArtifact, RunConfig, RunDir, read_prepared_refs
 from app.core.prepare import iter_rows
 
@@ -39,7 +40,7 @@ def trainer_args(cfg: RunConfig, rd: RunDir, optim: str) -> dict:
         "learning_rate": float(hp.get("learning_rate", 2e-4)),
         "warmup_steps": int(hp.get("warmup_steps", 5)),
         "save_steps": save_steps,
-        "save_total_limit": 3,
+        "save_total_limit": keep_checkpoints(hp),
         "logging_steps": 10,
         "eval_strategy": "steps",
         "eval_steps": save_steps,
@@ -54,6 +55,16 @@ def trainer_args(cfg: RunConfig, rd: RunDir, optim: str) -> dict:
     else:
         args["num_train_epochs"] = float(hp.get("epochs", 1))
     return args
+
+
+def stopped_early(stop: StopFlag, trainer) -> bool:
+    """SIGTERM arrived before an HF Trainer reached max_steps: the callback saved a checkpoint, exit 143.
+    A stop that lands after training finished naturally is not early: the caller writes `final` and exits 0."""
+    if not stop.requested:
+        return False
+    state = trainer.state
+    max_steps = int(getattr(state, "max_steps", 0) or 0)
+    return max_steps <= 0 or int(state.global_step) < max_steps
 
 
 def eval_ds(cfg: RunConfig) -> tuple[DatasetRef, list[str]]:

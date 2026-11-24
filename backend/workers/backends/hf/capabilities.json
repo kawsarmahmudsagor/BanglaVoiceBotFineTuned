@@ -67,6 +67,11 @@
                 "type": "integer",
                 "minimum": 1
               },
+              "keep_checkpoints": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 2
+              },
               "seed": {
                 "type": "integer"
               },
@@ -172,6 +177,11 @@
               "max_steps": {
                 "type": "integer",
                 "minimum": 1
+              },
+              "keep_checkpoints": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 2
               },
               "seed": {
                 "type": "integer"

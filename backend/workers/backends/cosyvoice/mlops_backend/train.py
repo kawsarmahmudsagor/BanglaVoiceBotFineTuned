@@ -40,8 +40,9 @@ import sys
 from pathlib import Path
 
 from app.core.backend_kit import (
-    NanGuard, StopFlag, init_source, mark_complete, read_init_meta, write_init_meta,  # noqa: F401
+    NanGuard, StopFlag, init_source, keep_checkpoints, mark_complete, read_init_meta, write_init_meta,  # noqa: F401
 )
+from app.core.backend_kit import prune_checkpoints as kit_prune
 from app.core.contract import Phase, RunConfig, RunDir, read_prepared_refs
 
 from .compat import ensure_deepspeed_stub
@@ -74,7 +75,7 @@ def plan_components(requested: list[str], completed: list[str]) -> list[str]:
 
 
 def keep_count(hp: dict) -> int:
-    return max(1, int(hp.get("keep_checkpoints", 2)))
+    return keep_checkpoints(hp)
 
 
 def epoch_dir(rd: RunDir, component: str, n: int, step: int | None = None) -> Path:
@@ -90,6 +91,11 @@ def is_complete(d: Path) -> bool:
     return (Path(d) / ".complete").exists()
 
 
+def _epoch_key(m: re.Match) -> tuple[int, int, int]:
+    n, s = int(m.group(1)), m.group(2)
+    return (n, 0, int(s)) if s is not None else (n, 1, 0)
+
+
 def checkpoint_dirs(rd: RunDir, component: str) -> list[tuple[tuple[int, int, int], Path, bool]]:
     """(sort key, dir, complete) of the component's epoch dirs, oldest first. A step save inside epoch n sorts
     before the end of epoch n and after the end of epoch n-1."""
@@ -100,9 +106,7 @@ def checkpoint_dirs(rd: RunDir, component: str) -> list[tuple[tuple[int, int, in
     for d in rd.checkpoints_dir.iterdir():
         m = pat.fullmatch(d.name)
         if d.is_dir() and m:
-            n, s = int(m.group(1)), m.group(2)
-            key = (n, 0, int(s)) if s is not None else (n, 1, 0)
-            found.append((key, d, is_complete(d)))
+            found.append((_epoch_key(m), d, is_complete(d)))
     return sorted(found, key=lambda t: t[0])
 
 
@@ -115,14 +119,7 @@ def prune_checkpoints(rd: RunDir, component: str, keep: int) -> None:
     """Keep the latest `keep` complete `<component>-epoch-*` dirs (the newest is never removed); remove older
     complete ones and incomplete ones older than the newest complete. `<component>-final`, `final`, `init`, other
     components' dirs and newer incomplete dirs are untouched."""
-    found = checkpoint_dirs(rd, component)
-    complete = [k for k, _, ok in found if ok]
-    if not complete:
-        return
-    keep_from = complete[-max(1, keep):][0]
-    for k, d, ok in found:
-        if k < keep_from or (not ok and k < complete[-1]):
-            shutil.rmtree(d, ignore_errors=True)
+    kit_prune(rd.checkpoints_dir, rf"{re.escape(component)}-epoch-(\d+)(?:-step-(\d+))?", keep, key=_epoch_key)
 
 
 def clean_state(sd: dict, component: str) -> dict:

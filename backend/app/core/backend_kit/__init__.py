@@ -28,7 +28,7 @@ Handler = Callable[[RunDir, RunConfig, "Reporter"], int]
 __all__ = [
     "Handler", "main", "Reporter", "StopFlag", "NanGuard", "TrainingDiverged", "mark_complete",
     "latest_checkpoint", "max_skip_share", "eval_opts", "INIT_META", "write_init_meta", "read_init_meta",
-    "resolve_checkpoint", "InitChoice", "init_source", "export_all",
+    "resolve_checkpoint", "InitChoice", "init_source", "export_all", "keep_checkpoints", "prune_checkpoints",
 ]
 
 INIT_META = "init_meta.json"
@@ -108,6 +108,38 @@ def latest_checkpoint(rd: RunDir) -> Path | None:
         if best is None or n > best[0]:
             best = (n, d)
     return best[1] if best else None
+
+
+def keep_checkpoints(hp: dict) -> int:
+    """`hparams.keep_checkpoints` (default 2, at least 1): how many complete step checkpoints a run keeps."""
+    return max(1, int(hp.get("keep_checkpoints", 2)))
+
+
+def prune_checkpoints(directory: Path, pattern: str, keep: int,
+                      key: Callable[[re.Match], object] | None = None) -> list[Path]:
+    """Keep the latest `keep` complete children of `directory` whose name fully matches `pattern` (the newest
+    complete one is never removed); remove older complete ones and incomplete ones older than the newest
+    complete. Order is `key(match)` (default: int of group 1). Non-matching dirs (`final`, `init`, ...) and
+    newer incomplete dirs are untouched. Returns the removed dirs."""
+    directory = Path(directory)
+    if not directory.is_dir():
+        return []
+    order = key or (lambda m: int(m.group(1)))
+    found = []
+    for d in directory.iterdir():
+        m = re.fullmatch(pattern, d.name)
+        if d.is_dir() and not d.is_symlink() and m:
+            found.append((order(m), d, (d / ".complete").exists()))
+    complete = sorted(k for k, _, ok in found if ok)
+    if not complete:
+        return []
+    keep_from = complete[-max(1, keep):][0]
+    removed = []
+    for k, d, ok in found:
+        if k < keep_from or (not ok and k < complete[-1]):
+            shutil.rmtree(d, ignore_errors=True)
+            removed.append(d)
+    return removed
 
 
 def write_init_meta(ckpt_dir: Path, *, backend: str, base_model: str, method: str, format: str, step: int) -> None:

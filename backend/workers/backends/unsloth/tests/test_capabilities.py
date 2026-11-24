@@ -41,3 +41,9 @@ def test_phase_dispatch_unknown_model_fails(tmp_path):
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 1
     assert "unsupported base_model 'x/y' for backend unsloth" in r.stderr
+
+
+def test_every_task_has_keep_checkpoints():
+    for task in CAPS["tasks"].values():
+        kc = task["schema"]["properties"]["hparams"]["properties"]["keep_checkpoints"]
+        assert kc == {"type": "integer", "minimum": 1, "default": 2}

@@ -19,7 +19,9 @@ from app.core.backend_kit import (
     write_init_meta,
 )
 from app.core.backend_kit.audio_refs import SAMPLE_RATE, check_audio_refs
-from app.core.backend_kit.runutil import dir_artifact, eval_ds, eval_rows, free_gpu, total_steps, trainer_args, train_ref
+from app.core.backend_kit.runutil import (
+    dir_artifact, eval_ds, eval_rows, free_gpu, stopped_early, total_steps, trainer_args, train_ref,
+)
 from app.core.backend_kit.whisper import asr_baseline_key, dataloader_workers, processor_kwarg
 from app.core.contract import RunConfig, RunDir, write_prepared_refs
 from app.core.evaluation import baseline_metrics, merge_results, run_asr_eval
@@ -363,7 +365,7 @@ def train_ctc(rd: RunDir, cfg: RunConfig, rep) -> int:
     )
     last = latest_checkpoint(rd) if cfg.resume else None
     trainer.train(resume_from_checkpoint=str(last) if last else None)
-    if stop.requested:
+    if stopped_early(stop, trainer):
         return 143  # the callback already saved a complete checkpoint; resume continues from it
 
     final = rd.checkpoints_dir / "final"

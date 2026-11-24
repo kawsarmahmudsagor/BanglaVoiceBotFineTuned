@@ -304,3 +304,29 @@ def test_export_all_failed_exporter_leaves_no_dir_and_fresh_dir(tmp_path):
     assert export_all(rd, _export_cfg(["a", "b"]), Reporter(rd), {"a": ok, "b": partial}) == 0
     assert seen["stale"] is False
     assert not (rd.export_dir / "b").exists()
+
+
+def _plain_ckpt(root, name, complete=True):
+    d = root / name
+    d.mkdir(parents=True)
+    if complete:
+        mark_complete(d)
+    return d
+
+
+def test_prune_checkpoints_keeps_latest_k_complete(tmp_path):
+    from app.core.backend_kit import keep_checkpoints, prune_checkpoints
+    for n in (1, 2, 3, 4):
+        _plain_ckpt(tmp_path, f"step-{n}")
+    _plain_ckpt(tmp_path, "step-0", complete=False)  # stale incomplete, older than newest complete
+    _plain_ckpt(tmp_path, "step-9", complete=False)  # in progress, newer: untouched
+    _plain_ckpt(tmp_path, "final")
+    _plain_ckpt(tmp_path, "init")
+    _plain_ckpt(tmp_path, "other-1")
+    prune_checkpoints(tmp_path, r"step-(\d+)", 2)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["final", "init", "other-1", "step-3", "step-4", "step-9"]
+    prune_checkpoints(tmp_path, r"step-(\d+)", 0)  # the newest complete is never removed
+    assert (tmp_path / "step-4").is_dir() and not (tmp_path / "step-3").exists()
+    prune_checkpoints(tmp_path / "missing", r"step-(\d+)", 2)  # no dir: no-op
+    assert keep_checkpoints({}) == 2 and keep_checkpoints({"keep_checkpoints": 5}) == 5
+    assert keep_checkpoints({"keep_checkpoints": 0}) == 1

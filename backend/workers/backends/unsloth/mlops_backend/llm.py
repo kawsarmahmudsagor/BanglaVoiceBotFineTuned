@@ -13,7 +13,7 @@ from app.core.backend_kit import (
 from app.core.backend_kit.runutil import eval_ds as _eval_ds  # noqa: F401
 from app.core.backend_kit.runutil import eval_loss_files, eval_rows  # noqa: F401
 from app.core.backend_kit.runutil import free_gpu as _free_gpu  # noqa: F401
-from app.core.backend_kit.runutil import total_steps, train_ref as _train_ref, trainer_args  # noqa: F401
+from app.core.backend_kit.runutil import stopped_early, total_steps, train_ref as _train_ref, trainer_args  # noqa: F401
 from app.core.contract import RunConfig, RunDir
 from app.core.evaluation import baseline_metrics, merge_results, run_llm_eval
 
@@ -142,7 +142,7 @@ def train_llm(rd: RunDir, cfg: RunConfig, rep) -> int:
     )
     last = latest_checkpoint(rd) if cfg.resume else None
     trainer.train(resume_from_checkpoint=str(last) if last else None)
-    if stop.requested:
+    if stopped_early(stop, trainer):
         return 143  # the callback already saved a complete checkpoint; resume continues from it
 
     final = rd.checkpoints_dir / "final"

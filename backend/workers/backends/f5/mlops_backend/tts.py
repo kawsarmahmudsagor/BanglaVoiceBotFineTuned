@@ -18,8 +18,10 @@ import sys
 from pathlib import Path, PurePosixPath
 
 from app.core.backend_kit import (
-    NanGuard, Reporter, StopFlag, eval_opts, export_all, init_source, mark_complete, write_init_meta,
+    NanGuard, Reporter, StopFlag, eval_opts, export_all, init_source, keep_checkpoints, mark_complete,
+    write_init_meta,
 )
+from app.core.backend_kit import prune_checkpoints as kit_prune
 from app.core.backend_kit.runutil import dir_artifact, eval_ds, eval_rows, free_gpu
 from app.core.backend_kit.whisper import asr_baseline_key
 from app.core.contract import Phase, RunConfig, RunDir, read_prepared_refs
@@ -149,28 +151,13 @@ def publish_checkpoint(src: Path, dst: Path, cfg: RunConfig, step: int, vocab: P
 
 
 def keep_count(hp: dict) -> int:
-    return max(1, int(hp.get("keep_checkpoints", 2)))
+    return keep_checkpoints(hp)
 
 
 def prune_checkpoints(rd: RunDir, keep: int) -> None:
     """Keep the latest `keep` complete update-* dirs (the newest is never removed); remove older complete ones
     and incomplete ones older than the newest complete. `final` and newer incomplete dirs are untouched."""
-    import re
-
-    found: list[tuple[int, Path, bool]] = []
-    if not rd.checkpoints_dir.is_dir():
-        return
-    for d in rd.checkpoints_dir.iterdir():
-        m = re.fullmatch(r"update-(\d+)", d.name)
-        if d.is_dir() and m:
-            found.append((int(m.group(1)), d, (d / ".complete").exists()))
-    complete = sorted(n for n, _, ok in found if ok)
-    if not complete:
-        return
-    keep_from = complete[-max(1, keep):][0]
-    for n, d, ok in found:
-        if n < keep_from or (not ok and n < complete[-1]):
-            shutil.rmtree(d, ignore_errors=True)
+    kit_prune(rd.checkpoints_dir, r"update-(\d+)", keep)
 
 
 def slim_state(ckpt: dict) -> dict:

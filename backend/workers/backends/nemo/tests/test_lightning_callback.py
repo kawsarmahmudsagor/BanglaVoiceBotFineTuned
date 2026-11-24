@@ -161,3 +161,20 @@ def test_non_zero_rank_does_nothing(rd, tmp_path):
     cb.on_validation_end(tr, None)
     assert _metrics(rd) == [] and not tr.saved
     assert tr.should_stop  # every rank must still stop
+
+
+def test_contract_checkpoint_prunes_older_step_dirs(tmp_path):
+    tr = FakeTrainer(tmp_path)
+    tr.ckpt.keep = 2
+    tr.ckpt._write = lambda trainer, fp: trainer.save_checkpoint(fp)
+    tr.is_global_zero = True
+    rd = tr.ckpt.rd
+    rd.ensure()
+    final = rd.checkpoints_dir / "final"
+    final.mkdir()
+    (final / ".complete").write_text("")
+    for step in (5, 10, 15):
+        tr.global_step = step
+        tr.ckpt.save_now(tr)
+    names = sorted(p.name for p in rd.checkpoints_dir.iterdir())
+    assert names == ["final", "step-10", "step-15"]

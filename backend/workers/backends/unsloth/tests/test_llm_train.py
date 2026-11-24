@@ -25,7 +25,7 @@ def test_trainer_args_from_hparams(run_dir):
     assert a["optim"] == "adamw_8bit"
     assert a["num_train_epochs"] == 3
     assert "max_steps" not in a or a["max_steps"] == -1
-    assert a["bf16"] is True and a["report_to"] == [] and a["save_total_limit"] == 3
+    assert a["bf16"] is True and a["report_to"] == [] and a["save_total_limit"] == 2
     assert a["save_steps"] == 50 and a["eval_steps"] == 50 and a["eval_strategy"] == "steps"
     assert a["per_device_train_batch_size"] == 2 and a["gradient_accumulation_steps"] == 2
 

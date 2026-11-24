@@ -16,8 +16,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from app.core.backend_kit import (
-    NanGuard, StopFlag, eval_opts, export_all, init_source, latest_checkpoint, mark_complete, max_skip_share,
-    write_init_meta,
+    NanGuard, StopFlag, eval_opts, export_all, init_source, keep_checkpoints, latest_checkpoint, mark_complete,
+    max_skip_share, write_init_meta,
 )
 from app.core.backend_kit.lightning import ContractCheckpoint, ContractLightningCallback
 from app.core.backend_kit.runutil import dir_artifact, eval_ds, eval_rows, free_gpu, total_steps, train_ref
@@ -250,7 +250,8 @@ def train(rd: RunDir, cfg: RunConfig, rep) -> int:
         devices=1, accelerator="gpu", precision="bf16-mixed", max_steps=total, max_epochs=-1,
         accumulate_grad_batches=accum, logger=False, enable_checkpointing=True,
         callbacks=[_InstallStop(), ContractLightningCallback(rep, stop, NanGuard(), total),
-                   ContractCheckpoint(rd, cfg.base_model, every_n_train_steps=save_steps)],
+                   ContractCheckpoint(rd, cfg.base_model, every_n_train_steps=save_steps,
+                                      keep=keep_checkpoints(hp))],
         check_val_every_n_epoch=None, val_check_interval=min(save_steps * accum, batches_per_epoch),
         num_sanity_val_steps=0, enable_progress_bar=False,
         log_every_n_steps=1,  # keeps train_loss in callback_metrics at every optimizer step (the contract callback reads it)
