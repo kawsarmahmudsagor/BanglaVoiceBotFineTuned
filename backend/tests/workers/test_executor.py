@@ -464,3 +464,24 @@ async def test_executor_fails_run_when_source_checkpoint_missing(env):
     r = await run_of(env, "r-test0002")
     assert r.error == f"init_from: run {first.id} has no complete checkpoint 'final'"
     assert (await lock_state(env)).holder_kind is None
+
+
+def test_backend_env_passes_hf_token_from_settings(tmp_path, monkeypatch):
+    from app.settings import Settings
+
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HF_HOME", raising=False)
+    s = Settings(_env_file=None, data_root=tmp_path, hf_token="hf_secret")
+    env = executor.backend_env(s)
+    assert env["HF_TOKEN"] == "hf_secret" and env["HF_HOME"] == str(s.hf_home) and env["PYTHONUNBUFFERED"] == "1"
+    assert "hf_secret" not in repr(s) and "hf_secret" not in str(s.model_dump())  # never logged
+    assert "HF_TOKEN" not in executor.backend_env(Settings(_env_file=None, data_root=tmp_path))
+    monkeypatch.setenv("HF_TOKEN", "from_env")
+    assert executor.backend_env(s)["HF_TOKEN"] == "from_env"  # an explicit environment wins, like HF_HOME
+
+
+def test_settings_read_hf_token_from_env(tmp_path, monkeypatch):
+    from app.settings import Settings
+
+    monkeypatch.setenv("HF_TOKEN", "hf_x")
+    assert Settings(_env_file=None).hf_token.get_secret_value() == "hf_x"

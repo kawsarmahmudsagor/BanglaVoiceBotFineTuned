@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # backend/app/settings.py -> repo root; the worker and API read `<repo>/.env` regardless of cwd.
@@ -25,6 +26,7 @@ class Settings(BaseSettings):
     disk_min_gb: float = 10
     cancel_grace_s: float = 60
     poll_interval_s: float = 2
+    hf_token: SecretStr | None = None  # env HF_TOKEN; handed to backend subprocesses, never logged
 
     @property
     def incoming_dir(self) -> Path:

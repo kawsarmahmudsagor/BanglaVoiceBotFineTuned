@@ -288,12 +288,22 @@ async def kill_recorded_backend(rd: RunDir, grace_s: float) -> None:
     pid_file.unlink(missing_ok=True)
 
 
+def backend_env(settings) -> dict[str, str]:
+    """Environment of a backend subprocess: the worker's own, plus HF_HOME and HF_TOKEN from Settings unless the
+    environment already sets them (pydantic-settings reads .env but does not export it)."""
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    env.setdefault("HF_HOME", str(settings.hf_home))
+    token = getattr(settings, "hf_token", None)
+    if token is not None and token.get_secret_value():
+        env.setdefault("HF_TOKEN", token.get_secret_value())
+    return env
+
+
 async def _run_phase(session_factory, run_id, settings, python: Path, rd: RunDir, phase: str,
                      forwarder: Forwarder, offset: int) -> tuple[int, int, bool]:
     """Returns (exit_code, metrics_offset, cancelled)."""
     rd.logs_dir.mkdir(parents=True, exist_ok=True)
-    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-    env.setdefault("HF_HOME", str(settings.hf_home))
+    env = backend_env(settings)
     cancelled = False
     pid_file = rd.logs_dir / PID_FILE
     with (rd.logs_dir / "stdout.log").open("ab") as out, (rd.logs_dir / "stderr.log").open("ab") as err:
