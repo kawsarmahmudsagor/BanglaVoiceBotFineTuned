@@ -14,7 +14,6 @@ def test_dispatch_whisper_family(tmp_path, monkeypatch):
     assert phases._FAMILY_MODULE["whisper"] == "whisper_full"
     seen = {}
     for phase in ("prepare", "train", "eval", "export"):
-        fn = getattr(whisper_full, phase)
         monkeypatch.setattr(whisper_full, phase, lambda rd, cfg, rep, p=phase: seen.setdefault(p, 0))
     from app.core.contract import Phase, RunConfig, RunDir
 

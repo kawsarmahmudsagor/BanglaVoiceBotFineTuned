@@ -68,6 +68,7 @@ def _load(src: str, *, bf16: bool = False):
     model = WhisperForConditionalGeneration.from_pretrained(src, **kw)
     model.config.forced_decoder_ids = None
     model.generation_config.forced_decoder_ids = None
+    model.config.use_cache = True  # training turns it off; never let that leak into eval/export
     return model
 
 
@@ -106,6 +107,7 @@ def train_whisper(rd: RunDir, cfg: RunConfig, rep) -> int:
         return 143  # the callback already saved a complete checkpoint; resume continues from it
 
     final = rd.checkpoints_dir / "final"
+    model.config.use_cache = True  # saved config must be usable for generation downstream
     trainer.save_model(str(final))
     processor.save_pretrained(str(final))
     write_ckpt_meta(final, cfg, trainer.state.global_step)  # meta before .complete
