@@ -860,7 +860,7 @@ requires-dist = [
     { name = "descript-audio-codec" },
     { name = "evaluate" },
     { name = "huggingface-hub" },
-    { name = "parler-tts", git = "https://github.com/huggingface/parler-tts" },
+    { name = "parler-tts", git = "https://github.com/huggingface/parler-tts?rev=d108732cd57788ec86bc857d99a6cabd66663d68" },
     { name = "torch", specifier = "==2.7.1", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchaudio", specifier = "==2.7.1", index = "https://download.pytorch.org/whl/cu128" },
     { name = "transformers" },
@@ -1111,7 +1111,7 @@ wheels = [
 [[package]]
 name = "parler-tts"
 version = "0.2.2"
-source = { git = "https://github.com/huggingface/parler-tts#d108732cd57788ec86bc857d99a6cabd66663d68" }
+source = { git = "https://github.com/huggingface/parler-tts?rev=d108732cd57788ec86bc857d99a6cabd66663d68#d108732cd57788ec86bc857d99a6cabd66663d68" }
 dependencies = [
     { name = "descript-audio-codec" },
     { name = "descript-audiotools" },

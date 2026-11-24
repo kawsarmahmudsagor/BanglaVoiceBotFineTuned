@@ -12,7 +12,7 @@ dependencies = [
   "evaluate",
   "huggingface_hub",
   "ctranslate2",
-  "parler-tts @ git+https://github.com/huggingface/parler-tts",
+  "parler-tts",
   "descript-audio-codec",
 ]
 
@@ -26,6 +26,7 @@ environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 bangla-voice-backend = { path = "../../..", editable = true }
 torch = { index = "pytorch-cu128" }
 torchaudio = { index = "pytorch-cu128" }
+parler-tts = { git = "https://github.com/huggingface/parler-tts", rev = "d108732cd57788ec86bc857d99a6cabd66663d68" }
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
