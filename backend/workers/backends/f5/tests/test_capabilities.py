@@ -29,7 +29,7 @@ def test_methods_exports_and_hparams():
     assert TTS["export_formats"] == ["f5-ckpt"]
     hp = TTS["schema"]["properties"]["hparams"]["properties"]
     assert set(hp) == {"learning_rate", "epochs", "batch_size_frames", "grad_accum", "max_steps",
-                       "warmup_steps", "save_steps", "seed", "eval", "prepare"}
+                       "warmup_steps", "save_steps", "keep_checkpoints", "seed", "eval", "prepare"}
     assert hp["batch_size_frames"]["default"] == 3200
     assert hp["warmup_steps"]["default"] == 1000
 

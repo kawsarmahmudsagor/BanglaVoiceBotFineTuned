@@ -9,7 +9,7 @@ from app.core.contract import Phase, read_config, read_metrics
 
 from mlops_backend.tts import (
     TEXT_EMBED_KEY, TrainFinished, TrainStopped, UpdateHook, ema_export_state, pick_state_dict, pick_weights_file,
-    plan_expansion, publish_checkpoint, save_interval, strip_to_model_keys, total_updates, update_dir,
+    plan_expansion, prune_checkpoints, publish_checkpoint, slim_state, split_sentences, keep_count, save_interval, strip_to_model_keys, total_updates, update_dir,
     updates_per_epoch, check_load_result, pick_ref,
 )
 
@@ -104,6 +104,7 @@ def test_update_dir_naming_and_latest(run_dir, tmp_path):
     vocab.write_text("a\nb\n", encoding="utf-8")
     assert update_dir(rd, 40).name == "update-40"
     for n in (9, 100, 40):
+        src.write_bytes(b"w")
         publish_checkpoint(src, update_dir(rd, n), cfg, n, vocab)
     (rd.checkpoints_dir / "update-500").mkdir()  # no .complete: not a checkpoint
     assert latest_checkpoint(rd) == update_dir(rd, 100)
@@ -148,6 +149,72 @@ def test_publish_checkpoint_resave_overwrites(run_dir, tmp_path):
     src.write_bytes(b"22")
     publish_checkpoint(src, d, cfg, 1, vocab)
     assert (d / "model_last.pt").read_bytes() == b"22" and (d / ".complete").exists()
+
+
+def test_publish_moves_source_file(run_dir, tmp_path):
+    rd, cfg = _cfg(run_dir)
+    src = tmp_path / "model_last.pt"
+    src.write_bytes(b"w")
+    vocab = tmp_path / "vocab.txt"
+    vocab.write_text("a\n", encoding="utf-8")
+    publish_checkpoint(src, update_dir(rd, 1), cfg, 1, vocab)
+    assert not src.exists() and (update_dir(rd, 1) / "model_last.pt").read_bytes() == b"w"
+
+
+def _mk(rd, n, complete=True):
+    d = update_dir(rd, n)
+    d.mkdir(parents=True)
+    (d / "model_last.pt").write_bytes(b"x")
+    if complete:
+        (d / ".complete").write_text("")
+
+
+def test_prune_keeps_latest_k_complete_and_final(run_dir):
+    rd, _ = _cfg(run_dir)
+    for n in (10, 20, 30, 40):
+        _mk(rd, n)
+    _mk(rd, 15, complete=False)  # incomplete, older than newest complete: removable
+    _mk(rd, 50, complete=False)  # newer than the newest complete: in progress, kept
+    (rd.checkpoints_dir / "final").mkdir()
+    prune_checkpoints(rd, 2)
+    left = sorted(d.name for d in rd.checkpoints_dir.iterdir())
+    assert left == ["final", "update-30", "update-40", "update-50"]
+
+
+def test_prune_never_deletes_newest_even_with_k_zero(run_dir):
+    rd, _ = _cfg(run_dir)
+    for n in (1, 2):
+        _mk(rd, n)
+    prune_checkpoints(rd, 0)
+    assert [d.name for d in rd.checkpoints_dir.iterdir()] == ["update-2"]
+
+
+def test_keep_count_default_and_override(run_dir):
+    _, cfg = _cfg(run_dir)
+    assert keep_count(cfg.hparams) == 2
+    assert keep_count({"keep_checkpoints": 5}) == 5
+    assert keep_count({"keep_checkpoints": 0}) == 1
+
+
+def test_pick_state_dict_accepts_ema_only_and_slim_state():
+    slim = {"ema_model_state_dict": {"ema_model.transformer.text_embed.text_embed.weight": 1}}
+    assert pick_state_dict(slim) == slim["ema_model_state_dict"]
+    assert pick_state_dict(slim, ema=False) == slim["ema_model_state_dict"]
+    full = {"ema_model_state_dict": {"e": 1}, "model_state_dict": {"m": 2}, "optimizer_state_dict": {}, "update": 3}
+    assert slim_state(full) == {"ema_model_state_dict": {"e": 1}}
+
+
+def test_capabilities_has_keep_checkpoints():
+    caps = json.loads((__import__("pathlib").Path(__file__).parent.parent / "capabilities.json").read_text("utf-8"))
+    hp = caps["tasks"]["tts"]["schema"]["properties"]["hparams"]["properties"]
+    assert hp["keep_checkpoints"]["minimum"] == 1
+
+
+def test_split_sentences_keeps_danda():
+    assert split_sentences("আমি যাব। তুমি এসো। শেষ") == ["আমি যাব।", "তুমি এসো।", "শেষ"]
+    assert split_sentences("  এক।  ") == ["এক।"]
+    assert split_sentences("") == []
+    assert split_sentences("।।") == ["।", "।"]
 
 
 # ---- schedule helpers --------------------------------------------------------------------------------------------
@@ -331,3 +398,41 @@ def test_torchaudio_reads_source_formats(tmp_path):
     for name in ("a.wav", "a.flac", "a.mp3"):
         wav, sr = torchaudio.load(str(tmp_path / name))
         assert wav.shape[0] >= 1 and wav.shape[1] > 20000 and sr == 24000
+
+
+@pytest.mark.heavy
+def test_f5_stop_then_resume_and_retention(run_dir, monkeypatch, tmp_path):
+    import torch
+
+    from app.core.backend_kit import Reporter
+    from mlops_backend import f5 as p
+    import mlops_backend.tts as t
+
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
+    hp = {"max_steps": 30, "batch_size_frames": 3200, "grad_accum": 1, "learning_rate": 1e-5, "warmup_steps": 2,
+          "save_steps": 10, "keep_checkpoints": 2}
+    rd = run_dir("tts", MODEL, hp)
+    cfg = read_config(rd)
+    rep = Reporter(rd)
+    assert p.prepare(rd, cfg, rep) == 0
+
+    orig = t.UpdateHook.__call__
+
+    def stopping(self, values, step=None, log_kwargs=None):
+        if step == 12:
+            self.stop.requested = True
+        return orig(self, values, step, log_kwargs)
+
+    monkeypatch.setattr(t.UpdateHook, "__call__", stopping)
+    assert p.train(rd, cfg, rep) == 143
+    assert (update_dir(rd, 12) / ".complete").exists()
+    monkeypatch.setattr(t.UpdateHook, "__call__", orig)
+
+    cfg2 = cfg.model_copy(update={"resume": True})
+    assert p.train(rd, cfg2, rep) == 0
+    final = rd.checkpoints_dir / "final"
+    assert read_init_meta(final)["step"] == 30
+    assert len(list(rd.checkpoints_dir.glob("update-*"))) <= 2
+    ck = torch.load(str(final / "model_last.pt"), map_location="cpu", weights_only=True)
+    assert set(ck) == {"ema_model_state_dict"}
+    assert not (rd.path / "work" / "f5_ckpt").exists()

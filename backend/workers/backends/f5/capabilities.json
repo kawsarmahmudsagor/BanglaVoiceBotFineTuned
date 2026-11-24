@@ -73,6 +73,11 @@
               },
               "prepare": {
                 "type": "object"
+              },
+              "keep_checkpoints": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 2
               }
             }
           }

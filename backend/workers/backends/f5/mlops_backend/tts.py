@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 import os
 import shutil
+import sys
 from pathlib import Path, PurePosixPath
 
 from app.core.backend_kit import (
@@ -136,16 +137,73 @@ def update_dir(rd: RunDir, n: int) -> Path:
 
 
 def publish_checkpoint(src: Path, dst: Path, cfg: RunConfig, step: int, vocab: Path) -> None:
-    """Copy F5's model_last.pt (+ vocab) into a contract checkpoint dir; meta before `.complete`."""
+    """MOVE F5's model_last.pt (+ copy vocab) into a contract checkpoint dir; meta before `.complete`.
+    A move, never a link: torch.save rewrites the work file's inode in place."""
     dst = Path(dst)
     dst.mkdir(parents=True, exist_ok=True)
     (dst / ".complete").unlink(missing_ok=True)
-    tmp = dst / "model_last.pt.tmp"
-    shutil.copyfile(src, tmp)
-    os.replace(tmp, dst / "model_last.pt")
+    os.replace(src, dst / "model_last.pt")
     shutil.copyfile(vocab, dst / "vocab.txt")
     write_init_meta(dst, backend=BACKEND, base_model=cfg.base_model, method="full", format=CKPT_FORMAT, step=step)
     mark_complete(dst)
+
+
+def keep_count(hp: dict) -> int:
+    return max(1, int(hp.get("keep_checkpoints", 2)))
+
+
+def prune_checkpoints(rd: RunDir, keep: int) -> None:
+    """Keep the latest `keep` complete update-* dirs (the newest is never removed); remove older complete ones
+    and incomplete ones older than the newest complete. `final` and newer incomplete dirs are untouched."""
+    import re
+
+    found: list[tuple[int, Path, bool]] = []
+    if not rd.checkpoints_dir.is_dir():
+        return
+    for d in rd.checkpoints_dir.iterdir():
+        m = re.fullmatch(r"update-(\d+)", d.name)
+        if d.is_dir() and m:
+            found.append((int(m.group(1)), d, (d / ".complete").exists()))
+    complete = sorted(n for n, _, ok in found if ok)
+    if not complete:
+        return
+    keep_from = complete[-max(1, keep):][0]
+    for n, d, ok in found:
+        if n < keep_from or (not ok and n < complete[-1]):
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def slim_state(ckpt: dict) -> dict:
+    """What a final checkpoint keeps: the EMA weights only."""
+    return {"ema_model_state_dict": pick_state_dict(ckpt, ema=True)}
+
+
+def split_sentences(text: str) -> list[str]:
+    """Split after each danda (kept on its sentence); F5 only chunks on ASCII punctuation."""
+    out, cur = [], ""
+    for c in text:
+        cur += c
+        if c == "।":
+            out.append(cur.strip())
+            cur = ""
+    if cur.strip():
+        out.append(cur.strip())
+    return [x for x in out if x]
+
+
+def write_slim_final(src: Path, final: Path, cfg: RunConfig, step: int, vocab: Path) -> None:
+    import torch
+
+    ckpt = torch.load(str(src), map_location="cpu", weights_only=True)
+    final.mkdir(parents=True, exist_ok=True)
+    (final / ".complete").unlink(missing_ok=True)
+    tmp = final / "model_last.pt.tmp"
+    torch.save(slim_state(ckpt), str(tmp))
+    del ckpt
+    os.replace(tmp, final / "model_last.pt")
+    shutil.copyfile(vocab, final / "vocab.txt")
+    write_init_meta(final, backend=BACKEND, base_model=cfg.base_model, method="full", format=CKPT_FORMAT, step=step)
+    mark_complete(final)  # meta before .complete
 
 
 def updates_per_epoch(durations: list[float], batch_frames: int, accum: int) -> int:
@@ -351,6 +409,7 @@ def train(rd: RunDir, cfg: RunConfig, rep) -> int:
 
     def publish(n: int) -> None:
         publish_checkpoint(work / "model_last.pt", update_dir(rd, n), cfg, n, vocab)
+        prune_checkpoints(rd, keep_count(hp))
 
     os.environ.setdefault("ACCELERATE_MIXED_PRECISION", "bf16")
     trainer = _trainer_cls(publish)(
@@ -359,6 +418,8 @@ def train(rd: RunDir, cfg: RunConfig, rep) -> int:
         grad_accumulation_steps=accum, logger=None)
     hook = UpdateHook(rep, stop, NanGuard(), total, lambda n: trainer.save_checkpoint(n, last=True))
     trainer.accelerator.log = hook
+    if stop.requested:
+        return 143  # SIGTERM before any work: nothing to save
     try:
         trainer.train(dataset, num_workers=min(8, os.cpu_count() or 1), resumable_with_seed=cfg.seed)
     except TrainStopped:
@@ -366,8 +427,14 @@ def train(rd: RunDir, cfg: RunConfig, rep) -> int:
     except TrainFinished:
         pass
     step = hook.last
-    final = rd.checkpoints_dir / "final"
-    publish_checkpoint(work / "model_last.pt", final, cfg, step, vocab)
+    if step < total:
+        print(f"f5: training ended at update {step} of {total}", file=sys.stderr)
+    src = work / "model_last.pt"
+    if not src.is_file():  # the last save was already published as update-<n>
+        src = update_dir(rd, step) / "model_last.pt"
+    write_slim_final(src, rd.checkpoints_dir / "final", cfg, step, vocab)
+    prune_checkpoints(rd, keep_count(hp))
+    shutil.rmtree(work, ignore_errors=True)
     return 0
 
 
@@ -397,9 +464,14 @@ def make_synthesizer(model, vocoder, refs: Path, device: str = "cuda"):
             cache[wav] = preprocess_ref_audio_text(str(wav), ref_text, show_info=quiet)
         ref_audio, ref_text = cache[wav]
         torch.manual_seed(SYNTH_SEED)
-        audio, sr, _ = infer_process(ref_audio, ref_text, bn_normalize(text, mode="tts"), model, vocoder,
-                                     mel_spec_type="vocos", show_info=quiet, device=device)
-        return audio, int(sr)
+        import numpy as np
+
+        waves, sr = [], SAMPLE_RATE
+        for sent in split_sentences(bn_normalize(text, mode="tts")) or [text]:
+            audio, sr, _ = infer_process(ref_audio, ref_text, sent, model, vocoder, mel_spec_type="vocos",
+                                         show_info=quiet, device=device)
+            waves.append(np.asarray(audio))
+        return np.concatenate(waves), int(sr)
 
     return synthesize
 
