@@ -112,3 +112,52 @@ def test_package_init_does_not_import_lightning():
     import sys
     code = "import sys, app.core.backend_kit; assert 'lightning' not in sys.modules"
     assert subprocess.run([sys.executable, "-c", code]).returncode == 0
+
+
+def test_accumulation_reports_once_per_optimizer_step(rd, tmp_path):
+    tr = FakeTrainer(tmp_path, train_loss=0.5)
+    tr.accumulate_grad_batches = 2
+    tr.num_training_batches = 10
+    cb = _cb(rd)
+    tr.global_step = 0
+    cb.on_train_batch_end(tr, None, None, None, 0)  # micro-batch 1 of 2
+    assert _metrics(rd) == []
+    tr.global_step = 1
+    cb.on_train_batch_end(tr, None, None, None, 1)  # optimizer step done
+    assert len(_metrics(rd)) == 1 and '"step":1' in _metrics(rd)[0].replace(" ", "")
+
+
+def test_accumulation_last_batch_of_epoch_counts(rd, tmp_path):
+    tr = FakeTrainer(tmp_path, train_loss=0.5)
+    tr.accumulate_grad_batches = 2
+    tr.num_training_batches = 3
+    _cb(rd).on_train_batch_end(tr, None, None, None, 2)
+    assert len(_metrics(rd)) == 1
+
+
+def test_stop_save_only_at_optimizer_boundary(rd, tmp_path):
+    stop = StopFlag()
+    stop.requested = True
+    tr = FakeTrainer(tmp_path, train_loss=0.1)
+    tr.accumulate_grad_batches = 2
+    tr.num_training_batches = 10
+    tr.ckpt._save_checkpoint = lambda trainer, fp: (trainer.save_checkpoint(fp),
+                                                    finalize_checkpoint(fp, base_model="x/y", step=trainer.global_step))
+    cb = _cb(rd, stop)
+    cb.on_train_batch_end(tr, None, None, None, 0)
+    assert not tr.saved
+    tr.global_step = 1
+    cb.on_train_batch_end(tr, None, None, None, 1)
+    assert tr.should_stop and len(tr.saved) == 1
+
+
+def test_non_zero_rank_does_nothing(rd, tmp_path):
+    stop = StopFlag()
+    stop.requested = True
+    tr = FakeTrainer(tmp_path, train_loss=0.5, val_loss=1.0)
+    tr.is_global_zero = False
+    cb = _cb(rd, stop)
+    cb.on_train_batch_end(tr, None, None, None, 0)
+    cb.on_validation_end(tr, None)
+    assert _metrics(rd) == [] and not tr.saved
+    assert tr.should_stop  # every rank must still stop

@@ -26,6 +26,13 @@ def main() -> int:
         except Exception as e:  # noqa: BLE001
             print(f"{mod} import failed: {type(e).__name__}: {e}", file=sys.stderr)
             ok = False
+    for mod in ["nemo.collections.asr", "lightning.pytorch"]:
+        try:
+            import_module(mod)
+            print(f"{mod} OK")
+        except Exception as e:  # noqa: BLE001
+            print(f"{mod} import failed: {type(e).__name__}: {e}", file=sys.stderr)
+            ok = False
     return 0 if ok else 1
 
 

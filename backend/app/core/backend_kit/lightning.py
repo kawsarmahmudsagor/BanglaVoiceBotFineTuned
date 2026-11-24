@@ -2,6 +2,9 @@
 
 `lightning` is only installed in the nemo venv; without it the base classes fall back to `object` so the pure
 logic stays testable in the light workspace venv.
+
+The nemo backend targets single-node training; multi-node needs a shared filesystem. Metric, status and
+checkpoint-marker writes happen on global rank 0 only.
 """
 from __future__ import annotations
 
@@ -28,6 +31,19 @@ def _num(v) -> float | None:
         return None
 
 
+def _rank0(trainer) -> bool:
+    return bool(getattr(trainer, "is_global_zero", True))
+
+
+def _optimizer_boundary(trainer, batch_idx: int) -> bool:
+    """True when this micro-batch completed an optimizer step (or ended the epoch)."""
+    accum = max(int(getattr(trainer, "accumulate_grad_batches", 1) or 1), 1)
+    last = getattr(trainer, "num_training_batches", None)
+    if (batch_idx + 1) % accum == 0:
+        return True
+    return isinstance(last, int) and batch_idx + 1 >= last
+
+
 def finalize_checkpoint(ckpt_path: Path, *, base_model: str, step: int) -> None:
     """After the .ckpt is fully written: init_meta first, then `.complete`."""
     ckpt_path = Path(ckpt_path)
@@ -48,7 +64,8 @@ class ContractCheckpoint(ModelCheckpoint):
         if ModelCheckpoint is not object:
             super().__init__(dirpath=str(rd.checkpoints_dir), filename="step-{step}/" + Path(CKPT_NAME).stem,
                              save_top_k=-1, every_n_train_steps=every_n_train_steps, save_on_train_epoch_end=False,
-                             auto_insert_metric_name=False)
+                             auto_insert_metric_name=False,
+                             enable_version_counter=False)  # re-save at a step never becomes model-v1.ckpt
         self.rd = rd
         self.base_model = base_model
 
@@ -58,7 +75,8 @@ class ContractCheckpoint(ModelCheckpoint):
 
     def save_now(self, trainer) -> Path:
         path = self.rd.checkpoints_dir / f"step-{int(trainer.global_step)}" / CKPT_NAME
-        self._save_checkpoint(trainer, str(path))
+        if _rank0(trainer):
+            self._save_checkpoint(trainer, str(path))
         return path
 
 
@@ -71,12 +89,16 @@ class ContractLightningCallback(Callback):
         self._stop_saved = False
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        if not _optimizer_boundary(trainer, batch_idx):
+            return
         step = int(trainer.global_step)
         loss = _num(trainer.callback_metrics.get("train_loss"))
         if loss is not None:
-            self.rep.metric(step, "train", "loss", loss)
+            if _rank0(trainer):
+                self.rep.metric(step, "train", "loss", loss)
             self.nan.feed(loss)  # raises TrainingDiverged after 3 non-finite in a row
-        self.rep.status(Phase.train, step, self.total_steps, "training")
+        if _rank0(trainer):
+            self.rep.status(Phase.train, step, self.total_steps, "training")
         if self.stop.requested:
             trainer.should_stop = True
             if not self._stop_saved:
@@ -87,7 +109,7 @@ class ContractLightningCallback(Callback):
                         break
 
     def on_validation_end(self, trainer, pl_module):
-        if getattr(trainer, "sanity_checking", False):
+        if getattr(trainer, "sanity_checking", False) or not _rank0(trainer):
             return
         step = int(trainer.global_step)
         for key, name in (("val_loss", "loss"), ("val_wer", "wer")):
