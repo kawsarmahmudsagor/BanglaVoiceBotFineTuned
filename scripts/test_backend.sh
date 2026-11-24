@@ -12,10 +12,11 @@ dir="backend/workers/backends/$name"
 [ -d "$dir/tests" ] || { echo "no tests in $dir" >&2; exit 2; }
 
 if [ "${2:-}" = "--heavy" ]; then
-  exec uv run --project "$dir" pytest "$dir/tests"
+  # --confcutdir: skip backend/conftest.py (API fixtures; needs pytest-asyncio, absent from backend venvs).
+  exec uv run --project "$dir" pytest "$dir/tests" --confcutdir "$dir"
 fi
 sep=":"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) sep=";" ;; esac  # Windows Python splits PYTHONPATH on ";"
 # server extra provides pyarrow/numpy/soundfile; PYTHONPATH makes conftest_shared importable (R2).
 exec uv run --project backend --extra server --extra audio --with pytest \
-  env PYTHONPATH="$dir${sep}backend/workers/backends" pytest "$dir/tests" -m "not heavy"
+  env PYTHONPATH="$dir${sep}backend/workers/backends" pytest "$dir/tests" -m "not heavy" --confcutdir "$dir"
