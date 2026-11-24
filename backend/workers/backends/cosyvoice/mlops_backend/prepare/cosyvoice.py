@@ -24,6 +24,7 @@ UPSTREAM_COMMIT = "074ca6dc9e80a2f424f1f74b48bdd7d3fea531cc"  # = ../UPSTREAM_CO
 SAMPLE_RATE = 16000        # tokenizer / embedder input rate
 REF_SAMPLE_RATE = 24000    # reference clips: the frontend loads the prompt wav at 24 kHz (speech_feat) and 16 kHz
 MAX_SECONDS = 30           # the speech tokenizer does not support longer audio
+MIN_SECONDS = 1.0          # upstream filter drops < 100 frames (1 s) silently at train time
 SHARD_SIZE = 1000          # upstream --num_utts_per_parquet default (run.sh uses 1000)
 EXTRACT_THREADS = 8        # upstream --num_thread default
 INSTRUCT = "You are a helpful assistant.<|endofprompt|>"  # upstream CosyVoice3 recipe: prefix of every text
@@ -166,6 +167,8 @@ def _row(row: dict, res, sid: str) -> tuple[str | None, dict | None]:
     seconds = res.seconds if transcode else float(res or row.get("duration_s") or 0)
     if seconds > MAX_SECONDS:
         return f"duration {seconds:.1f} s > {MAX_SECONDS} s", None
+    if seconds < MIN_SECONDS:
+        return f"duration {seconds:.1f} s < 1 s", None
     text = bn_normalize(row["text"], mode="tts")
     if not text:
         return "empty text", None
@@ -175,28 +178,38 @@ def _row(row: dict, res, sid: str) -> tuple[str | None, dict | None]:
 
 
 def _extract_all(recs: list[dict], extractor: Callable, tick: Callable[[int], None]):
-    """(utt -> embedding, utt -> tokens), decoding a chunk at a time with a thread pool."""
+    """(utt -> embedding, utt -> tokens, utt -> exception), a chunk at a time with a thread pool."""
     import numpy as np
     from concurrent.futures import ThreadPoolExecutor
 
+    def run(r):
+        try:
+            e, t = extractor(r["audio_path"])
+            if len(t) == 0:
+                raise ValueError("no speech tokens")
+            return np.asarray(e, dtype="float32"), np.asarray(t, dtype="int64")
+        except Exception as ex:  # noqa: BLE001 - becomes a skip of this row
+            return ex
+
     emb: dict[str, object] = {}
     tokens: dict[str, object] = {}
+    failed: dict[str, Exception] = {}
     step = EXTRACT_THREADS * 16
     with ThreadPoolExecutor(EXTRACT_THREADS) as pool:
         for lo in range(0, len(recs), step):
             chunk = recs[lo:lo + step]
-            for r, (e, t) in zip(chunk, pool.map(lambda r: extractor(r["audio_path"]), chunk)):
-                if len(t) == 0:
-                    raise PrepareError(f"speech tokenizer returned no tokens for {r['sample_id']}")
-                emb[r["sample_id"]] = np.asarray(e, dtype="float32")
-                tokens[r["sample_id"]] = np.asarray(t, dtype="int64")
+            for r, res in zip(chunk, pool.map(run, chunk)):
+                if isinstance(res, Exception):
+                    failed[r["sample_id"]] = res
+                else:
+                    emb[r["sample_id"]], tokens[r["sample_id"]] = res
             tick(len(chunk))
-    return emb, tokens
+    return emb, tokens, failed
 
 
 def _write_split(out: Path, split: str, recs: list[dict], extractor: Callable, shard_size: int, rep,
-                 loader: Callable | None) -> list[str]:
-    """Everything for one split; returns its files relative to `out`."""
+                 loader: Callable | None) -> tuple[list[str], list[dict], list[Skip]]:
+    """Everything for one split; returns (files relative to `out`, kept records, extraction skips)."""
     import json
 
     import numpy as np
@@ -205,9 +218,14 @@ def _write_split(out: Path, split: str, recs: list[dict], extractor: Callable, s
 
     d = out / split
     recs = sorted(recs, key=lambda r: r["sample_id"])
+    emb, tokens, failed = _extract_all(recs, extractor, _extract_ticker(rep, split, len(recs)))
+    skips = [Skip(sample_id=sid, split=split, reason=f"undecodable audio: {type(e).__name__}")
+             for sid, e in failed.items()]
+    recs = [r for r in recs if r["sample_id"] not in failed]
+    if not recs:
+        raise PrepareError(f"split {split} is empty after prepare ({len(skips)} rows skipped)")
     write_kaldi_lists(recs, d)
     files = [f"{split}/{n}" for n in ("wav.scp", "text", "utt2spk", "spk2utt", "instruct")]
-    emb, tokens = _extract_all(recs, extractor, _extract_ticker(rep, split, len(recs)))
     by_spk: dict[str, list] = {}
     for r in recs:
         by_spk.setdefault(_speaker(r), []).append(emb[r["sample_id"]])
@@ -217,9 +235,10 @@ def _write_split(out: Path, split: str, recs: list[dict], extractor: Callable, s
     except ImportError:  # light environment; the trainer reads the parquet shards, not these
         torch = None
     if torch is not None:
+        # plain lists, as upstream saves them (loadable with torch.load's default weights_only=True)
         for name, obj in (("utt2embedding.pt", emb), ("spk2embedding.pt", spk_emb),
                           ("utt2speech_token.pt", tokens)):
-            torch.save(obj, d / name)
+            torch.save({k: v.tolist() for k, v in obj.items()}, d / name)
             files.append(f"{split}/{name}")
     final = _final_dir(out)
     shards, utt2pq, spk2pq = [], [], []
@@ -251,7 +270,7 @@ def _write_split(out: Path, split: str, recs: list[dict], extractor: Callable, s
     for fname, lines in (("data.list", shards), ("utt2data.list", utt2pq), ("spk2data.list", spk2pq)):
         (d / fname).write_text("".join(ln + "\n" for ln in lines), encoding="utf-8")
         files.append(f"{split}/{fname}")
-    return files
+    return files, recs, skips
 
 
 def _extract_ticker(rep, split: str, total: int) -> Callable[[int], None]:
@@ -308,7 +327,11 @@ def build_cosyvoice(model_dir: Path | None = None, rep=None, probe: Callable | N
         ext = extractor or make_extractor(model_dir)
         files: list[str] = []
         for split, recs in kept.items():
-            files += _write_split(out, split, recs, ext, shard_size, rep, loader)
+            f, recs, skips = _write_split(out, split, recs, ext, shard_size, rep, loader)
+            files += f
+            skipped += skips
+            kept[split] = recs
+            counts[split] = len(recs)
         _write_refs(out, [r for recs in kept.values() for r in recs], loader)
         return BuildResult(counts=counts, skipped=skipped, files=files)
 

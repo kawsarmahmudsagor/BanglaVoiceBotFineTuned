@@ -39,7 +39,7 @@ dependencies = [
   # Not in upstream requirements.txt but imported by cosyvoice / third_party/Matcha-TTS.
   "einops",
   # upstream parquet_opener reads shards with pyarrow .to_pandas()
-  "pandas",
+  "pandas>=2.2,<3",
   "scipy",
 ]
 

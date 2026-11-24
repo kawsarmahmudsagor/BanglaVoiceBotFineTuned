@@ -14,6 +14,9 @@ from mlops_backend.prepare.cosyvoice import (
 )
 
 
+LONG = lambda p: 2.0  # noqa: E731 - probe: every clip 2 s (the tiny fixtures are 0.5 s)
+
+
 def fake_extractor(path):
     return np.arange(4, dtype="float32"), [1, 2, 3]
 
@@ -58,7 +61,7 @@ def test_build_references_source_and_writes_parquet(tiny_tts_ds, tmp_path):
 
     _, rows = tiny_tts_ds(n=4)
     out = tmp_path / "out"
-    res = build_cosyvoice(extractor=fake_extractor, shard_size=2)({"train": rows[:3], "val": rows[3:]}, out)
+    res = build_cosyvoice(extractor=fake_extractor, probe=LONG, shard_size=2)({"train": rows[:3], "val": rows[3:]}, out)
     assert res.counts == {"train": 3, "val": 1} and not res.skipped
     assert not (out / "wavs").exists()
     scp = (out / "train" / "wav.scp").read_text(encoding="utf-8").splitlines()
@@ -85,7 +88,7 @@ def test_build_references_source_and_writes_parquet(tiny_tts_ds, tmp_path):
 def test_data_list_uses_final_dir_not_tmp(tiny_tts_ds, tmp_path):
     _, rows = tiny_tts_ds(n=2)
     out = tmp_path / "ds" / "spec.tmp-123"
-    build_cosyvoice(extractor=fake_extractor)({"train": rows}, out)
+    build_cosyvoice(extractor=fake_extractor, probe=LONG)({"train": rows}, out)
     lines = (out / "train" / "data.list").read_text(encoding="utf-8").splitlines()
     assert lines and all("tmp-" not in ln and str(tmp_path / "ds" / "spec") in ln for ln in lines)
 
@@ -95,7 +98,8 @@ def test_undecodable_audio_skipped(tiny_tts_ds, tmp_path):
     bad = tmp_path / "bad.wav"
     bad.write_bytes(b"not audio")
     rows[1] = {**rows[1], "audio_path": str(bad)}
-    probe = m.make_probe(lambda p, sr: (_ for _ in ()).throw(ValueError("x")))
+    real = m.make_probe(lambda p, sr: (_ for _ in ()).throw(ValueError("x")))
+    probe = lambda p: real(p) and 2.0  # noqa: E731 - real decodability probe, but long enough clips
     res = build_cosyvoice(extractor=fake_extractor, probe=probe)({"train": rows}, tmp_path / "o")
     assert res.counts["train"] == 2
     assert [s.reason for s in res.skipped] == ["undecodable audio: ValueError"]
@@ -104,7 +108,7 @@ def test_undecodable_audio_skipped(tiny_tts_ds, tmp_path):
 def test_empty_text_and_long_audio_skipped(tiny_tts_ds, tmp_path):
     _, rows = tiny_tts_ds(n=3)
     rows[0] = {**rows[0], "text": "   "}
-    probe = lambda p: 31.0 if str(p).endswith("t1.wav") else 0.5  # noqa: E731
+    probe = lambda p: 31.0 if str(p).endswith("t1.wav") else 2.0  # noqa: E731
     res = build_cosyvoice(extractor=fake_extractor, probe=probe)({"train": rows}, tmp_path / "o")
     assert sorted(s.reason for s in res.skipped) == ["duration 31.0 s > 30 s", "empty text"]
     assert res.counts["train"] == 1
@@ -118,7 +122,7 @@ def test_empty_split_raises(tmp_path):
 def test_stale_source_detected_on_cache_hit(tiny_tts_ds, tmp_path):
     _, rows = tiny_tts_ds(n=2)
     out = tmp_path / "out"
-    res = build_cosyvoice(extractor=fake_extractor)({"train": rows}, out)
+    res = build_cosyvoice(extractor=fake_extractor, probe=LONG)({"train": rows}, out)
 
     class Info:
         path = str(out)
@@ -153,6 +157,9 @@ def test_build_writes_tokens_embeddings_and_parquet(tiny_tts_ds, tmp_path):
     spk2emb = torch.load(d / "spk2embedding.pt")
     assert len(utt2emb) == 4 and len(utt2tok) == 4 and set(spk2emb) == {"a", "b"}
     assert np.asarray(utt2emb["t0"]).shape == (192,)
+    rows_pq = {r["utt"]: r for r in tab.to_pylist()}
+    first = sorted(rows_pq)[0]
+    assert rows_pq[first]["speech_token"] == utt2tok[first]
     assert len(utt2tok["t0"]) > 0 and max(utt2tok["t0"]) < 6561 + 200
 
 
@@ -163,10 +170,59 @@ def test_prepare_cosyvoice_writes_refs_and_params(run_dir, monkeypatch, tmp_path
     rd = run_dir("tts", "FunAudioLLM/Fun-CosyVoice3-0.5B-2512")
     cfg = __import__("app.core.contract", fromlist=["read_config"]).read_config(rd)
     monkeypatch.setattr(fam, "build_cosyvoice",
-                        lambda model_dir, rep=None: build_cosyvoice(extractor=fake_extractor))
+                        lambda model_dir, rep=None: build_cosyvoice(extractor=fake_extractor, probe=LONG))
     model_dir = tmp_path / "snap" / "abc123"
     model_dir.mkdir(parents=True)
     assert fam.prepare_cosyvoice(rd, cfg, None, download=lambda repo: model_dir) == 0
     refs = read_prepared_refs(rd)
     assert [r["role"] for r in refs] == ["train", "eval"]
     assert refs[0]["spec"]["params"]["model_revision"] == "abc123" and refs[0]["counts"]["train"] == 2
+
+
+def test_short_clip_reason(tiny_tts_ds, tmp_path):
+    _, rows = tiny_tts_ds(n=3)
+    probe = lambda p: 0.5 if str(p).endswith("t0.wav") else 2.0  # noqa: E731
+    res = build_cosyvoice(extractor=fake_extractor, probe=probe)({"train": rows}, tmp_path / "o")
+    assert [s.reason for s in res.skipped] == ["duration 0.5 s < 1 s"] and res.counts["train"] == 2
+
+
+def test_extraction_failure_skips_row_not_build(tiny_tts_ds, tmp_path):
+    _, rows = tiny_tts_ds(n=3)
+
+    def ext(path):
+        if path.endswith("t1.wav"):
+            raise IndexError("empty fbank")
+        return fake_extractor(path)
+
+    out = tmp_path / "o"
+    res = build_cosyvoice(extractor=ext, probe=LONG)({"train": rows}, out)
+    assert res.counts["train"] == 2
+    assert [(s.sample_id, s.reason) for s in res.skipped] == [("t1", "undecodable audio: IndexError")]
+    assert "t1" not in (out / "train" / "wav.scp").read_text(encoding="utf-8")
+
+
+def test_spk_embedding_is_mean_and_dtypes(tiny_tts_ds, tmp_path):
+    import pyarrow as pa
+
+    _, rows = tiny_tts_ds(n=4)  # speakers a, b, a, b
+    vals = {"t0": 1.0, "t1": 10.0, "t2": 3.0, "t3": 20.0}
+    ext = lambda path: (np.full(4, vals[Path(path).stem], dtype="float32"), [5, 6])  # noqa: E731
+    out = tmp_path / "o"
+    build_cosyvoice(extractor=ext, probe=LONG)({"train": rows}, out)
+    tab = __import__("pyarrow.parquet", fromlist=["x"]).read_table(next((out / "train").glob("parquet_*.tar")))
+    assert tab.schema.field("speech_token").type == pa.list_(pa.int64())
+    assert tab.schema.field("utt_embedding").type == pa.list_(pa.float32())
+    assert tab.schema.field("spk_embedding").type == pa.list_(pa.float32())
+    got = {r["utt"]: r["spk_embedding"][0] for r in tab.to_pylist()}
+    assert got == {"t0": 2.0, "t2": 2.0, "t1": 15.0, "t3": 15.0}
+
+
+def test_fallback_source_is_transcoded_to_flac_bytes():
+    import io
+
+    import soundfile as sf
+
+    loader = lambda p, sr: np.zeros(sr, dtype="float32")  # noqa: E731
+    data = m._audio_bytes({"audio_path": "/x/a.m4a", "transcode": True}, loader)
+    info = sf.info(io.BytesIO(data))
+    assert info.format == "FLAC" and info.samplerate == 16000 and info.channels == 1
