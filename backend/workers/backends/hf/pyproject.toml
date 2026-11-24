@@ -11,7 +11,8 @@ dependencies = [
   "accelerate",
   "evaluate",
   "huggingface_hub",
-  "ctranslate2",
+  # 4.6.3+ passes dtype= to from_pretrained; transformers 4.46.1 (parler pin) only knows torch_dtype.
+  "ctranslate2<4.6.3",
   "parler-tts",
   "descript-audio-codec",
 ]

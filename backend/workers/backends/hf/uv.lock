@@ -245,14 +245,15 @@ wheels = [
 
 [[package]]
 name = "ctranslate2"
-version = "4.9.1"
+version = "4.6.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
     { name = "pyyaml" },
+    { name = "setuptools" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2d/5c/62a25fc213679137a4ae8471c823f1c1643a7c79221d0d8f51a579e9ed34/ctranslate2-4.9.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:18fe1f6a241265b1269ad087f613d7b0fc0d8aac44b3e6eeb36285339918e336", size = 28286650, upload-time = "2026-11-22T10:06:45.032Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/47/14f4ce74ae900d609e127a6de03f364f8b9e10bd6729d29e8b199da71b05/ctranslate2-4.6.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:ff3a9714aa6a1ee8be6abda58fdd0ef819bb92f4da510e4bb65ab51ed62df64c", size = 38012473, upload-time = "2025-12-05T06:40:21.96Z" },
 ]
 
 [[package]]
@@ -855,7 +856,7 @@ dev = [
 requires-dist = [
     { name = "accelerate" },
     { name = "bangla-voice-backend", extras = ["prepare", "audio"], editable = "../../../" },
-    { name = "ctranslate2" },
+    { name = "ctranslate2", specifier = "<4.6.3" },
     { name = "datasets" },
     { name = "descript-audio-codec" },
     { name = "evaluate" },
