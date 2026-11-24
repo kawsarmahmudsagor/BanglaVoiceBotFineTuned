@@ -21,7 +21,6 @@ IN_SCOPE = {
     "indic-parler-tts": "hf",
     "indicconformer": "nemo",
     "bangla-conformer": "nemo",
-    "nemotron-3-5-asr-streaming": "nemo",
     "indicf5": "f5",
     "cosyvoice3": "cosyvoice",
 }

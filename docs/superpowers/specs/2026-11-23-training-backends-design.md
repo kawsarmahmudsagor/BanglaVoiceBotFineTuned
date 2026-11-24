@@ -20,7 +20,7 @@ This sub-project replaces build-order items 2–4 of the parent spec (§13) with
 | `hf` | asr | `wav2vec2-xls-r-300m` | `full` |
 | `hf` | asr | `mms-1b-all` | `adapter` |
 | `hf` | tts | `indic-parler-tts` | `full` |
-| `nemo` | asr | `indicconformer`, `bangla-conformer`, `nemotron-3-5-asr-streaming` | `full` |
+| `nemo` | asr | `indicconformer`, `bangla-conformer` | `full` |
 | `f5` | tts | `indicf5` | `full` |
 | `cosyvoice` | tts | `cosyvoice3` (experimental for Bangla, §16) | `full` |
 
@@ -176,7 +176,7 @@ Table-driven tests cover each rule.
 |---|---|---|---|
 | `unsloth` | LLM: `FastLanguageModel` with TRL `SFTTrainer`; LoRA, QLoRA (4-bit) or full. Whisper: `FastModel` with LoRA and `Seq2SeqTrainer`. | HF Trainer checkpoint dir | LLM: `merged-safetensors`, `gguf` (quantizations `q4_k_m`, `q8_0`, `f16`, chosen in the recipe). Whisper: `merged-safetensors`, `ct2` (via `ct2-transformers-converter`, `float16`). |
 | `hf` | Whisper full: `Seq2SeqTrainer`. wav2vec2: `Trainer` with CTC head on the new vocabulary. MMS: only the `ben` adapter weights train. Parler: the upstream training loop ported into a `Trainer`-style loop with the same callback. | HF Trainer checkpoint dir | `safetensors`; Whisper also `ct2`; MMS adapter also `adapter-safetensors`. |
-| `nemo` | `ASRModel.from_pretrained`/`restore_from`, Lightning trainer, `bf16-mixed`. CTC, RNNT and hybrid CTC-RNNT decoders. Nemotron keeps its cache-aware streaming config. | Lightning `.ckpt` | `nemo` |
+| `nemo` | `ASRModel.from_pretrained`/`restore_from`, Lightning trainer, `bf16-mixed`. CTC, RNNT and hybrid CTC-RNNT decoders. AI4Bharat's multilingual IndicConformer `.nemo` (fork-only `multilingual` tokenizer, multisoftmax heads) is converted on load to a Bangla-only stock model: shared encoder, the `bn` tokenizer, and the `bn` slices of the decoder embedding, joint and CTC heads. Nemotron 3.5 streaming was dropped (2026-11-24): its tokenizer has no Bangla characters, and a tokenizer swap is out of scope. | Lightning `.ckpt` | `nemo` |
 | `f5` | `f5_tts` `Trainer` from the IndicF5 checkpoint with frame-based batching. EMA kept. | `model_last.pt` | `f5-ckpt` (EMA weights, `vocab.txt`, per-speaker reference clip + transcript) |
 
 ### 7.2 Export manifest

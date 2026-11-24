@@ -9,7 +9,6 @@ from app.core.contract import read_config
 from mlops_backend import asr
 
 INDIC = "ai4bharat/indicconformer_stt_bn_hybrid_ctc_rnnt_large"
-NEMOTRON = "nvidia/nemotron-3.5-asr-streaming-0.6b"
 # Bangla transcripts without digits: bn_normalize maps "0" to "০", and tokenizers may lack the Bangla digits.
 BN_TEXTS = ["আমি বাংলায় কথা বলি", "আজ আকাশ পরিষ্কার", "তুমি কোথায় যাচ্ছ", "আমরা ভাত খাই"]
 
@@ -111,7 +110,7 @@ def test_hyp_texts():
 
 
 def test_exporter_copies_final(tmp_path, run_dir):
-    rd = run_dir("asr", NEMOTRON, export=["nemo"])
+    rd = run_dir("asr", INDIC, export=["nemo"])
     cfg = read_config(rd)
     final = rd.checkpoints_dir / "final"
     final.mkdir(parents=True)
@@ -132,7 +131,7 @@ def test_handlers_exposed():
 
 
 @pytest.mark.heavy
-@pytest.mark.parametrize("model", [INDIC, NEMOTRON])
+@pytest.mark.parametrize("model", [INDIC])
 def test_nemo_20_steps(run_dir, monkeypatch, tmp_path, model):
     """GPU VM only: 20 steps on the tiny dataset, eval with baseline, .nemo export."""
     from app.core.backend_kit import Reporter
@@ -162,7 +161,7 @@ def test_nemo_checkpoints_resume_and_warm_start(run_dir, monkeypatch, tmp_path):
     from app.core.contract import InitRef, RunDir, write_config
 
     hp = {"max_steps": 10, "save_steps": 5, "batch_size": 1, "grad_accum": 1, "learning_rate": 1e-5}
-    rd = run_dir("asr", INDIC, hp, method={"type": "full"}, texts=BN_TEXTS)  # Nemotron has no Bangla tokens
+    rd = run_dir("asr", INDIC, hp, method={"type": "full"}, texts=BN_TEXTS)
     cfg = read_config(rd)
     rep = Reporter(rd)
     assert asr.prepare(rd, cfg, rep) == 0

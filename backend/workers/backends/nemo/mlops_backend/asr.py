@@ -33,13 +33,26 @@ from .models import MODELS
 from .prepare.manifest import build_manifest, manifest_spec, tokenizer_hash
 
 
+def _restore_file(path: str):
+    """A .nemo file on CPU. AI4Bharat's multilingual IndicConformer is converted to a single-language (Bangla)
+    model on load, since stock NeMo cannot build its fork-only config (see multilingual.py)."""
+    from nemo.collections.asr.models import ASRModel
+
+    from .multilingual import multilingual_langs, read_nemo_config, restore_monolingual
+
+    cfg = read_nemo_config(path)
+    if multilingual_langs(cfg):
+        return restore_monolingual(path, cfg=cfg)
+    return ASRModel.restore_from(path, map_location="cpu")
+
+
 def restore_model(base_model: str):
     """Load the model on CPU. A local .nemo path is restored directly; a Hugging Face repo holding a .nemo file
     is downloaded into the hub cache ($HF_HOME/hub) first; anything else goes through from_pretrained."""
     from nemo.collections.asr.models import ASRModel
 
     if Path(base_model).is_file():
-        return ASRModel.restore_from(base_model, map_location="cpu")
+        return _restore_file(base_model)
     from huggingface_hub import snapshot_download
     from huggingface_hub.errors import HfHubHTTPError, RepositoryNotFoundError
 
@@ -50,7 +63,7 @@ def restore_model(base_model: str):
         local = None
     found = sorted(local.glob("*.nemo")) if local else []
     if found:
-        return ASRModel.restore_from(str(found[0]), map_location="cpu")
+        return _restore_file(str(found[0]))
     return ASRModel.from_pretrained(base_model, map_location="cpu")
 
 
