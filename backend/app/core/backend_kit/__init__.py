@@ -254,7 +254,7 @@ def main(handlers: dict[Phase, Handler], argv: list[str] | None = None) -> NoRet
     try:
         cfg = read_config(rd)
         code = int(handler(rd, cfg, Reporter(rd)))
-    except PrepareError as e:
+    except (PrepareError, TrainingDiverged) as e:  # their messages are user-facing as is (no class prefix)
         traceback.print_exc()
         _fail_status(rd, phase, str(e))
     except Exception as e:  # noqa: BLE001 - top-level boundary

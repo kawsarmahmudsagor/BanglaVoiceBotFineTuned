@@ -57,6 +57,17 @@ def test_main_prepare_error_message(run_dir_with_config):
     assert read_status(RunDir(run_dir_with_config)).message.startswith("no access to x/y")
 
 
+def test_main_nan_message_is_exact(run_dir_with_config):
+    def bad(rd, cfg, rep):
+        g = NanGuard()
+        for _ in range(3):
+            g.feed(float("nan"))
+    with pytest.raises(SystemExit) as e:
+        main({Phase.train: bad}, ["train", "--run-dir", str(run_dir_with_config)])
+    assert e.value.code == 1
+    assert read_status(RunDir(run_dir_with_config)).message == "loss is NaN; lower learning_rate"
+
+
 def test_main_oom_prints_marker(run_dir_with_config, capsys):
     class OutOfMemoryError(RuntimeError): ...
 
