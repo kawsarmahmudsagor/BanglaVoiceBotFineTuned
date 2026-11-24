@@ -34,7 +34,7 @@ def test_whisper_build_skips_long_audio(tmp_path):
     from datasets import load_from_disk
     ds = load_from_disk(str(out / "train"))
     assert len(ds) == 1
-    assert ds[0]["audio"] and ds.features["audio"].feature.dtype == "int16"
+    assert ds[0]["audio_path"].endswith("short.wav") and "audio" not in ds.column_names
     from app.core.backend_kit.whisper import WhisperCollator
     batch = WhisperCollator(proc)([ds[0]])
     assert batch["input_features"].shape[1] == proc.feature_extractor.feature_size

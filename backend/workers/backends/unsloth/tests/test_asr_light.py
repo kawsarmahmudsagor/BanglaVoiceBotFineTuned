@@ -15,7 +15,7 @@ def test_whisper_spec_includes_normalizer_version(run_dir):
     assert spec.family == "whisper" and spec.version == 1
     assert spec.params == {"base_model": WHISPER, "sample_rate": 16000,
                            "bn_normalize_version": BN_NORMALIZE_VERSION, "max_label_tokens": 448,
-                           "storage": "audio-int16"}
+                           "storage": "audio-ref"}
     other = whisper_spec(cfg.model_copy(update={"base_model": "mozilla-ai/whisper-large-v3-turbo-bn"}))
     assert other.hash() != spec.hash()
 
@@ -25,7 +25,7 @@ def test_whisper_module_import_is_light():
     assert "transformers" not in sys.modules and "datasets" not in sys.modules
 
 
-def _ex(row, *, audio_len=16000, load=None, tokens=5):
+def _ex(row, *, probed=1.0, probe=None, tokens=5):
     from app.core.backend_kit.whisper import row_to_example
     seen = {}
 
@@ -33,39 +33,50 @@ def _ex(row, *, audio_len=16000, load=None, tokens=5):
         seen["text"] = text
         return list(range(tokens))
 
-    out = row_to_example(row, load=load or (lambda p: [0.0] * audio_len), encode=lambda a: ("aud", len(a)),
-                         tokenize=tokenize)
-    return out, seen
+    return row_to_example(row, probe=probe or (lambda p: probed), tokenize=tokenize), seen
 
 
-def test_row_to_example_ok_normalizes_text():
-    out, seen = _ex({"audio_path": "a.wav", "text": "Hello, World!"})
-    assert out == {"audio": ("aud", 16000), "labels": [0, 1, 2, 3, 4]}
+def test_row_to_example_ok_stores_path_not_audio():
+    out, seen = _ex({"sample_id": "s", "audio_path": "a.wav", "text": "Hello, World!", "duration_s": 2.5})
+    assert out == {"sample_id": "s", "audio_path": "a.wav", "duration_s": 2.5, "labels": [0, 1, 2, 3, 4]}
     assert seen["text"] == "hello world"
 
 
+def test_row_to_example_uses_probe_duration_when_row_has_none():
+    out, _ = _ex({"audio_path": "a.wav", "text": "x"}, probed=3.25)
+    assert out["duration_s"] == 3.25
+
+
 def test_row_to_example_skips_long_audio():
-    out, _ = _ex({"audio_path": "a.wav", "text": "x"}, audio_len=35 * 16000)
-    assert out == "duration 35.0 s > 30 s"
+    assert _ex({"audio_path": "a.wav", "text": "x"}, probed=35.0)[0] == "duration 35.0 s > 30 s"
+    assert _ex({"audio_path": "a.wav", "text": "x", "duration_s": 35.0})[0] == "duration 35.0 s > 30 s"
 
 
 def test_row_to_example_allows_exactly_30s():
-    out, _ = _ex({"audio_path": "a.wav", "text": "x"}, audio_len=30 * 16000)
-    assert isinstance(out, dict)
+    assert isinstance(_ex({"audio_path": "a.wav", "text": "x"}, probed=30.0)[0], dict)
 
 
 def test_row_to_example_skips_too_many_label_tokens():
-    out, _ = _ex({"audio_path": "a.wav", "text": "x"}, tokens=449)
-    assert out == "449 label tokens > 448"
+    assert _ex({"audio_path": "a.wav", "text": "x"}, tokens=449)[0] == "449 label tokens > 448"
     assert isinstance(_ex({"audio_path": "a.wav", "text": "x"}, tokens=448)[0], dict)
 
 
-def test_row_to_example_undecodable_audio():
+def test_row_to_example_undecodable_audio_even_with_duration():
     def boom(path):
         raise RuntimeError("bad header")
 
-    out, _ = _ex({"audio_path": "a.wav", "text": "x"}, load=boom)
+    out, _ = _ex({"audio_path": "a.wav", "text": "x", "duration_s": 1.0}, probe=boom)
     assert out == "undecodable audio: RuntimeError"
+
+
+def test_probe_duration_reads_header_and_rejects_garbage(tmp_path, tiny_audio_ds):
+    from app.core.backend_kit.whisper import probe_duration
+    root, names = tiny_audio_ds()
+    assert abs(probe_duration(root / "files" / names[0]) - 0.5) < 1e-3
+    bad = tmp_path / "bad.wav"
+    bad.write_bytes(b"not audio")
+    with pytest.raises(Exception):
+        probe_duration(bad)
 
 
 def test_pad_labels_strips_decoder_start_and_pads():
@@ -74,45 +85,30 @@ def test_pad_labels_strips_decoder_start_and_pads():
     assert pad_labels([[9, 1], [8, 3, 4]], start_id=9) == [[9, 1, -100], [8, 3, 4]]  # only strip when all start
 
 
-def test_to_int16_clips_and_roundtrips():
-    from app.core.backend_kit.whisper import int16_to_float, to_int16
-    out = to_int16([0.0, 0.5, 2.0, -3.0])
-    assert out.dtype.name == "int16" and list(out) == [0, 16383, 32767, -32767]
-    assert abs(int16_to_float(out)[1] - 0.5) < 1e-3
-
-
-def test_batch_parts_pads_and_converts():
+def test_batch_parts_loads_paths_and_pads():
     from app.core.backend_kit.whisper import batch_parts
-    audios, labels = batch_parts([{"audio": [0, 16384], "labels": [9, 1, 2]},
-                                  {"audio": [32767], "labels": [9, 3]}], start_id=9)
+    seen = []
+    audios, labels = batch_parts([{"audio_path": "x.wav", "labels": [9, 1, 2]},
+                                  {"audio_path": "y.wav", "labels": [9, 3]}], 9,
+                                 loader=lambda p: seen.append(p) or [0.0])
+    assert seen == ["x.wav", "y.wav"] and audios == [[0.0], [0.0]]
     assert labels == [[1, 2], [3, -100]]
-    assert audios[0].dtype.name == "float32" and audios[0][1] == 0.5
-
-
-def test_iter_examples_marks_skips_and_keeps_ok():
-    from app.core.backend_kit.whisper import iter_examples
-
-    def load(p):
-        if p == "bad":
-            raise ValueError("x")
-        return [0.0] * (35 * 16000 if p == "long" else 16000)
-
-    rows = [{"sample_id": "a", "audio_path": "ok", "text": "x"}, {"sample_id": "b", "audio_path": "bad", "text": "x"},
-            {"sample_id": "c", "audio_path": "long", "text": "x"}]
-    out = list(iter_examples(rows, load, lambda a: [1], lambda t: [5]))
-    assert [(o["sample_id"], o["skip"]) for o in out] == [
-        ("a", ""), ("b", "undecodable audio: ValueError"), ("c", "duration 35.0 s > 30 s")]
-    assert out[0]["audio"] == [1] and out[1]["audio"] == [] and out[1]["labels"] == []
 
 
 def test_build_whisper_assembles_split_results(monkeypatch, tmp_path):
     from app.core.backend_kit import whisper as w
     from app.core.prepare import Skip
 
-    monkeypatch.setattr(w, "_make_fns", lambda processor, sr: ("fns",))
-    monkeypatch.setattr(w, "_write_split", lambda items, out, ctx: (
+    class Tok:
+        def set_prefix_tokens(self, **kw):
+            pass
+
+    class Proc:
+        tokenizer = Tok()
+
+    monkeypatch.setattr(w, "_write_split", lambda items, out, probe, tok: (
         len(items) - 1, [Skip(sample_id="b", split=out.name, reason="r")]))
-    res = w.build_whisper(object())({"train": [{}, {}], "val": [{}, {}, {}]}, tmp_path)
+    res = w.build_whisper(Proc())({"train": [{}, {}], "val": [{}, {}, {}]}, tmp_path)
     assert res.counts == {"train": 1, "val": 2} and res.files == ["train", "val"]
     assert [s.split for s in res.skipped] == ["train", "val"]
 
