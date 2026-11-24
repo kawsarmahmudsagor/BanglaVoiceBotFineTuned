@@ -143,7 +143,7 @@ def test_build_writes_tokens_embeddings_and_parquet(tiny_tts_ds, tmp_path):
     from mlops_backend.cosyvoice import download_model
 
     model_dir = download_model("FunAudioLLM/Fun-CosyVoice3-0.5B-2512")
-    _, rows = tiny_tts_ds(n=4)
+    _, rows = tiny_tts_ds(n=4, seconds=1.5)  # converter skips clips under 1 s
     out = tmp_path / "out"
     res = build_cosyvoice(model_dir=model_dir)({"train": rows}, out)
     assert res.counts == {"train": 4}
