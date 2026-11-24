@@ -5,11 +5,14 @@ unsloth is imported inside functions only. GGUF needs llama.cpp, which unsloth b
 """
 from __future__ import annotations
 
+import shutil
+import sys
 from pathlib import Path
 
 from app.core.backend_kit import export_all
 from app.core.contract import ExportArtifact, RunConfig, RunDir
 
+# method.gguf_quant (capabilities.json: q4_k_m | q8_0 | f16) defaults to q4_k_m when the recipe omits it.
 DEFAULT_GGUF_QUANT = "q4_k_m"
 
 
@@ -42,7 +45,10 @@ def find_gguf(out: Path, quant: str) -> Path:
         raise RuntimeError(f"gguf export produced no .gguf file under {out}")
     # unsloth may leave an intermediate f16/bf16 file next to the quantized one; prefer the requested quant.
     wanted = [p for p in found if quant.lower() in p.name.lower()]
-    return max(wanted or found, key=lambda p: p.stat().st_mtime)
+    pick = max(wanted or found, key=lambda p: p.stat().st_mtime)
+    if not wanted:
+        print(f"warning: no .gguf name contains '{quant}'; using {pick.name}", file=sys.stderr)
+    return pick
 
 
 def llm_exporters(rd: RunDir, cfg: RunConfig) -> dict:
@@ -73,6 +79,7 @@ def llm_exporters(rd: RunDir, cfg: RunConfig) -> dict:
     def gguf(out: Path) -> list[ExportArtifact]:
         model, tok = loaded()
         quant = gguf_quant(cfg)
+        shutil.rmtree(out.with_name(out.name + "_gguf"), ignore_errors=True)  # no stale sibling output
         model.save_pretrained_gguf(str(out), tok, quantization_method=quant)
         return [_artifact(rd, "gguf", find_gguf(out, quant), "llama-server")]
 

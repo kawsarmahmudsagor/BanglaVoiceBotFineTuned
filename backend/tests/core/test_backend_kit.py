@@ -272,3 +272,35 @@ def test_export_all_unknown_format_is_a_failure(tmp_path):
     assert export_all(rd, _export_cfg(["nope"]), Reporter(rd), {"a": _art("a")}) == 1
     code = export_all(rd, _export_cfg(["a", "nope"]), Reporter(rd), {"a": _art("a")})
     assert code == 0 and read_status(rd).message == "exported: a; failed: nope"
+
+
+def test_export_all_failed_reexport_removes_stale_manifest(tmp_path):
+    from app.core.backend_kit import export_all
+    from app.core.contract import read_export_manifest
+    rd = RunDir(tmp_path)
+    rd.ensure()
+    assert export_all(rd, _export_cfg(["a"]), Reporter(rd), {"a": _art("a")}) == 0
+    assert read_export_manifest(rd) is not None
+    assert export_all(rd, _export_cfg(["a"]), Reporter(rd), {"a": _boom}) == 1
+    assert read_export_manifest(rd) is None
+
+
+def test_export_all_failed_exporter_leaves_no_dir_and_fresh_dir(tmp_path):
+    from app.core.backend_kit import export_all
+    rd = RunDir(tmp_path)
+    rd.ensure()
+    (rd.export_dir / "a").mkdir(parents=True)
+    (rd.export_dir / "a" / "stale.bin").write_text("x")
+    seen = {}
+
+    def ok(out):
+        seen["stale"] = (out / "stale.bin").exists()
+        return _art("a")(out)
+
+    def partial(out):
+        (out / "half.bin").write_text("x")
+        raise RuntimeError("boom")
+
+    assert export_all(rd, _export_cfg(["a", "b"]), Reporter(rd), {"a": ok, "b": partial}) == 0
+    assert seen["stale"] is False
+    assert not (rd.export_dir / "b").exists()

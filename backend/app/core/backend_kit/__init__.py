@@ -8,6 +8,7 @@ import argparse
 import json
 import math
 import re
+import shutil
 import signal
 import sys
 import time
@@ -177,17 +178,20 @@ def export_all(rd: RunDir, cfg: RunConfig, rep: "Reporter",
     failed: list[str] = []
     artifacts: list[ExportArtifact] = []
     rd.export_dir.mkdir(parents=True, exist_ok=True)
+    rd.export_manifest_path.unlink(missing_ok=True)  # a failed re-export must not leave the old manifest
     for fmt in cfg.export:
         try:
             fn = exporters.get(fmt)
             if fn is None:
                 raise ValueError(f"unknown export format '{fmt}'")
             out = rd.export_dir / fmt
+            shutil.rmtree(out, ignore_errors=True)
             out.mkdir(parents=True, exist_ok=True)
             artifacts.extend(fn(out))
             done.append(fmt)
         except Exception:  # noqa: BLE001 - formats are independent
             traceback.print_exc()
+            shutil.rmtree(rd.export_dir / fmt, ignore_errors=True)
             failed.append(fmt)
     if not done:
         rep.status(Phase.export, message=f"export failed: {', '.join(failed)}")
