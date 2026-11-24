@@ -100,7 +100,7 @@ def _row(row, res, sid, out, encode, unk_id) -> tuple[str | None, dict | None]:
     if isinstance(res, Decoded):
         seconds = len(res.audio) / SAMPLE_RATE
     else:
-        seconds = float(row.get("duration_s") or res)
+        seconds = float(res or row.get("duration_s") or 0)
     if seconds > MAX_SECONDS:
         return f"duration {seconds:.1f} s > {MAX_SECONDS} s", None
     text = bn_normalize(row["text"], mode="asr")
@@ -108,11 +108,11 @@ def _row(row, res, sid, out, encode, unk_id) -> tuple[str | None, dict | None]:
         return "empty text", None
     if encode is not None and unk_id is not None and unk_id in encode(text):
         return f"tokenizer maps characters to <unk>: {_unk_chars(text, encode, unk_id)}", None
-    path = str(row["audio_path"])
+    path = str(Path(row["audio_path"]).resolve())
     if isinstance(res, Decoded):
         from app.core.backend_kit.audio import write_flac
 
         flac = out / "audio" / f"{sid}.flac"
         write_flac(flac, res.audio, SAMPLE_RATE)
-        path = str(flac)
+        path = str(flac.resolve())
     return None, {"audio_filepath": path, "duration": round(seconds, 3), "text": text}

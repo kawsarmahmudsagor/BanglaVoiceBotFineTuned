@@ -2,6 +2,7 @@
 progress reporting and the stale-path check. Light: soundfile and the audio helpers load inside functions."""
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -69,3 +70,20 @@ def progress_ticker(rep, total: int) -> Callable[[int], None]:
             rep.status(Phase.prepare, state["done"], total, f"prepared {state['done']}/{total} rows")
 
     return tick
+
+
+def first_last_lines(path: Path) -> list[dict]:
+    """First and last record of a JSONL file without parsing the rest (the last is read by seeking from the end)."""
+    with Path(path).open("rb") as f:
+        first = f.readline()
+        if not first.strip():
+            return []
+        end = f.seek(0, 2)
+        pos, tail = end, b""
+        while pos > 0 and tail.count(b"\n") < 2:
+            step = min(4096, pos)
+            pos -= step
+            f.seek(pos)
+            tail = f.read(step) + tail
+        last = [ln for ln in tail.splitlines() if ln.strip()][-1]
+    return [json.loads(first), __import__('json').loads(last)]

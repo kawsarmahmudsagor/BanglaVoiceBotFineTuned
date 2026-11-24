@@ -11,7 +11,9 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Literal
 
-from app.core.backend_kit.audio_refs import PROGRESS_EVERY, SAMPLE_RATE, probe_duration, probed_rows, progress_ticker  # noqa: F401
+from app.core.backend_kit.audio_refs import (  # noqa: F401
+    PROGRESS_EVERY, SAMPLE_RATE, first_last_lines, probe_duration, probed_rows, progress_ticker,
+)
 from app.core.prepare import BuildResult, PrepareError, PrepSpec, Skip
 from app.core.text import BN_NORMALIZE_VERSION, bn_normalize
 
@@ -130,20 +132,3 @@ def mms_vocab(processor) -> dict[str, int]:
 def read_jsonl(path: Path) -> list[dict]:
     with Path(path).open(encoding="utf-8") as f:
         return [json.loads(line) for line in f if line.strip()]
-
-
-def first_last_lines(path: Path) -> list[dict]:
-    """First and last record of a JSONL file without parsing the rest (the last is read by seeking from the end)."""
-    with Path(path).open("rb") as f:
-        first = f.readline()
-        if not first.strip():
-            return []
-        end = f.seek(0, 2)
-        pos, tail = end, b""
-        while pos > 0 and tail.count(b"\n") < 2:
-            step = min(4096, pos)
-            pos -= step
-            f.seek(pos)
-            tail = f.read(step) + tail
-        last = [ln for ln in tail.splitlines() if ln.strip()][-1]
-    return [json.loads(first), json.loads(last)]

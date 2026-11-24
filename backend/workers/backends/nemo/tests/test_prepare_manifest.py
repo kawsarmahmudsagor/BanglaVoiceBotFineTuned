@@ -88,3 +88,76 @@ def test_spec_includes_tokenizer_identity():
     assert manifest_spec(C, "aa").params["tokenizer_sha16"] == "aa"
     assert manifest_spec(C, "aa").params["storage"] == "audio-ref"
     assert manifest_spec(C, "aa").model_dump() != manifest_spec(C, "bb").model_dump()
+
+
+def test_duration_is_the_probed_file_duration(tmp_path):
+    res = build_manifest(None, None, probe=lambda p: 2.5)({"train": [arow("আ", dur=9.0)]}, tmp_path)
+    assert res.counts["train"] == 1
+    assert lines(tmp_path / "train.jsonl")[0]["duration"] == 2.5
+
+
+def test_duration_falls_back_to_row_when_probe_empty(tmp_path):
+    build_manifest(None, None, probe=lambda p: 0)({"train": [arow("আ", dur=3.0)]}, tmp_path)
+    assert lines(tmp_path / "train.jsonl")[0]["duration"] == 3.0
+
+
+def test_audio_filepath_is_resolved(tmp_path):
+    build_manifest(None, None, probe=ok)({"train": [arow("আ", str(tmp_path / "x" / ".." / "a.wav"))]}, tmp_path / "o")
+    from pathlib import Path
+
+    assert lines(tmp_path / "o" / "train.jsonl")[0]["audio_filepath"] == str((tmp_path / "a.wav").resolve())
+    assert Path(lines(tmp_path / "o" / "train.jsonl")[0]["audio_filepath"]).is_absolute()
+
+
+class FakeTok:
+    vocab = ["<unk>", "আ", "ক"]
+    unk_id = None
+
+    def token_to_id(self, t):
+        return self.vocab.index(t) if t in self.vocab else None
+
+
+def test_unk_id_derived_from_token():
+    from mlops_backend.asr import resolve_unk_id
+
+    assert resolve_unk_id(FakeTok(), "m") == 0
+
+
+def test_unk_id_missing_raises():
+    import pytest
+
+    from app.core.prepare import PrepareError
+    from mlops_backend.asr import resolve_unk_id
+
+    class T:
+        unk_id = None
+
+    with pytest.raises(PrepareError, match="tokenizer of m has no unk id; cannot guard unknown characters"):
+        resolve_unk_id(T(), "m")
+
+
+def test_tokenizer_identity_follows_vocab():
+    from mlops_backend.asr import tokenizer_identity
+
+    class A:
+        vocab = ["a", "b"]
+
+    class B:
+        vocab = ["a", "c"]
+
+    assert tokenizer_identity(A()) == tokenizer_identity(A()) != tokenizer_identity(B())
+
+
+def test_cache_hit_checks_audio_refs(tmp_path):
+    import pytest
+
+    from mlops_backend.asr import check_manifest_refs
+
+    (tmp_path / "train.jsonl").write_text(
+        json.dumps({"audio_filepath": str(tmp_path / "gone.wav"), "duration": 1, "text": "আ"}) + "\n",
+        encoding="utf-8")
+    info = type("I", (), {"path": str(tmp_path), "files": ["train.jsonl"]})()
+    with pytest.raises(RuntimeError, match="missing audio"):
+        check_manifest_refs(info)
+    (tmp_path / "gone.wav").write_bytes(b"x")
+    check_manifest_refs(info)
