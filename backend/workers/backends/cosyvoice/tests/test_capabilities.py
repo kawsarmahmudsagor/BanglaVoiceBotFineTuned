@@ -37,7 +37,7 @@ def test_methods_exports_and_hparams():
     comp = hp["components"]
     assert comp["type"] == "array" and comp["minItems"] == 1 and comp["uniqueItems"] is True
     assert comp["items"]["enum"] == ["llm", "flow", "hifigan"]
-    assert comp["default"] == ["llm", "flow"]
+    assert comp["default"] == ["llm"]
     assert hp["learning_rate"]["default"] == 1e-5
     assert hp["epochs"]["default"] == 10
     assert hp["max_frames_in_batch"]["default"] == 2000

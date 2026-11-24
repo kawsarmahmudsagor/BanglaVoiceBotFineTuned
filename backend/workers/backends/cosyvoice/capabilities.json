@@ -45,8 +45,7 @@
                 "minItems": 1,
                 "uniqueItems": true,
                 "default": [
-                  "llm",
-                  "flow"
+                  "llm"
                 ]
               },
               "learning_rate": {

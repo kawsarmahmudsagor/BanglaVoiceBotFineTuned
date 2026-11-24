@@ -53,7 +53,7 @@ BACKEND = "cosyvoice"
 CKPT_FORMAT = "cosyvoice-pt"  # `final/` only: the three weight files CosyVoice3 loads
 COMPONENT_FORMAT = "cosyvoice-component"  # one component's weights; not a warm-start source (resolve_init rejects it)
 COMPONENTS = ("llm", "flow", "hifigan")
-DEFAULT_COMPONENTS = ("llm", "flow")
+DEFAULT_COMPONENTS = ("llm",)  # upstream examples/libritts/cosyvoice3 trains the LLM only; flow is opt-in
 WEIGHT_FILE = {"llm": "llm.pt", "flow": "flow.pt", "hifigan": "hift.pt"}
 AUX_FILES = ("cosyvoice3.yaml", "speech_tokenizer_v3.onnx", "campplus.onnx")
 AUX_DIR = "CosyVoice-BlankEN"
@@ -64,7 +64,7 @@ PREFETCH = 20
 # ---- pure helpers (light-testable) -------------------------------------------------------------------------------
 
 def resolve_components(hp: dict) -> list[str]:
-    """The requested components in training order (default llm, flow)."""
+    """The requested components in training order (default llm only)."""
     return plan_components(list(hp.get("components") or DEFAULT_COMPONENTS), [])
 
 

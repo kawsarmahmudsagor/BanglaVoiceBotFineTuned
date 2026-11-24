@@ -34,7 +34,7 @@ def test_component_order_and_resume_skip():
 
 
 def test_resolve_components_default_and_requested():
-    assert resolve_components({}) == ["llm", "flow"]
+    assert resolve_components({}) == ["llm"]
     assert resolve_components({"components": ["hifigan", "llm"]}) == ["llm", "hifigan"]
 
 
