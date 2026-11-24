@@ -107,7 +107,8 @@ def _filter_label(f: Filter) -> str:
     return f"{f.column} == {f.keep}"
 
 
-def _apply(df: pd.DataFrame, f: Filter) -> pd.DataFrame:
+def _apply(df: pd.DataFrame, f: Filter, bounds: tuple[float, float] | None = None) -> pd.DataFrame:
+    """Apply one filter. A Percentile filter takes its absolute `bounds` (see `_percentile_bounds`)."""
     s = df[f.column]
     if isinstance(f, Range):
         mask = pd.Series(True, index=df.index)
@@ -117,9 +118,26 @@ def _apply(df: pd.DataFrame, f: Filter) -> pd.DataFrame:
             mask &= (s < f.max) if f.max_exclusive else (s <= f.max)
         return df[mask.fillna(False)]
     if isinstance(f, Percentile):
-        lo, hi = s.quantile(f.lo / 100), s.quantile(f.hi / 100)
+        lo, hi = bounds if bounds is not None else (s.quantile(f.lo / 100), s.quantile(f.hi / 100))
         return df[((s >= lo) & (s <= hi)).fillna(False)]
     return df[(s.astype("boolean") == f.keep).fillna(False)]
+
+
+def _base_population(df: pd.DataFrame) -> pd.Series:
+    """Rows with a valid (non-error) text and audio_stats row that are not empty_asr: the percentile population."""
+    ok = ~df["empty_asr"].fillna(True).astype(bool)
+    for step in ALWAYS_STEPS:
+        ok &= df[f"_has_{step}"] & df[f"_error_{step}"].isna()
+    return ok
+
+
+def _percentile_bounds(df: pd.DataFrame, f: Percentile) -> tuple[float | None, float | None]:
+    """Absolute cut-offs over the fixed base population, so they do not move with whichever later step files
+    exist or how far they have got (a partial cer file, repeated `--only-profile` stages). NaN values (a later
+    step that has not scored the row) are ignored by the quantile."""
+    s = df.loc[_base_population(df), f.column].astype("float64")
+    lo, hi = s.quantile(f.lo / 100), s.quantile(f.hi / 100)
+    return (None if pd.isna(lo) else float(lo)), (None if pd.isna(hi) else float(hi))
 
 
 def _hours(df: pd.DataFrame) -> float:
@@ -241,28 +259,47 @@ def select(
     if any(f.column == "speech_span_s" for f in profile.filters):
         df["speech_span_s"] = [speech_span_s(sg, d) for sg, d in zip(df["speech_segments"], df["dur"])]
 
+    # Percentile cut-offs first, over the fixed population, before any other step file can shrink it.
+    bounds = {id(f): _percentile_bounds(df, f) for f in profile.filters if isinstance(f, Percentile)}
+
     report_steps: list[dict] = []
 
-    def run(label: str, fn) -> None:
+    def run(label: str, fn, **extra) -> None:
         nonlocal df
         before = df
         df = fn(df)
         report_steps.append({
             "filter": label, "rows_before": len(before), "rows_after": len(df),
-            "hours_before": _hours(before), "hours_after": _hours(df),
+            "hours_before": _hours(before), "hours_after": _hours(df), **extra,
         })
         if df.empty:
             raise SelectError(f"profile '{profile.name}': filter '{label}' left no rows")
 
+    def not_scored(d: pd.DataFrame) -> pd.DataFrame:
+        """Rows absent from a step file the profile needs (the step has not reached them yet)."""
+        missing = pd.Series(False, index=d.index)
+        for step in steps_loaded:
+            missing |= ~d[f"_has_{step}"]
+        return d[~missing]
+
     def step_errors(d: pd.DataFrame) -> pd.DataFrame:
+        """Rows present in a step file with `error` set, and empty_asr rows."""
         bad = d["empty_asr"].fillna(True).astype(bool)
         for step in steps_loaded:
-            bad |= ~d[f"_has_{step}"] | d[f"_error_{step}"].notna()
+            bad |= d[f"_error_{step}"].notna()
         return d[~bad]
 
+    run("not_scored", not_scored)
     run("step_errors", step_errors)
     for f in profile.filters:
-        run(_filter_label(f), lambda d, f=f: _apply(d, f))
+        if isinstance(f, Percentile):
+            lo, hi = bounds[id(f)]
+            nan = float("nan")
+            run(_filter_label(f), lambda d, f=f, lo=lo, hi=hi: _apply(d, f, (nan if lo is None else lo,
+                                                                              nan if hi is None else hi)),
+                lo_value=lo, hi_value=hi)
+        else:
+            run(_filter_label(f), lambda d, f=f: _apply(d, f))
     if profile.drop_latin:
         run("has_latin", lambda d: d[~d["has_latin"].astype(bool)])
 

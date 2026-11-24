@@ -73,11 +73,11 @@ def test_each_filter_removes_expected_rows(tmp_path):
     res = select(wd, p)
     assert sorted(res.rows["id"]) == ["r7", "r8", "r9"]
     s = res.report["steps"]
-    assert [x["filter"] for x in s][0] == "step_errors"
+    assert [x["filter"] for x in s][:2] == ["not_scored", "step_errors"]
     removed = [x["rows_before"] - x["rows_after"] for x in s]
-    assert removed == [2, 2, 2, 1, 0]  # last: train_val_overlap
+    assert removed == [0, 2, 2, 2, 1, 0]  # last: train_val_overlap
     assert s[0]["rows_before"] == 10 and s[-1]["rows_after"] == 3
-    assert s[1]["filter"].startswith("dur")
+    assert s[2]["filter"].startswith("dur")
     assert s[0]["hours_before"] == pytest.approx((8 * 5.0 + 0.2 + 40.0) / 3600)
     assert (tmp_path / "selection" / "t.parquet").exists()
     assert json.loads((tmp_path / "selection" / "t.report.json").read_text())["steps"] == s
@@ -273,3 +273,52 @@ def test_cli_override_flag(tmp_path):
     rep = json.loads((tmp_path / "selection" / "asr-v1.report.json").read_text(encoding="utf-8"))
     assert rep["overrides"] == ["dur.min=0.1", "cps.lo=0"]
     assert main(["select", "--work", str(tmp_path), "--profile", "asr-v1", "--override", "nope.min=1"]) == 1
+
+
+def _cer_file(wd: WorkDir, ids: list[str], errors: dict[str, str] | None = None) -> None:
+    errors = errors or {}
+    cer = pd.DataFrame({"id": ids, "cer": [None if i in errors else 0.1 for i in ids],
+                        "error": [errors.get(i) for i in ids]})
+    StepFile.write(wd.step_path("cer_lab"), cer, step="cer_lab", version=1, params={})
+
+
+CPS_LABEL = "cps within p10-p90"
+
+
+def test_percentile_bounds_fixed_population(tmp_path):
+    """Bounds come from the rows with valid text + audio_stats, whatever later step files cover."""
+    n = 20
+    wd = make_wd(tmp_path, {i: {"dur": 1.0 + i} for i in range(n)}, n=n)
+    pct = Percentile(column="cps", lo=10, hi=90)
+    alone = select(wd, prof(filters=[pct]), write=False)
+    ids = [f"r{i}" for i in range(n)]
+    _cer_file(wd, ids[: n // 2])  # a partial later-step file: the first half only (the high-cps rows)
+    partial = select(wd, prof(filters=[Range(column="cer", max=0.5), pct]), labeller="lab", write=False)
+    a, b = steps(alone)[CPS_LABEL], steps(partial)[CPS_LABEL]
+    assert (a["lo_value"], a["hi_value"]) == (b["lo_value"], b["hi_value"])
+    full = pd.Series([len(f"{BASE['text']} {i}") / (1.0 + i) for i in range(n)])
+    assert a["lo_value"] == pytest.approx(full.quantile(0.1)) and a["hi_value"] == pytest.approx(full.quantile(0.9))
+    # the partial run keeps exactly the scored rows that pass the population-wide bounds
+    assert set(partial.rows["id"]) == set(alone.rows["id"]) & set(ids[: n // 2])
+
+
+def test_percentile_bounds_ignore_errored_rows(tmp_path):
+    wd = make_wd(tmp_path, {0: {"dur": 0.01, "error": "boom"}, 1: {"dur": 0.02, "empty_asr": True}})
+    res = select(wd, prof(filters=[Percentile(column="cps", lo=0, hi=100)]), write=False)
+    s = steps(res)["cps within p0-p100"]
+    assert s["hi_value"] == pytest.approx(max(len(f"{BASE['text']} {i}") / 5.0 for i in range(2, 10)))
+    assert isinstance(s["lo_value"], float)
+    json.dumps(res.report, allow_nan=False)  # plain JSON numbers
+
+
+def test_not_scored_and_step_errors_counted_separately(tmp_path):
+    wd = make_wd(tmp_path, {0: {"error": "boom"}, 1: {"empty_asr": True}})
+    ids = [f"r{i}" for i in range(10)]
+    _cer_file(wd, ids[:7], errors={"r2": "decode failed"})  # r7..r9 not scored, r2 errored
+    res = select(wd, prof(filters=[Range(column="cer", max=0.5)]), labeller="lab", write=False)
+    s = steps(res)
+    assert s["not_scored"]["rows_before"] - s["not_scored"]["rows_after"] == 3
+    assert s["not_scored"]["hours_before"] - s["not_scored"]["hours_after"] == pytest.approx(3 * 5.0 / 3600)
+    assert s["step_errors"]["rows_before"] - s["step_errors"]["rows_after"] == 3  # r0, r1 (empty_asr), r2
+    assert s["step_errors"]["hours_before"] - s["step_errors"]["hours_after"] == pytest.approx(3 * 5.0 / 3600)
+    assert sorted(res.rows["id"]) == ["r3", "r4", "r5", "r6"]
