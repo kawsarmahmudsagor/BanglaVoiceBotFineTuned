@@ -47,6 +47,9 @@ services:
     build:
       context: ./backend
     restart: unless-stopped
+    # Run as the VM user (like mlflow) so the API can write to DATA_ROOT when that user is not uid 1000.
+    # run-vm.sh and dev.sh export UID and GID.
+    user: "${UID:-1000}:${GID:-1000}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -55,6 +58,7 @@ services:
       sh -c "alembic -c alembic.ini upgrade head &&
       uvicorn app.app:create_app --factory --host 0.0.0.0 --port 8000"
     environment:
+      HOME: /tmp
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mlops}:${POSTGRES_PASSWORD}@postgres:5432/mlops
       DATA_ROOT: ${DATA_ROOT}
       BACKENDS_ROOT: ${REPO_ROOT:?set REPO_ROOT in .env}/backend/workers/backends

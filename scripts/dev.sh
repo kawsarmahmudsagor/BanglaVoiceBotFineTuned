@@ -4,6 +4,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 . scripts/lib/env.sh
+# the api and mlflow containers run as this user, so files under DATA_ROOT stay writable by it
+export UID
+GID="$(id -g)"
+export GID
 
 if [ -z "${DATA_ROOT:-}" ]; then
   echo "DATA_ROOT is not set. Copy .env.example to .env and edit it." >&2
