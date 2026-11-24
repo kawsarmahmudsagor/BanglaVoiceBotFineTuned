@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pandas as pd
+import pytest
 import soundfile as sf
 
 from dataprep.__main__ import main
@@ -89,3 +92,44 @@ def test_resume_skips_done(tmp_path, monkeypatch):
     main(args)
     assert calls == []
     assert len(pd.read_parquet(wd.step_path("audio_stats"))) == 2
+
+
+def test_checkpoint_size_default_and_explicit():
+    from dataprep.steps._runner import checkpoint_size
+
+    assert checkpoint_size(10, None) == 4096
+    assert checkpoint_size(1_000_000, None) == 20_000  # <= 50 rewrites
+    assert checkpoint_size(1_000_000, 64) == 64  # transcribe's explicit value wins
+
+
+def _fake_stats(row: dict) -> dict:
+    return {"id": row["id"], "dur": 1.0, "src_sr": 16000, "clip_frac": 0.0, "silence_share": 0.0, "lufs": -23.0}
+
+
+def test_interrupt_keeps_checkpointed_rows_and_prints_progress(tmp_path, monkeypatch, capsys):
+    """Checkpointing is on by default for every step: chunk = max(4096, ceil(n/50))."""
+    import dataprep.steps.audio_stats as step
+
+    n = 5000  # one 4096-row chunk, then an interrupt inside the second
+    wd = WorkDir(tmp_path / "w")
+    _write_clips(wd, {f"r{i:05d}": "x.wav" for i in range(n)})
+    calls = {"n": 0}
+
+    def flaky(row):
+        calls["n"] += 1
+        if calls["n"] > 4500:
+            raise KeyboardInterrupt
+        return _fake_stats(row)
+
+    monkeypatch.setattr(step, "_row", flaky)
+    with pytest.raises(KeyboardInterrupt):
+        step.run(wd, workers=1)
+    kept = pd.read_parquet(wd.step_path("audio_stats"))
+    assert len(kept) == 4096 and kept["error"].isna().all()
+    err = capsys.readouterr().err
+    assert re.search(r"audio_stats: 4096/5000 rows .*rows/s.*ETA", err), err
+
+    monkeypatch.setattr(step, "_row", _fake_stats)
+    assert step.run(wd, workers=1) == n - 4096  # resume computes only the remainder
+    assert len(pd.read_parquet(wd.step_path("audio_stats"))) == n
+    assert "904/904 rows (100%)" in capsys.readouterr().err  # totals count this run's rows

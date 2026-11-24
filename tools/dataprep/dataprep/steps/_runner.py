@@ -5,6 +5,9 @@ A default rerun computes only ids not yet in the step file; rows with `error` se
 """
 from __future__ import annotations
 
+import math
+import sys
+import time
 from collections.abc import Callable
 
 import pandas as pd
@@ -34,8 +37,9 @@ def run_step(
 
     `only_ids` restricts the clips to compute (rows outside it are simply not scored). `rows_fn` replaces
     row_fn/workers: it receives rows to compute and returns one result dict per row (batched steps).
-    `checkpoint_every` processes rows in chunks of that size and rewrites the step file (merged with previous
-    rows) after each chunk, so an interrupted run keeps finished chunks. None writes once at the end.
+    Rows are always processed in chunks and the step file is rewritten (merged with previous rows) after each
+    chunk, so an interrupted run keeps finished chunks; a progress line (rows done/total, rows/s, ETA) goes to
+    stderr after each chunk. The chunk is `checkpoint_every` when given, else max(4096, ceil(rows/50)).
     """
     params = params or {}
     clips = StepFile.read(wd.clips_path, step="import", version=1)
@@ -61,13 +65,35 @@ def run_step(
         StepFile.write(path, out.astype(dtypes), step=step, version=version, params=params)
         return new_df
 
-    size = checkpoint_every or len(todo_rows) or 1
+    total = len(todo_rows)
+    size = checkpoint_size(total, checkpoint_every)
     parts: list[pd.DataFrame] = []
-    chunks = [todo_rows[i : i + size] for i in range(0, len(todo_rows), size)] or [[]]
+    chunks = [todo_rows[i : i + size] for i in range(0, total, size)] or [[]]
+    start, done = time.perf_counter(), 0
     for chunk in chunks:
         parts.append(pd.DataFrame(compute(chunk)).reindex(columns=columns))
-        if checkpoint_every:
-            write(parts)
-    if not checkpoint_every:
         write(parts)
+        done += len(chunk)
+        if total:
+            _progress(step, done, total, time.perf_counter() - start)
     return sum(len(p) for p in parts)
+
+
+DEFAULT_MIN_CHUNK = 4096
+MAX_CHECKPOINTS = 50
+
+
+def checkpoint_size(total: int, checkpoint_every: int | None) -> int:
+    """Rows per checkpoint: `checkpoint_every` when given, else max(4096, ceil(total/50)) (<= ~50 rewrites)."""
+    if checkpoint_every:
+        return checkpoint_every
+    return max(DEFAULT_MIN_CHUNK, math.ceil(total / MAX_CHECKPOINTS))
+
+
+def _progress(step: str, done: int, total: int, elapsed: float) -> None:
+    rate = done / elapsed if elapsed > 0 else float("inf")
+    eta = (total - done) / rate if rate not in (0, float("inf")) else 0.0
+    m, s = divmod(int(round(eta)), 60)
+    h, m = divmod(m, 60)
+    print(f"{step}: {done}/{total} rows ({100 * done / total:.0f}%), {rate:.1f} rows/s, ETA {h:d}:{m:02d}:{s:02d}",
+          file=sys.stderr, flush=True)
