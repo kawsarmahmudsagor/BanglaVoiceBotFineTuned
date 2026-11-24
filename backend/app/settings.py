@@ -2,7 +2,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # backend/app/settings.py -> repo root; the worker and API read `<repo>/.env` regardless of cwd.
@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     cancel_grace_s: float = 60
     poll_interval_s: float = 2
     hf_token: SecretStr | None = None  # env HF_TOKEN; handed to backend subprocesses, never logged
+
+    import_root: Path | None = None  # filled by the validator below; curated datasets on the server; default <data_root>/import
+
+    @model_validator(mode="after")
+    def _default_import_root(self) -> "Settings":
+        if self.import_root is None:
+            self.import_root = self.data_root / "import"
+        return self
 
     @property
     def incoming_dir(self) -> Path:

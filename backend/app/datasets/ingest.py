@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import unicodedata
 import uuid
@@ -105,6 +106,50 @@ def _locate(root: Path, rel: str) -> Path:
     raise FileNotFoundError(rel)
 
 
+def _publish(report: Report, rows: list[dict], dest_root: Path, staging: Path, transfer, disk_check=None) -> IngestResult:
+    """Everything after validation: hash, disk check, version dir, manifest.
+
+    `transfer(row, dst)` places one audio file (None for llm-sft); `disk_check(rows)` returns an Issue when
+    the files that must be copied do not fit (None skips the check).
+    """
+    if report.ok and not rows:
+        report.errors.append(Issue("no_samples", "upload contains no samples"))
+    if not report.ok:
+        return IngestResult(report, None, None, 0)
+
+    given = {"train": 0, "val": 0, "test": 0, "unassigned": 0}
+    for r in rows:
+        given[r.get("split") or "unassigned"] += 1
+    report.stats["given_splits"] = given
+    report.stats["split_source"] = "dataset" if given["unassigned"] < len(rows) else "none"
+    report.stats["n_samples"] = len(rows)
+
+    vhash = _version_hash(rows)[:16]
+    final = dest_root / vhash
+    if final.exists():  # identical content already ingested
+        return IngestResult(report, vhash, final, len(rows))
+
+    if disk_check is not None:
+        issue = disk_check(rows)
+        if issue is not None:
+            report.errors.append(issue)
+            return IngestResult(report, None, None, 0)
+
+    build = staging / "version"
+    build.mkdir()
+    if transfer is not None:
+        for r in rows:
+            dst = build / "files" / r["file"]
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            transfer(r, dst)
+    ordered = sorted(rows, key=lambda r: r["sample_id"])
+    columns = list(dict.fromkeys(k for r in ordered for k in r))  # union of keys, first-seen order
+    table = pa.table({c: [r.get(c) for r in ordered] for c in columns})
+    pq.write_table(table, build / "manifest.parquet")
+    build.replace(final)
+    return IngestResult(report, vhash, final, len(rows))
+
+
 def ingest(upload_file: Path, task: str, dest_root: Path, disk_min_gb: float = 0, workers: int = 1) -> IngestResult:
     upload_file = Path(upload_file)
     dest_root = Path(dest_root)
@@ -127,39 +172,93 @@ def ingest(upload_file: Path, task: str, dest_root: Path, disk_min_gb: float = 0
             root = _extract(upload_file, extracted, report, disk_min_gb)
             if root is not None:
                 report, rows = validate_audio(root, task, workers=workers)
-        if report.ok and not rows:
-            report.errors.append(Issue("no_samples", "upload contains no samples"))
-        if not report.ok:
-            return IngestResult(report, None, None, 0)
-
-        given = {"train": 0, "val": 0, "test": 0, "unassigned": 0}
-        for r in rows:
-            given[r.get("split") or "unassigned"] += 1
-        report.stats["given_splits"] = given
-        report.stats["split_source"] = "dataset" if given["unassigned"] < len(rows) else "none"
-        report.stats["n_samples"] = len(rows)
-
-        vhash = _version_hash(rows)[:16]
-        final = dest_root / vhash
-        if final.exists():  # identical content already ingested
-            return IngestResult(report, vhash, final, len(rows))
-
-        build = staging / "version"
-        build.mkdir()
-        if root is not None:
-            for r in rows:
-                dst = build / "files" / r["file"]
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(_locate(root, r["file"])), str(dst))
-        ordered = sorted(rows, key=lambda r: r["sample_id"])
-        columns = list(dict.fromkeys(k for r in ordered for k in r))  # union of keys, first-seen order
-        table = pa.table({c: [r.get(c) for r in ordered] for c in columns})
-        pq.write_table(table, build / "manifest.parquet")
-        build.replace(final)
-        return IngestResult(report, vhash, final, len(rows))
+        if root is None:
+            return _publish(report, rows, dest_root, staging, None)
+        return _publish(report, rows, dest_root, staging,
+                        lambda r, dst: shutil.move(str(_locate(root, r["file"])), str(dst)))
     finally:
         shutil.rmtree(staging, ignore_errors=True)
         try:
             (dest_root / ".staging").rmdir()
         except OSError:
             pass
+
+
+def _link_or_copy_ro(src: Path, dst: Path) -> None:
+    """Hard link src to dst, falling back to a copy (cross-device); the version file is then read-only."""
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+    os.chmod(dst, 0o444)
+
+
+def ingest_dir(src: Path, task: str, dest_root: Path, disk_min_gb: float = 0, workers: int = 1) -> IngestResult:
+    """Ingest an audio dataset directory in place: validate it, then hard-link (or copy) its files.
+
+    Nothing under `src` is modified, moved or deleted.
+    """
+    src = Path(src)
+    dest_root = Path(dest_root)
+    if task not in ("asr", "tts"):
+        return IngestResult(Report(errors=[Issue(
+            "unsupported_format", f"local-path ingest supports asr and tts, not '{task}'")]), None, None, 0)
+
+    staging = dest_root / ".staging" / uuid.uuid4().hex
+    staging.mkdir(parents=True)
+    try:
+        report, rows = validate_audio(src, task, workers=workers)
+
+        def disk_check(rs: list[dict]) -> Issue | None:
+            # Hard links on the same filesystem cost nothing; otherwise every file is copied.
+            if os.stat(src).st_dev == os.stat(dest_root).st_dev:
+                return None
+            need = sum(_locate(src, r["file"]).stat().st_size for r in rs)
+            room = shutil.disk_usage(dest_root).free - disk_min_gb * GB
+            if need <= room:
+                return None
+            return Issue(
+                "insufficient_disk",
+                f"dataset needs {need / GB:.1f} GB of copies but only {max(room, 0) / GB:.1f} GB is free "
+                f"above the {disk_min_gb:g} GB reserve",
+            )
+
+        return _publish(report, rows, dest_root, staging,
+                        lambda r, dst: _link_or_copy_ro(_locate(src, r["file"]), dst), disk_check)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+        try:
+            (dest_root / ".staging").rmdir()
+        except OSError:
+            pass
+
+
+class ImportPathError(Exception):
+    pass
+
+
+def resolve_import_path(raw: str, import_root: Path) -> Path:
+    """Resolve `raw` (relative to import_root, or absolute) to a directory inside import_root.
+
+    Raises ImportPathError when it escapes the root (including via `..` or symlinks) or is not a directory,
+    and FileNotFoundError when it is inside the root but missing. A missing path outside the root is an
+    ImportPathError, so existence outside the root is never disclosed.
+    """
+    root = Path(import_root).resolve()
+    p = Path(raw)
+    cand = p if p.is_absolute() else root / p
+    try:
+        resolved = cand.resolve(strict=True)
+    except (FileNotFoundError, NotADirectoryError):
+        # lexically normalised check so a missing path outside the root still reads as an escape
+        lexical = Path(os.path.normpath(cand))
+        if not lexical.is_relative_to(root):
+            raise ImportPathError("path is outside the import root") from None
+        raise FileNotFoundError(raw) from None
+    except (OSError, RuntimeError) as e:
+        raise ImportPathError(f"cannot resolve path: {e}") from e
+    if not resolved.is_relative_to(root):
+        raise ImportPathError("path is outside the import root")
+    if not resolved.is_dir():
+        raise ImportPathError("path is not a directory")
+    return resolved

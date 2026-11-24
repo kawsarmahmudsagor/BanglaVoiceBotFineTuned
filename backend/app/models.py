@@ -53,7 +53,8 @@ class DatasetVersion(Base):
 class Ingest(Base):
     __tablename__ = "ingest"
     id: Mapped[int] = mapped_column(primary_key=True)
-    upload_id: Mapped[str] = mapped_column(ForeignKey("upload.id"))
+    upload_id: Mapped[str | None] = mapped_column(ForeignKey("upload.id"), nullable=True)
+    source_path: Mapped[str | None] = mapped_column(String, nullable=True)
     dataset_name: Mapped[str] = mapped_column(String)
     task: Mapped[str] = mapped_column(String)
     eval_only: Mapped[bool] = mapped_column(default=False)

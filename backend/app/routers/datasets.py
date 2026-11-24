@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 from pathlib import Path
 from typing import Literal
 
@@ -11,6 +12,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.splits import SplitConfig, assign, for_source
+from ..datasets.ingest import ImportPathError, resolve_import_path
+from ..datasets.validate_audio import metadata_files
 from ..datasets.versions import EditNotSupported, SampleNotFound, edit_transcript, read_manifest
 from ..db import get_session
 from ..models import Dataset, DatasetVersion, Ingest, Upload
@@ -40,6 +43,14 @@ class IngestRequest(BaseModel):
     upload_id: str
     name: str = Field(pattern=SLUG)
     task: Literal["llm-sft", "asr", "tts"]
+    eval_only: bool = False
+    provenance: Provenance
+
+
+class LocalIngestRequest(BaseModel):
+    path: str = Field(min_length=1)
+    name: str = Field(pattern=SLUG)
+    task: Literal["asr", "tts"]
     eval_only: bool = False
     provenance: Provenance
 
@@ -123,6 +134,76 @@ async def create_ingest(body: IngestRequest, session: AsyncSession = Depends(get
     session.add(row)
     await session.commit()
     return {"ingest_id": row.id}
+
+
+@router.post("/datasets/ingest-local", status_code=202)
+async def create_local_ingest(
+    body: LocalIngestRequest, request: Request, session: AsyncSession = Depends(get_session)
+) -> dict:
+    try:
+        src = resolve_import_path(body.path, request.app.state.settings.import_root)
+    except ImportPathError as e:
+        raise HTTPException(403, str(e)) from e
+    except FileNotFoundError as e:
+        raise HTTPException(404, "directory not found under the import root") from e
+    existing = (await session.execute(select(Dataset).where(Dataset.name == body.name))).scalar_one_or_none()
+    if existing is not None and existing.task != body.task:
+        raise HTTPException(409, f"dataset '{body.name}' is task '{existing.task}'")
+    row = Ingest(
+        source_path=str(src),
+        dataset_name=body.name,
+        task=body.task,
+        eval_only=body.eval_only,
+        provenance=body.provenance.model_dump(),
+    )
+    session.add(row)
+    await session.commit()
+    return {"ingest_id": row.id}
+
+
+def _has_metadata(d: Path) -> bool:
+    plain, per_split, _ = metadata_files(d)
+    return plain is not None or bool(per_split)
+
+
+@router.get("/datasets/import-dirs")
+async def list_import_dirs(request: Request) -> dict:
+    root = request.app.state.settings.import_root
+
+    def scan() -> list[dict]:
+        base = Path(root).resolve()
+        if not base.is_dir():
+            return []
+        out = []
+        dirs = [base]
+        for _ in range(2):
+            dirs += [c for d in dirs[-0:] for c in []]  # placeholder, replaced below
+        found: list[Path] = []
+        level = [base]
+        for _depth in range(2):
+            nxt = []
+            for d in level:
+                for c in sorted(d.iterdir()):
+                    if c.is_dir() and not c.is_symlink():
+                        nxt.append(c)
+            found += nxt
+            level = nxt
+        for d in found:
+            if not _has_metadata(d):
+                continue
+            hint = None
+            cur = d / "curation.json"
+            if cur.is_file():
+                try:
+                    t = json.loads(cur.read_text(encoding="utf-8")).get("task")
+                    hint = t if t in ("asr", "tts") else None
+                except (OSError, ValueError, AttributeError):
+                    hint = None
+            out.append({"path": d.relative_to(base).as_posix(), "task_hint": hint, "has_curation": cur.is_file()})
+        return out
+
+    import asyncio
+    return {"items": await asyncio.to_thread(scan)}
 
 
 @router.get("/ingests/{ingest_id}")

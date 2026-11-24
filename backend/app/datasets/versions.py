@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Dataset, DatasetVersion, Ingest, Upload
-from .ingest import _version_hash, ingest
+from .ingest import _version_hash, ingest, ingest_dir
 from .validate_audio import _sha256_file
 
 log = logging.getLogger(__name__)
@@ -46,14 +46,21 @@ async def run_ingest(session, ingest_id: int, settings) -> None:
         row.state = "running"
         await session.commit()
 
-        upload_dir = settings.incoming_dir / row.upload_id
-        files = [p for p in upload_dir.iterdir() if p.is_file()]
-        if len(files) != 1:
-            raise RuntimeError(f"expected exactly one file for upload {row.upload_id}, found {len(files)}")
-        result = await asyncio.to_thread(
-            ingest, files[0], row.task, settings.datasets_dir / row.dataset_name, settings.disk_min_gb,
-            settings.ingest_workers,
-        )
+        dest_root = settings.datasets_dir / row.dataset_name
+        upload_dir = None
+        if row.source_path is not None:  # local-path ingest: the source is never touched or deleted
+            result = await asyncio.to_thread(
+                ingest_dir, Path(row.source_path), row.task, dest_root, settings.disk_min_gb,
+                settings.ingest_workers,
+            )
+        else:
+            upload_dir = settings.incoming_dir / row.upload_id
+            files = [p for p in upload_dir.iterdir() if p.is_file()]
+            if len(files) != 1:
+                raise RuntimeError(f"expected exactly one file for upload {row.upload_id}, found {len(files)}")
+            result = await asyncio.to_thread(
+                ingest, files[0], row.task, dest_root, settings.disk_min_gb, settings.ingest_workers,
+            )
         report = asdict(result.report)
         if not result.report.ok:
             await _fail(session, ingest_id, report=report)
@@ -87,12 +94,13 @@ async def run_ingest(session, ingest_id: int, settings) -> None:
         row.state = "done"
         row.report = report
         row.version_id = version.id
-        upload = await session.get(Upload, row.upload_id)
+        upload = await session.get(Upload, row.upload_id) if row.upload_id is not None else None
         if upload is not None:
             upload.state = "consumed"  # its file is deleted below; a second ingest gets a 409
         await session.commit()
-        # The upload is now copied into the dataset version; keep it only on failure (for a retry).
-        await asyncio.to_thread(shutil.rmtree, upload_dir, True)
+        if upload_dir is not None:
+            # The upload is now copied into the dataset version; keep it only on failure (for a retry).
+            await asyncio.to_thread(shutil.rmtree, upload_dir, True)
     except Exception as exc:  # noqa: BLE001 - run_ingest must never raise
         log.exception("ingest %s failed", ingest_id)
         try:
