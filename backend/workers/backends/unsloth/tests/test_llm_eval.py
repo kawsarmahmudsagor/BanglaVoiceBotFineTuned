@@ -55,8 +55,8 @@ def test_dispatch_handlers_resolve():
     from app.core.contract import Phase
     from mlops_backend import llm
     from mlops_backend.phases import HANDLERS
-    assert callable(llm.prepare) and llm.train is llm.train_llm and llm.eval is llm.eval_llm
-    assert all(Phase(p) in HANDLERS for p in ("prepare", "train", "eval"))
+    assert callable(llm.prepare) and callable(llm.export) and llm.train is llm.train_llm and llm.eval is llm.eval_llm
+    assert all(Phase(p) in HANDLERS for p in ("prepare", "train", "eval", "export"))
 
 
 def test_eval_requires_complete_final(run_dir):

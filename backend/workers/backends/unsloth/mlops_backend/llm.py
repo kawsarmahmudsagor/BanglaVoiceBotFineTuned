@@ -15,6 +15,7 @@ from app.core.contract import DatasetRef, RunConfig, RunDir, read_prepared_refs
 from app.core.evaluation import baseline_metrics, merge_results, run_llm_eval
 from app.core.prepare import iter_rows
 
+from .export import export  # noqa: F401  (phase handler looked up by phases._dispatch)
 from .prepare.chat import prepare_llm as prepare  # noqa: F401
 
 BACKEND = "unsloth"

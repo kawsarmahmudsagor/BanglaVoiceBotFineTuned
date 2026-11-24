@@ -17,7 +17,8 @@ from pathlib import Path
 from typing import Callable, Literal, NoReturn
 
 from app.core.contract import (
-    Metric, Phase, RunConfig, RunDir, Status, append_metric, read_config, write_status,
+    ExportArtifact, ExportManifest, Metric, Phase, RunConfig, RunDir, Status, append_metric, read_config,
+    write_export_manifest, write_status,
 )
 from app.core.prepare import PrepareError
 
@@ -26,7 +27,7 @@ Handler = Callable[[RunDir, RunConfig, "Reporter"], int]
 __all__ = [
     "Handler", "main", "Reporter", "StopFlag", "NanGuard", "TrainingDiverged", "mark_complete",
     "latest_checkpoint", "max_skip_share", "eval_opts", "INIT_META", "write_init_meta", "read_init_meta",
-    "resolve_checkpoint", "InitChoice", "init_source",
+    "resolve_checkpoint", "InitChoice", "init_source", "export_all",
 ]
 
 INIT_META = "init_meta.json"
@@ -164,6 +165,37 @@ def eval_opts(cfg: RunConfig) -> tuple[bool, int | None]:
     ev = cfg.hparams.get("eval") or {}
     ms = ev.get("max_samples")
     return bool(ev.get("baseline", True)), (int(ms) if ms is not None else None)
+
+
+def export_all(rd: RunDir, cfg: RunConfig, rep: "Reporter",
+               exporters: dict[str, Callable[[Path], list[ExportArtifact]]]) -> int:
+    """Run every format in cfg.export independently; write a manifest of the successes. Exit 0 if any succeeded.
+
+    Each exporter gets its own output dir `export/<format>/`; artifact paths are relative to `export/`.
+    """
+    done: list[str] = []
+    failed: list[str] = []
+    artifacts: list[ExportArtifact] = []
+    rd.export_dir.mkdir(parents=True, exist_ok=True)
+    for fmt in cfg.export:
+        try:
+            fn = exporters.get(fmt)
+            if fn is None:
+                raise ValueError(f"unknown export format '{fmt}'")
+            out = rd.export_dir / fmt
+            out.mkdir(parents=True, exist_ok=True)
+            artifacts.extend(fn(out))
+            done.append(fmt)
+        except Exception:  # noqa: BLE001 - formats are independent
+            traceback.print_exc()
+            failed.append(fmt)
+    if not done:
+        rep.status(Phase.export, message=f"export failed: {', '.join(failed)}")
+        return 1
+    write_export_manifest(rd, ExportManifest(artifacts=artifacts))
+    msg = f"exported: {', '.join(done)}" + (f"; failed: {', '.join(failed)}" if failed else "")
+    rep.status(Phase.export, message=msg)
+    return 0
 
 
 def _fail_status(rd: RunDir, phase: Phase, message: str) -> None:

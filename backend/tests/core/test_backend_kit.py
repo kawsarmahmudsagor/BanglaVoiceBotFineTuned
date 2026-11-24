@@ -217,3 +217,58 @@ def test_init_source_uses_init_dir_when_no_own_checkpoint(tmp_path):
     ch = init_source(_init_cfg(rd, True), rd)
     assert ch.kind == "init" and ch.path == rd.init_dir and ch.meta["step"] == 1
     assert init_source(_cfg(), rd) is None
+
+
+def _export_cfg(formats):
+    cfg = _cfg()
+    cfg.export = formats
+    return cfg
+
+
+def _art(fmt):
+    from app.core.contract import ExportArtifact
+    return lambda out: [ExportArtifact(format=fmt, path=f"{fmt}/m.bin", size_bytes=1)]
+
+
+def _boom(out):
+    raise RuntimeError("boom")
+
+
+def test_export_all_partial_failure(tmp_path, capsys):
+    from app.core.backend_kit import export_all
+    from app.core.contract import read_export_manifest
+    rd = RunDir(tmp_path)
+    rd.ensure()
+    rep = Reporter(rd)
+    code = export_all(rd, _export_cfg(["merged-safetensors", "gguf"]), rep,
+                      {"merged-safetensors": _art("merged-safetensors"), "gguf": _boom})
+    assert code == 0
+    assert [a.format for a in read_export_manifest(rd).artifacts] == ["merged-safetensors"]
+    assert read_status(rd).message == "exported: merged-safetensors; failed: gguf"
+    assert "boom" in capsys.readouterr().err
+
+
+def test_export_all_all_succeed_message(tmp_path):
+    from app.core.backend_kit import export_all
+    rd = RunDir(tmp_path)
+    rd.ensure()
+    assert export_all(rd, _export_cfg(["a", "b"]), Reporter(rd), {"a": _art("a"), "b": _art("b")}) == 0
+    assert read_status(rd).message == "exported: a, b"
+
+
+def test_export_all_all_fail_exits_1(tmp_path):
+    from app.core.backend_kit import export_all
+    from app.core.contract import read_export_manifest
+    rd = RunDir(tmp_path)
+    rd.ensure()
+    assert export_all(rd, _export_cfg(["a", "b"]), Reporter(rd), {"a": _boom, "b": _boom}) == 1
+    assert read_export_manifest(rd) is None
+
+
+def test_export_all_unknown_format_is_a_failure(tmp_path):
+    from app.core.backend_kit import export_all
+    rd = RunDir(tmp_path)
+    rd.ensure()
+    assert export_all(rd, _export_cfg(["nope"]), Reporter(rd), {"a": _art("a")}) == 1
+    code = export_all(rd, _export_cfg(["a", "nope"]), Reporter(rd), {"a": _art("a")})
+    assert code == 0 and read_status(rd).message == "exported: a; failed: nope"
