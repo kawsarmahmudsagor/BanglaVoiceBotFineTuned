@@ -91,3 +91,27 @@ def run_dir(tmp_path):
         return rd
 
     return make
+
+
+@pytest.fixture
+def tiny_tts_ds(tmp_path):
+    """Factory: tiny_tts_ds(n=4) -> (root, rows). Rows carry sample_id, audio_path, text, speaker, duration_s;
+    the sine-wave WAVs alternate 22.05 / 44.1 kHz; speakers alternate a / b."""
+
+    def make(n: int = 4) -> tuple[Path, list[dict]]:
+        import numpy as np
+
+        from app.core.backend_kit.audio import write_wav
+
+        root = tmp_path / "tts_ds"
+        rows = []
+        for i in range(n):
+            sr = 22050 if i % 2 == 0 else 44100
+            t = np.arange(int(sr * 0.5)) / sr
+            path = root / "files" / f"t{i}.wav"
+            write_wav(path, (0.3 * np.sin(2 * np.pi * (200 + 40 * i) * t)).astype("float32"), sr)
+            rows.append({"sample_id": f"t{i}", "audio_path": str(path), "text": f"আমি  যাব {i}",
+                         "speaker": "ab"[i % 2], "duration_s": 0.5})
+        return root, rows
+
+    return make
