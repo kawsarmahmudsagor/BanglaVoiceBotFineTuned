@@ -12,6 +12,8 @@ Target: Ubuntu 24.04 with an NVIDIA driver, Docker with Compose, nvidia-containe
 4. Run `scripts/setup_venvs.sh` to sync the backend venv (`backend/.venv`) and one venv per real backend.
 5. Run `scripts/dev.sh`. It starts the compose stack, waits for `/api/health`, and runs the worker in the foreground (`uv run --project backend --extra worker python -m workers`). Stop the worker with Ctrl-C; `docker compose down` stops the rest.
 
+**One command:** `./run-vm.sh` (the Linux counterpart of `run-local.bat`) does steps 3 to 5: it checks `.env` (required keys, matching passwords, `REPO_ROOT` pointing at this checkout), runs `check_vm.sh` and `setup_venvs.sh`, creates the `mlflow` database if the Postgres volume predates it, starts the compose stack, waits for the API, and starts the worker in a detached tmux session (`mlops-worker`) with its output also in `$DATA_ROOT/logs/worker.log`. `./run-vm.sh --no-sync` skips the venv sync, `./run-vm.sh status` shows services and worker state, `./run-vm.sh logs` attaches to the worker, and `./run-vm.sh stop` stops the worker gracefully and then the compose stack.
+
 Run `scripts/dev.sh` inside `tmux` (or as a systemd user unit) so the worker survives a dropped SSH connection: `tmux new -s mlops`, run the script, detach with Ctrl-b d, reattach with `tmux attach -t mlops`. If the worker does die mid-run, its next start stops the orphaned backend process group and marks the run failed.
 
 `deploy/postgres/init.sql` (which creates the `mlflow` database) only runs on a fresh Postgres volume. On an existing volume, create it by hand: `docker compose exec postgres psql -U mlops -d mlops -c 'CREATE DATABASE mlflow;'`.
@@ -95,7 +97,7 @@ Real training runs in five backends under `backend/workers/backends/`, each with
 |---|---|
 | `unsloth` | LLM SFT (Qwen3, Gemma 3, TituLM Llama 3.2; lora, qlora, full) and Whisper LoRA |
 | `hf` | Whisper full or adapter, wav2vec2 and MMS CTC, Indic Parler-TTS |
-| `nemo` | ASR (IndicConformer, BanglaConformer, Nemotron streaming) |
+| `nemo` | ASR (IndicConformer, BanglaConformer) |
 | `f5` | TTS (IndicF5) |
 | `cosyvoice` | TTS (CosyVoice 3, experimental for Bangla) |
 

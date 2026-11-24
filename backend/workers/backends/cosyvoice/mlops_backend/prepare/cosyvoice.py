@@ -11,12 +11,14 @@ Light module: numpy, pyarrow, soundfile, torch, onnxruntime and whisper load ins
 """
 from __future__ import annotations
 
+import sys
+
 import re
 from collections.abc import Callable
 from pathlib import Path
 
 from app.core.backend_kit.audio_refs import check_audio_refs, probed_rows, progress_ticker
-from app.core.prepare import BuildResult, PrepareError, PrepSpec, Skip
+from app.core.prepare import BuildResult, PrepSpec, Skip, empty_split_error
 from app.core.text import BN_NORMALIZE_VERSION, bn_normalize
 from app.core.tts_refs import DEFAULT_SPEAKER, pick_reference
 
@@ -122,9 +124,15 @@ def make_extractor(model_dir: Path) -> Callable[[str], tuple]:
     opt.intra_op_num_threads = 1
     avail = onnxruntime.get_available_providers()
     providers = [p for p in ("CUDAExecutionProvider", "CPUExecutionProvider") if p in avail]
+    if "CUDAExecutionProvider" in providers:
+        from mlops_backend.compat import preload_cuda_libs
+
+        preload_cuda_libs()
     tok = onnxruntime.InferenceSession(str(model_dir / "speech_tokenizer_v3.onnx"), sess_options=opt,
                                        providers=providers)
     emb = onnxruntime.InferenceSession(str(model_dir / "campplus.onnx"), sess_options=opt, providers=providers)
+    if "CUDAExecutionProvider" in providers and "CUDAExecutionProvider" not in tok.get_providers():
+        print("warning: onnxruntime CUDA provider failed to load; speech tokens run on CPU (slow)", file=sys.stderr)
 
     def extract(path):
         wav = torch.from_numpy(load_audio(path, SAMPLE_RATE))[None]
@@ -223,7 +231,7 @@ def _write_split(out: Path, split: str, recs: list[dict], extractor: Callable, s
              for sid, e in failed.items()]
     recs = [r for r in recs if r["sample_id"] not in failed]
     if not recs:
-        raise PrepareError(f"split {split} is empty after prepare ({len(skips)} rows skipped)")
+        raise empty_split_error(split, skips)
     write_kaldi_lists(recs, d)
     files = [f"{split}/{n}" for n in ("wav.scp", "text", "utt2spk", "spk2utt", "instruct")]
     by_spk: dict[str, list] = {}
@@ -321,7 +329,7 @@ def build_cosyvoice(model_dir: Path | None = None, rep=None, probe: Callable | N
                 else:
                     recs.append(rec)
             if not recs:
-                raise PrepareError(f"split {split} is empty after prepare ({len(skipped)} rows skipped)")
+                raise empty_split_error(split, skipped)
             kept[split] = recs
             counts[split] = len(recs)
         ext = extractor or make_extractor(model_dir)

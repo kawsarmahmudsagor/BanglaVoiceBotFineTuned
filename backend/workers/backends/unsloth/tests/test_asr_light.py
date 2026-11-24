@@ -201,7 +201,7 @@ def test_write_split_empty_after_skips_raises(tmp_path):
         raise OSError("x")
 
     rows = [{"sample_id": str(i), "audio_path": "p", "text": "x"} for i in range(3)]
-    with pytest.raises(PrepareError, match=r"split val is empty after prepare \(3 rows skipped\)"):
+    with pytest.raises(PrepareError, match=r"split val is empty after prepare \(3 rows skipped: 3x undecodable audio"):
         _write_split(rows, tmp_path / "val", boom, lambda t: [1])
     with pytest.raises(PrepareError, match=r"split val is empty after prepare \(0 rows skipped\)"):
         _write_split([], tmp_path / "val", boom, lambda t: [1])

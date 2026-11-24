@@ -20,13 +20,11 @@ def _upstream_commit() -> str:
 
 
 def _model_dir() -> Path | None:
-    """Local snapshot of the base model in the hub cache (HF_HUB_CACHE, else $HF_HOME/hub, where
-    download_model puts it), or None when not downloaded yet."""
+    """Local snapshot of the base model in the hub cache (HF_HUB_CACHE, else $HF_HOME/hub, else
+    ~/.cache/huggingface/hub, where download_model puts it), or None when not downloaded yet."""
     root = os.environ.get("HF_HUB_CACHE")
     if not root:
-        hf_home = os.environ.get("HF_HOME")
-        if not hf_home:
-            return None
+        hf_home = os.environ.get("HF_HOME") or str(Path.home() / ".cache" / "huggingface")
         root = str(Path(hf_home) / "hub")
     snaps = sorted((Path(root) / _REPO_DIR / "snapshots").glob("*/cosyvoice3.yaml"))
     return snaps[-1].parent if snaps else None
@@ -36,7 +34,7 @@ def _load_config() -> bool:
     """Instantiate cosyvoice3.yaml without loading weights. Returns False on failure."""
     model_dir = _model_dir()
     if model_dir is None:
-        print("cosyvoice3.yaml: skipped (model not downloaded under HF_HOME yet)")
+        print("cosyvoice3.yaml: skipped (model not in the HF hub cache yet)")
         return True
     try:
         from hyperpyyaml import load_hyperpyyaml
@@ -83,7 +81,13 @@ def main() -> int:
             ok = False
     except Exception:  # noqa: BLE001 - already reported by the import loop
         pass
-    for mod in ["cosyvoice", "matcha"]:
+    from .compat import ensure_deepspeed_stub, use_offline_features
+
+    ensure_deepspeed_stub()
+    use_offline_features()
+    # the modules train/eval import, so a missing upstream dependency shows here, not mid-run
+    for mod in ["cosyvoice", "matcha", "matcha.utils", "cosyvoice.utils.executor", "cosyvoice.utils.train_utils",
+                "cosyvoice.cli.cosyvoice"]:
         try:
             import_module(mod)
             print(f"{mod} OK")

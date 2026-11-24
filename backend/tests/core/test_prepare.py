@@ -221,3 +221,51 @@ def test_prepared_dir_differs_when_only_ratios_differ(cfg, audio_ds):
 def test_eval_only_ref_yields_all_rows(audio_ds):
     ref = audio_ds.model_copy(update={"split": None, "splits": ["train", "val", "test"]})
     assert {s: len(list(iter_rows(ref, s))) for s in ref.splits} == {"train": 4, "val": 4, "test": 4}
+
+
+def test_empty_split_error_names_top_reasons_for_that_split():
+    from app.core.prepare import Skip, empty_split_error
+
+    skipped = [Skip(sample_id="a", split="train", reason="too short"),
+               Skip(sample_id="b", split="train", reason="too short"),
+               Skip(sample_id="c", split="train", reason="empty text"),
+               Skip(sample_id="d", split="val", reason="other")]
+    msg = str(empty_split_error("train", skipped))
+    assert msg == "split train is empty after prepare (3 rows skipped: 2x too short; 1x empty text)"
+
+
+def test_empty_split_error_without_skips():
+    from app.core.prepare import empty_split_error
+
+    assert str(empty_split_error("val", [])) == "split val is empty after prepare (0 rows skipped)"
+
+
+def test_narrow_request_still_builds_every_dataset_split(cfg, audio_ds):
+    # train role asks for train/val; the eval role on the same dataset later needs test from the same cache dir
+    ds = audio_ds.model_copy(update={"splits": ["train", "val", "test"]})
+    seen = []
+
+    def build(rows, out):
+        seen.append(sorted(rows))
+        return _ok_build(rows, out)
+
+    first = ensure_prepared(cfg, ds, SPEC, build, splits=["train", "val"])
+    later = ensure_prepared(cfg, ds, SPEC, build)
+    assert seen == [["test", "train", "val"]]
+    assert later.cache_hit is True and set(later.counts) == {"train", "val", "test"}
+    assert first.path == later.path
+
+
+def test_hit_missing_a_requested_split_rebuilds_with_it(cfg, audio_ds):
+    seen = []
+
+    def build(rows, out):
+        seen.append(sorted(rows))
+        return _ok_build(rows, out)
+
+    ensure_prepared(cfg, audio_ds, SPEC, build)  # an older cache: dataset declared train/val only
+    wider = audio_ds.model_copy(update={"splits": ["train", "val", "test"]})
+    info = ensure_prepared(cfg, wider, SPEC, build, splits=["test"])
+    assert seen == [["train", "val"], ["test", "train", "val"]]
+    assert info.cache_hit is False and set(info.counts) == {"train", "val", "test"}
+    assert ensure_prepared(cfg, wider, SPEC, build, splits=["test"]).cache_hit is True

@@ -17,8 +17,7 @@
             "type": "string",
             "enum": [
               "ai4bharat/indicconformer_stt_bn_hybrid_ctc_rnnt_large",
-              "bengaliAI/BanglaConformer",
-              "nvidia/nemotron-3.5-asr-streaming-0.6b"
+              "bengaliAI/BanglaConformer"
             ]
           },
           "method": {

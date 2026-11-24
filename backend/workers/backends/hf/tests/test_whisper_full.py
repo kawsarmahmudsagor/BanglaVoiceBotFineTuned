@@ -1,5 +1,6 @@
 import json
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -128,6 +129,40 @@ def test_ct2_command_shared(tmp_path):
     assert cmd[cmd.index("--quantization") + 1] == "float16"
 
 
+
+def _fake_fast_tokenizer(monkeypatch, calls):
+    import types
+
+    class Fast:
+        @classmethod
+        def from_pretrained(cls, path):
+            calls.append(path)
+            return cls()
+
+        def save_pretrained(self, path):
+            (Path(path) / "tokenizer.json").write_text("{}")
+
+    monkeypatch.setitem(sys.modules, "transformers", types.SimpleNamespace(WhisperTokenizerFast=Fast))
+
+
+def test_ensure_tokenizer_json_writes_fast_tokenizer_when_missing(tmp_path, monkeypatch):
+    from app.core.backend_kit.whisper import ensure_tokenizer_json
+
+    calls = []
+    _fake_fast_tokenizer(monkeypatch, calls)
+    ensure_tokenizer_json(tmp_path)
+    assert calls == [str(tmp_path)] and (tmp_path / "tokenizer.json").exists()
+
+
+def test_ensure_tokenizer_json_keeps_existing(tmp_path, monkeypatch):
+    from app.core.backend_kit.whisper import ensure_tokenizer_json
+
+    calls = []
+    _fake_fast_tokenizer(monkeypatch, calls)
+    (tmp_path / "tokenizer.json").write_text("orig")
+    ensure_tokenizer_json(tmp_path)
+    assert calls == [] and (tmp_path / "tokenizer.json").read_text() == "orig"
+
 @pytest.mark.heavy
 def test_whisper_full_20_steps(run_dir, monkeypatch, tmp_path):
     """GPU VM only: 20 steps of full fine-tuning, eval with baseline, both exports."""
@@ -136,7 +171,6 @@ def test_whisper_full_20_steps(run_dir, monkeypatch, tmp_path):
     from app.core.contract import read_eval_results
     from mlops_backend import whisper_full as w
 
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
     rd = run_dir("asr", WHISPER, {"max_steps": 20, "batch_size": 1, "grad_accum": 1, "learning_rate": 1e-5},
                  export=["safetensors", "ct2"])
     cfg = read_config(rd)

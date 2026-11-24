@@ -62,6 +62,14 @@ class PrepInfo(BaseModel):
 _ASSIGN_CACHE: dict[tuple, list[str]] = {}
 
 
+def empty_split_error(split: str, skipped: list[Skip]) -> PrepareError:
+    """The error for a split with no rows left, naming the commonest skip reasons for that split."""
+    reasons = Counter(s.reason for s in skipped if s.split == split)
+    total = sum(reasons.values())
+    top = "; ".join(f"{n}x {r}" for r, n in reasons.most_common(3))
+    return PrepareError(f"split {split} is empty after prepare ({total} rows skipped" + (f": {top})" if top else ")"))
+
+
 def _assigned(ds: DatasetRef, rows: list[dict]) -> list[str]:
     st = os.stat(ds.manifest)
     key = (ds.manifest, st.st_mtime_ns, st.st_size, json.dumps(ds.split.model_dump(), sort_keys=True))
@@ -174,21 +182,26 @@ def ensure_prepared(
     splits: list[str] | None = None,
     max_skip_share: float = 0.05,
 ) -> PrepInfo:
+    # The cache key ignores which splits a caller asks for, so one dir serves every role on this dataset: a build
+    # covers all declared splits, and a hit lacking a requested split (an older, narrower cache) is rebuilt.
+    wanted = list(dict.fromkeys([*(splits if splits is not None else ds.splits), *ds.splits]))
     target = prepared_dir(cfg, ds, spec)
     hit = _read_hit(target)
-    if hit:
+    if hit and set(wanted) <= set(hit.counts):
         return hit
     with _FileLock(target.with_name(target.name + ".lock")):
         hit = _read_hit(target)
-        if hit:
+        if hit and set(wanted) <= set(hit.counts):
             return hit
+        if hit:
+            wanted = list(dict.fromkeys([*wanted, *hit.counts]))
         for stale in target.parent.glob(target.name + ".tmp-*"):
             shutil.rmtree(stale, ignore_errors=True)
         tmp = target.with_name(f"{target.name}.tmp-{os.getpid()}")
         tmp.mkdir(parents=True)
         try:
             t0 = time.time()
-            rows = load_splits(ds, splits if splits is not None else ds.splits)
+            rows = load_splits(ds, wanted)
             total = sum(len(v) for v in rows.values())
             result = build(rows, tmp)
             share = len(result.skipped) / max(1, total)

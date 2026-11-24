@@ -21,7 +21,7 @@ from app.core.backend_kit.runutil import (
 )
 from app.core.backend_kit.whisper import (
     WhisperCollator, asr_baseline_key, check_prepared_refs, dataloader_workers, load_processor, load_train_val,
-    make_transcriber, prepare_whisper, processor_kwarg, run_ct2, whisper_eval_loss,
+    ensure_tokenizer_json, make_transcriber, prepare_whisper, processor_kwarg, run_ct2, whisper_eval_loss,
 )
 from app.core.contract import RunConfig, RunDir
 from app.core.evaluation import baseline_metrics, merge_results, run_asr_eval
@@ -179,6 +179,7 @@ def whisper_exporters(rd: RunDir, cfg: RunConfig) -> dict:
         model = _load(str(final))
         model.save_pretrained(str(out), safe_serialization=True)
         _processor(cfg).save_pretrained(str(out))  # ct2 --copy_files needs tokenizer.json + preprocessor_config.json
+        ensure_tokenizer_json(out)  # transformers 4.46 may save only the slow tokenizer files
 
     def safetensors(out: Path):
         save_into(out)

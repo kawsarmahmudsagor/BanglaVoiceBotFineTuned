@@ -151,7 +151,6 @@ def test_parler_20_steps_and_synthesize(run_dir, monkeypatch, tmp_path):
     from app.core.contract import read_eval_results
     from mlops_backend import parler as p
 
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
     rd = run_dir("tts", PARLER, {"max_steps": 20, "batch_size": 1, "grad_accum": 1, "learning_rate": 1e-5},
                  export=["safetensors"])
     cfg = read_config(rd)
@@ -253,5 +252,28 @@ def test_build_raises_when_a_split_is_empty_after_prepare(tmp_path, monkeypatch)
 
     build = pp.build_parler(None, None, tok, tok, DEFAULT, encode=lambda audios: [], loader=loader)
     rows = {"train": [{"sample_id": "a", "audio_path": "x", "text": "আমি"}]}
-    with pytest.raises(PrepareError, match=r"^split train is empty after prepare \(1 rows skipped\)$"):
+    with pytest.raises(PrepareError, match=r"^split train is empty after prepare \(1 rows skipped: 1x undecodable audio: OSError\)$"):
         build(rows, tmp_path / "out")
+
+
+class _Dev:
+    def __init__(self, name):
+        self.name, self.device = name, None
+
+    def to(self, device):
+        self.device = device
+        return self
+
+
+def test_encoder_inputs_without_padding_mask():
+    from mlops_backend.prepare.parler import encoder_inputs
+
+    iv, mask = encoder_inputs({"input_values": _Dev("iv")}, "cuda")
+    assert iv.name == "iv" and iv.device == "cuda" and mask is None
+
+
+def test_encoder_inputs_moves_padding_mask_when_present():
+    from mlops_backend.prepare.parler import encoder_inputs
+
+    iv, mask = encoder_inputs({"input_values": _Dev("iv"), "padding_mask": _Dev("m")}, "cpu")
+    assert mask.name == "m" and mask.device == "cpu" and iv.device == "cpu"

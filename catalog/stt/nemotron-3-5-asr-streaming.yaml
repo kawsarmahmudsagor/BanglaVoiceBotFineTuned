@@ -42,6 +42,7 @@ finetune:
     - "Fine-tune the NeMo checkpoint (`.nemo`), not the int8 ONNX bundle; re-export to ONNX afterwards."
     - "Bengali script is not in its tokenizer: train a new SentencePiece tokenizer on Bengali text and swap it in (NeMo `change_vocabulary`). This re-initialises the decoder and joint network."
     - "Keep the cache-aware streaming config (`att_context_size`) so the model still streams."
+    - "Not trainable on this platform yet: the nemo backend has no tokenizer swap, and the stock tokenizer maps every Bangla character to <unk> (checked on the VM, 2026-11-24)."
   hyperparams:
     learning_rate: 5.0e-4
     max_steps: 50000
@@ -52,12 +53,11 @@ finetune:
     - "A tokenizer swap with too little data can collapse (a community Malay run did); budget hundreds of hours."
     - "Training with full context but serving with a short chunk raises WER; train with the chunk sizes you serve."
 recipe_template:
-  backend: nemo
   method: {type: full}
   hparams:
     learning_rate: 5.0e-4
     max_steps: 50000
-  export: [nemo]
+  export: []
 sources:
   - title: Nemotron 3.5 ASR streaming model card
     url: https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b

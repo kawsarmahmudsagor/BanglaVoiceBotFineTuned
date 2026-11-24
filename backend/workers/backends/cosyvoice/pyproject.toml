@@ -18,6 +18,8 @@ dependencies = [
   "inflect==7.3.1",
   "librosa==0.10.2",
   "lightning==2.2.4",
+  # lightning 2.2 imports pkg_resources at runtime; setuptools 81 removed it.
+  "setuptools<81",
   "matplotlib==3.7.5",
   "modelscope==1.20.0",
   "networkx==3.1",
@@ -30,6 +32,7 @@ dependencies = [
   "pydantic==2.7.0",
   "pyworld==0.3.4",
   "rich==13.7.1",
+  "gdown==5.1.0",  # imported at module level by Matcha-TTS matcha.utils (upstream requirements.txt pin)
   "soundfile==0.12.1",
   "tensorboard==2.14.0",
   "transformers==4.51.3",

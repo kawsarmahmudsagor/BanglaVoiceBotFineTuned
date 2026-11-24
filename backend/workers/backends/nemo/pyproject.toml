@@ -6,7 +6,9 @@ dependencies = [
   "bangla-voice-backend[prepare,audio]",
   "torch==2.7.1",
   "nemo_toolkit[asr]",
+  "numba-cuda[cu12]",  # NeMo RNNT loss kernels; stock numba.cuda fails with "Signature mismatch"
   "lightning",
+  "numpy<2.4",  # NeMo-side code still calls np.row_stack, removed in numpy 2.4
   "huggingface_hub",
 ]
 

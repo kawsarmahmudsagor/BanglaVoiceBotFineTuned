@@ -46,14 +46,14 @@ from app.core.backend_kit import (
 from app.core.backend_kit import prune_checkpoints as kit_prune
 from app.core.contract import Phase, RunConfig, RunDir, read_prepared_refs
 
-from .compat import ensure_deepspeed_stub
+from .compat import ensure_deepspeed_stub, use_offline_features
 from .files import link_or_copy, link_tree
 
 BACKEND = "cosyvoice"
 CKPT_FORMAT = "cosyvoice-pt"  # `final/` only: the three weight files CosyVoice3 loads
 COMPONENT_FORMAT = "cosyvoice-component"  # one component's weights; not a warm-start source (resolve_init rejects it)
 COMPONENTS = ("llm", "flow", "hifigan")
-DEFAULT_COMPONENTS = ("llm", "flow")
+DEFAULT_COMPONENTS = ("llm",)  # upstream examples/libritts/cosyvoice3 trains the LLM only; flow is opt-in
 WEIGHT_FILE = {"llm": "llm.pt", "flow": "flow.pt", "hifigan": "hift.pt"}
 AUX_FILES = ("cosyvoice3.yaml", "speech_tokenizer_v3.onnx", "campplus.onnx")
 AUX_DIR = "CosyVoice-BlankEN"
@@ -64,7 +64,7 @@ PREFETCH = 20
 # ---- pure helpers (light-testable) -------------------------------------------------------------------------------
 
 def resolve_components(hp: dict) -> list[str]:
-    """The requested components in training order (default llm, flow)."""
+    """The requested components in training order (default llm only)."""
     return plan_components(list(hp.get("components") or DEFAULT_COMPONENTS), [])
 
 
@@ -367,7 +367,8 @@ def train_component(name: str, cfg: RunConfig, rd: RunDir, rep, stop: StopFlag, 
 
     env_snap = snapshot_env()
     os.environ.update({"MASTER_ADDR": "127.0.0.1", "MASTER_PORT": str(_free_port()), "RANK": "0", "LOCAL_RANK": "0",
-                       "WORLD_SIZE": "1", "LOCAL_WORLD_SIZE": "1", "onnx_path": str(base_dir)})
+                       "WORLD_SIZE": "1", "LOCAL_WORLD_SIZE": "1"})
+    use_offline_features()  # tokens/embeddings come from prepare; online mode needs an unpublished batch onnx
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", stream=sys.stderr)
 
     ensure_deepspeed_stub()

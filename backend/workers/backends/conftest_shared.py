@@ -48,9 +48,11 @@ def run_dir(tmp_path):
 
     A 4-row dataset manifest (parquet) is written and referenced as datasets["train"] and
     datasets["eval"]. llm-sft rows carry messages_json; asr/tts rows carry file/text(/speaker).
+    `texts` (4 strings) replaces the default "text {i}" transcripts; `seconds` sets the clip length.
     """
 
-    def make(task: str, base_model: str, hparams: dict | None = None, **overrides):
+    def make(task: str, base_model: str, hparams: dict | None = None, *, texts: list[str] | None = None,
+             seconds: float = 0.5, **overrides):
         import pyarrow as pa
         import pyarrow.parquet as pq
 
@@ -67,10 +69,10 @@ def run_dir(tmp_path):
                 rows.append({"sample_id": f"s{i}", "split": sp,
                              "messages_json": json.dumps(msgs), "tools_json": None})
         else:
-            names = _sine_wavs(root, 4, 16000)
+            names = _sine_wavs(root, 4, 16000, seconds)
             for i, sp in enumerate(splits):
-                row = {"sample_id": f"s{i}", "split": sp, "file": names[i], "text": f"text {i}",
-                       "duration_s": 0.5, "sample_rate": 16000}
+                row = {"sample_id": f"s{i}", "split": sp, "file": names[i],
+                       "text": texts[i] if texts else f"text {i}", "duration_s": seconds, "sample_rate": 16000}
                 if task == "tts":
                     row["speaker"] = "spk"
                 rows.append(row)

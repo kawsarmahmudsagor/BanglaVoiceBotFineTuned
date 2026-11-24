@@ -13,7 +13,7 @@ from pathlib import Path
 from app.core.backend_kit.audio_refs import (  # noqa: F401 - re-exported for callers
     PROBE_THREADS, PROGRESS_EVERY, check_audio_refs, probe_duration, probed_rows, progress_ticker,
 )
-from app.core.prepare import BuildResult, PrepareError, PrepSpec, Skip, ensure_prepared
+from app.core.prepare import BuildResult, PrepSpec, Skip, empty_split_error, ensure_prepared
 from app.core.text import BN_NORMALIZE_VERSION, bn_normalize
 
 SAMPLE_RATE = 16000
@@ -110,7 +110,7 @@ def _write_split(items: list[dict], out_dir: Path, probe: Callable, tokenize: Ca
         for k in cols:
             cols[k].append(ex[k])
     if not cols["sample_id"]:
-        raise PrepareError(f"split {out_dir.name} is empty after prepare ({len(skips)} rows skipped)")
+        raise empty_split_error(out_dir.name, skips)
     from datasets import Dataset
 
     Dataset.from_dict(cols).save_to_disk(str(out_dir))
@@ -245,9 +245,21 @@ def ct2_command(merged: Path, out: Path) -> list[str]:
                    "--copy_files", "tokenizer.json", "preprocessor_config.json"]
 
 
+def ensure_tokenizer_json(model_dir: Path) -> None:
+    """ct2 --copy_files needs tokenizer.json. Older transformers (4.46, the hf backend) may save only the slow
+    tokenizer files (vocab.json, merges.txt); convert them to the fast tokenizer in place when it is missing."""
+    model_dir = Path(model_dir)
+    if (model_dir / "tokenizer.json").exists():
+        return
+    from transformers import WhisperTokenizerFast
+
+    WhisperTokenizerFast.from_pretrained(str(model_dir)).save_pretrained(str(model_dir))
+
+
 def run_ct2(merged: Path, out: Path) -> None:
     import subprocess
 
+    ensure_tokenizer_json(merged)
     subprocess.run(ct2_command(merged, out), check=True)
 
 
@@ -275,4 +287,4 @@ def prepare_whisper(rd, cfg, rep) -> int:
 __all__ = ["whisper_spec", "row_to_example", "pad_labels", "build_whisper", "make_transcriber",
            "prepare_whisper", "WhisperCollator", "batch_parts", "probe_duration", "check_audio_refs",
            "check_prepared_audio", "check_prepared_refs", "load_train_val", "load_processor", "processor_kwarg",
-           "dataloader_workers", "whisper_eval_loss", "asr_baseline_key", "ct2_command", "run_ct2"]
+           "dataloader_workers", "whisper_eval_loss", "asr_baseline_key", "ct2_command", "ensure_tokenizer_json", "run_ct2"]

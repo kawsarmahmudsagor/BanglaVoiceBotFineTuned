@@ -33,6 +33,17 @@ def main() -> int:
         except Exception as e:  # noqa: BLE001
             print(f"{mod} import failed: {type(e).__name__}: {e}", file=sys.stderr)
             ok = False
+    try:  # RNNT loss kernels need NVIDIA's numba-cuda target, not numba's deprecated built-in one
+        import numba.cuda
+
+        path = getattr(numba.cuda, "__file__", "") or ""
+        print(f"numba {metadata.version('numba')} numba-cuda {metadata.version('numba-cuda')} cuda target {path}")
+        if "numba_cuda" not in path:
+            print("numba.cuda is numba's built-in target, not numba-cuda", file=sys.stderr)
+            ok = False
+    except Exception as e:  # noqa: BLE001
+        print(f"numba-cuda check failed: {type(e).__name__}: {e}", file=sys.stderr)
+        ok = False
     return 0 if ok else 1
 
 

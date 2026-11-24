@@ -34,7 +34,7 @@ def test_component_order_and_resume_skip():
 
 
 def test_resolve_components_default_and_requested():
-    assert resolve_components({}) == ["llm", "flow"]
+    assert resolve_components({}) == ["llm"]
     assert resolve_components({"components": ["hifigan", "llm"]}) == ["llm", "hifigan"]
 
 
@@ -256,6 +256,85 @@ def test_deepspeed_stub_provides_import_time_names_and_raises(monkeypatch):
         monkeypatch.delitem(sys.modules, k)
 
 
+def test_deepspeed_stub_reads_as_not_installed_to_find_spec_checks(monkeypatch):
+    """transformers probes optional packages with importlib.util.find_spec, which raises ValueError for a
+    sys.modules entry whose __spec__ is None; with a spec it returns, and the metadata lookup says 'not installed'."""
+    import importlib.metadata
+    import importlib.util
+    import sys
+
+    from mlops_backend.compat import ensure_deepspeed_stub
+
+    _drop_deepspeed(monkeypatch)
+    if importlib.util.find_spec("deepspeed") is not None:
+        pytest.skip("deepspeed is installed here")
+    ensure_deepspeed_stub()
+    try:
+        assert importlib.util.find_spec("deepspeed") is not None
+        assert importlib.util.find_spec("deepspeed.runtime.zero.stage_1_and_2") is not None
+        with pytest.raises(importlib.metadata.PackageNotFoundError):
+            importlib.metadata.version("deepspeed")
+    finally:
+        for k in [k for k in sys.modules if k == "deepspeed" or k.startswith("deepspeed.")]:
+            monkeypatch.delitem(sys.modules, k)
+
+
+def test_preload_cuda_libs_loads_global_and_retries_dependents(monkeypatch, tmp_path):
+    import ctypes
+    import sys
+
+    from mlops_backend.compat import preload_cuda_libs
+
+    d = tmp_path / "nvidia" / "cudnn" / "lib"
+    d.mkdir(parents=True)
+    for n in ("libcudnn_adv.so.9", "libcudnn.so.9", "libbroken.so.1"):
+        (d / n).write_bytes(b"")
+    loaded, calls = set(), []
+
+    def fake_cdll(path, mode=0):
+        name = path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        calls.append((name, mode))
+        if name == "libbroken.so.1" or (name == "libcudnn_adv.so.9" and "libcudnn.so.9" not in loaded):
+            raise OSError(name)
+        loaded.add(name)
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(ctypes, "CDLL", fake_cdll)
+    assert preload_cuda_libs([d]) == 2
+    assert loaded == {"libcudnn.so.9", "libcudnn_adv.so.9"}
+    assert all(mode == ctypes.RTLD_GLOBAL for _, mode in calls)
+
+
+def test_preload_cuda_libs_is_a_noop_off_linux(monkeypatch, tmp_path):
+    import sys
+
+    from mlops_backend.compat import preload_cuda_libs
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert preload_cuda_libs([tmp_path]) == 0
+
+
+def test_use_offline_features_unsets_onnx_path(monkeypatch):
+    import os
+
+    from mlops_backend.compat import use_offline_features
+
+    monkeypatch.setenv("onnx_path", "/models/cosyvoice3")
+    use_offline_features()
+    assert "onnx_path" not in os.environ
+    use_offline_features()  # idempotent when already unset
+
+
+def test_train_and_eval_never_set_onnx_path():
+    """onnx_path switches upstream to online token extraction (needs an unpublished batch onnx)."""
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1] / "mlops_backend"
+    for name in ("train.py", "eval.py"):
+        text = (src / name).read_text(encoding="utf-8")
+        assert '"onnx_path": ' not in text and 'environ["onnx_path"]' not in text, name
+
+
 def test_deepspeed_stub_leaves_a_real_install_alone(monkeypatch):
     import sys
     import types
@@ -435,17 +514,16 @@ def test_split_sentences_on_danda():
 # ---- heavy (GPU VM only) -----------------------------------------------------------------------------------------
 
 @pytest.mark.heavy
-def test_cosyvoice_20_steps_llm_and_synthesize(run_dir, tiny_tts_ds, monkeypatch, tmp_path):
+def test_cosyvoice_20_steps_llm_and_synthesize(run_dir, monkeypatch, tmp_path):
     from app.core.backend_kit import Reporter
     from app.core.contract import read_eval_results
 
     from mlops_backend import cosyvoice as p
 
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
-    _, rows = tiny_tts_ds(n=4, seconds=1.5)
+    # prepare reads run_dir's own dataset; clips under 1 s are skipped (MIN_SECONDS), so make them 1.5 s
     rd = run_dir("tts", MODEL, {"components": ["llm"], "max_steps": 20, "grad_accum": 1, "learning_rate": 1e-5,
                                 "warmup_steps": 0, "save_steps": 10, "keep_checkpoints": 2,
-                                "eval": {"max_samples": 2}}, export=["cosyvoice-dir"])
+                                "eval": {"max_samples": 2}}, export=["cosyvoice-dir"], seconds=1.5)
     cfg = read_config(rd)
     rep = Reporter(rd)
     assert p.prepare(rd, cfg, rep) == 0
@@ -489,3 +567,15 @@ def test_check_finds_snapshot_under_hf_home_hub(monkeypatch, tmp_path):
     assert check._model_dir() == snap
     monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "elsewhere"))
     assert check._model_dir() is None
+
+
+def test_check_defaults_to_home_cache_without_hf_env(monkeypatch, tmp_path):
+    from mlops_backend import check
+
+    snap = tmp_path / ".cache" / "huggingface" / "hub" / check._REPO_DIR / "snapshots" / "abc"
+    snap.mkdir(parents=True)
+    (snap / "cosyvoice3.yaml").write_text("x")
+    monkeypatch.delenv("HF_HUB_CACHE", raising=False)
+    monkeypatch.delenv("HF_HOME", raising=False)
+    monkeypatch.setattr(check.Path, "home", classmethod(lambda cls: tmp_path))
+    assert check._model_dir() == snap
