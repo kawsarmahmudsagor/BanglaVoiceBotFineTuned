@@ -9,8 +9,8 @@ from app.core.contract import read_config
 from mlops_backend.export import link_or_copy
 from mlops_backend.eval import split_sentences
 from mlops_backend.train import (
-    CKPT_FORMAT, assemble_final, checkpoint_dirs, clean_state, component_sources, epoch_dir, keep_count,
-    latest_complete, plan_components, prune_checkpoints, publish_checkpoint, resolve_components,
+    CKPT_FORMAT, COMPONENT_FORMAT, assemble_final, checkpoint_dirs, clean_state, component_sources, epoch_dir,
+    keep_count, latest_complete, plan_components, prune_checkpoints, publish_checkpoint, resolve_components,
 )
 
 MODEL = "FunAudioLLM/Fun-CosyVoice3-0.5B-2512"
@@ -114,7 +114,9 @@ def test_publish_checkpoint_meta_before_complete(run_dir, tmp_path, monkeypatch)
     assert seen == [True]
     assert not src.exists() and (d / "model.pt").read_bytes() == b"weights" and (d / ".complete").exists()
     meta = read_init_meta(d)
-    assert meta["format"] == CKPT_FORMAT == "cosyvoice-pt" and meta["backend"] == "cosyvoice" and meta["step"] == 40
+    # a per-component dir is not a warm-start source: resolve_init rejects this format (only `final` is cosyvoice-pt)
+    assert meta["format"] == COMPONENT_FORMAT == "cosyvoice-component" and CKPT_FORMAT == "cosyvoice-pt"
+    assert meta["backend"] == "cosyvoice" and meta["step"] == 40
 
 
 # ---- state dict cleaning -----------------------------------------------------------------------------------------

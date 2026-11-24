@@ -15,6 +15,8 @@ from .core.recipes import INIT_METHOD_PAIRS, RecipeSpec, parse_dataset_ref
 from .models import ModelVersion, RecipeVersion, Run
 
 FAKE_PAIRS = INIT_METHOD_PAIRS | {("none", "none")}  # the fake backend has method type "none"
+# init_meta formats a new run cannot start from, with the reason (completes "checkpoint '<name>' ...")
+UNSTARTABLE_FORMATS = {"cosyvoice-component": "is a single CosyVoice component; use 'final'"}
 
 
 async def resolve_init(
@@ -60,6 +62,9 @@ async def resolve_init(
     meta = read_init_meta(ckpt)
     if meta is None:
         return None, [f"init_from: run {run.id} checkpoint '{which}' has no init_meta.json"]
+    reason = UNSTARTABLE_FORMATS.get(str(meta.get("format", "")))
+    if reason:
+        return None, [f"init_from: checkpoint '{ckpt.name}' {reason}"]
     src_method = meta.get("method") or (src.get("method") or {}).get("type")
     dst_method = spec.method["type"]
     pairs = FAKE_PAIRS if spec.backend == "fake" else INIT_METHOD_PAIRS
@@ -70,8 +75,22 @@ async def resolve_init(
     return (run, ckpt, ref), []
 
 
+def _startable(rd: RunDir, d: Path, step, meta: dict | None) -> bool:
+    """`final`, or a dir that `init_from.checkpoint: <step>` resolves to (the same dir) and whose format a run
+    can start from. Others (cosyvoice per-component dirs, names whose digits differ from the step) are hidden."""
+    if d.name == "final":
+        return True
+    if meta is not None and str(meta.get("format", "")) in UNSTARTABLE_FORMATS:
+        return False
+    if not isinstance(step, int):
+        return False
+    found = resolve_checkpoint(rd, step)
+    return found is not None and found.resolve() == d.resolve()
+
+
 def list_checkpoints(rd: RunDir) -> list[dict]:
-    """Checkpoint directories of a run: `final` first, then the rest newest (highest step) first."""
+    """Checkpoint directories a run can start from: `final` first, then the rest newest (highest step) first.
+    Only `final` and dirs that `resolve_checkpoint(rd, step)` finds again are listed (see _startable)."""
     if not rd.checkpoints_dir.is_dir():
         return []
     items = []
@@ -83,6 +102,8 @@ def list_checkpoints(rd: RunDir) -> list[dict]:
         if not isinstance(step, int) or isinstance(step, bool):
             m = re.search(r"(\d+)$", d.name)
             step = int(m.group(1)) if m else None
+        if not _startable(rd, d, step, meta):
+            continue
         items.append({"name": d.name, "step": step, "complete": (d / ".complete").exists(), "init_meta": meta})
     items.sort(key=lambda i: (i["name"] != "final", -(i["step"] if i["step"] is not None else -1), i["name"]))
     return items

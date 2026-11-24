@@ -400,19 +400,32 @@ def _ckpt(run_dir, name, step=None, complete=True, meta=True):
         mark_complete(d)
 
 
-async def test_checkpoints_lists_complete_and_incomplete(client, session, settings):
+async def test_checkpoints_lists_only_resolvable(client, session, settings):
     rid = await make_run(client, session)
     rdir = settings.runs_dir / rid
     _ckpt(rdir, "step-2", step=2)
-    _ckpt(rdir, "step-7", complete=False)
+    _ckpt(rdir, "step-7", complete=False)  # resolve_checkpoint never returns an incomplete dir
+    _ckpt(rdir, "flow-epoch-4", step=5000)  # meta step != dir digits: `checkpoint: 5000` cannot find it
+    _ckpt(rdir, "llm-final", step=300)  # no digits at all
     (RunDir(rdir).checkpoints_dir / "step-9.txt").write_text("x")
     items = (await client.get(f"/api/runs/{rid}/checkpoints")).json()["items"]
     assert items == [
-        {"name": "step-7", "step": 7, "complete": False, "init_meta": None},
         {"name": "step-2", "step": 2, "complete": True,
          "init_meta": {"backend": "fake", "base_model": "m", "method": "none", "format": "fake", "step": 2}},
     ]
     assert (await client.get("/api/runs/r-nope/checkpoints")).status_code == 404
+
+
+async def test_checkpoints_skip_cosyvoice_components(client, session, settings):
+    from app.core.backend_kit import mark_complete, write_init_meta
+    rid = await make_run(client, session)
+    d = RunDir(settings.runs_dir / rid).checkpoints_dir / "llm-epoch-3-step-200"
+    d.mkdir(parents=True)
+    write_init_meta(d, backend="cosyvoice", base_model="m", method="full", format="cosyvoice-component", step=200)
+    mark_complete(d)
+    _ckpt(settings.runs_dir / rid, "final", step=200)
+    items = (await client.get(f"/api/runs/{rid}/checkpoints")).json()["items"]
+    assert [i["name"] for i in items] == ["final"]
 
 
 async def test_checkpoints_final_first(client, session, settings):

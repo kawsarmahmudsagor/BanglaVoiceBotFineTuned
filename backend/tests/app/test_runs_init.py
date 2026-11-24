@@ -160,3 +160,14 @@ async def test_resolve_init_rejects_checkpoint_without_init_meta(session, done_r
     res, errors = await resolve_init(session, _spec(init_from={"run": done_run.id}), settings=None)
     assert res is None
     assert errors == [f"init_from: run {done_run.id} checkpoint 'final' has no init_meta.json"]
+
+
+async def test_resolve_init_rejects_cosyvoice_component_checkpoint(session, settings, done_run):
+    d = RunDir(done_run.run_dir).checkpoints_dir / "llm-epoch-3-step-200"
+    d.mkdir(parents=True)
+    write_init_meta(d, backend="fake", base_model="m", method="none", format="cosyvoice-component", step=200)
+    mark_complete(d)
+    _, errors = await resolve_init(session, _spec(init_from={"run": done_run.id, "checkpoint": 200}), settings)
+    assert errors == ["init_from: checkpoint 'llm-epoch-3-step-200' is a single CosyVoice component; use 'final'"]
+    _, errors = await resolve_init(session, _spec(init_from={"run": done_run.id, "checkpoint": "latest"}), settings)
+    assert errors == ["init_from: checkpoint 'llm-epoch-3-step-200' is a single CosyVoice component; use 'final'"]

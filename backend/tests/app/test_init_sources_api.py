@@ -55,3 +55,17 @@ async def test_init_sources_lists_model_versions(client, session, settings):
     await session.commit()
     mvs = (await client.get(Q)).json()["model_versions"]
     assert mvs == [{"ref": "m1@v2", "run_id": a, "metrics": {"wer": 0.1}}]
+
+
+async def test_init_sources_only_offers_checkpoints_resolvable_by_step(client, session, settings):
+    a = await make_run(client, session, name="ra")
+    _ckpt(settings.runs_dir / a, "final", 9)
+    _ckpt(settings.runs_dir / a, "checkpoint-300", 300)
+    _ckpt(settings.runs_dir / a, "flow-epoch-2", 5000)
+    _ckpt(settings.runs_dir / a, "llm-final", 400)
+    d = RunDir(settings.runs_dir / a).checkpoints_dir / "llm-epoch-3-step-200"
+    d.mkdir(parents=True)
+    write_init_meta(d, backend="fake", base_model="m", method="none", format="cosyvoice-component", step=200)
+    mark_complete(d)
+    names = [c["name"] for c in (await client.get(Q)).json()["runs"][0]["checkpoints"]]
+    assert names == ["final", "checkpoint-300"]

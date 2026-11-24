@@ -588,4 +588,5 @@ Steps 3 and 4 need the GPU and are the slow part. They are cached like every pre
 ### 16.6 Warm start
 
 - Init format `cosyvoice-pt`: load `llm.pt`, `flow.pt` and `hift.pt` from the init path in place of the base weights.
+- Per-component checkpoint dirs (`<component>-epoch-<n>[-step-<s>]`, `<component>-final`) carry format `cosyvoice-component`. `resolve_init` rejects that format ("init_from: checkpoint '<name>' is a single CosyVoice component; use 'final'"), and `/api/init-sources` and the Checkpoints panel do not list them. In general those two only list `final` and checkpoints that `resolve_checkpoint(run, step)` finds again.
 - Allowed pair: `full` → `full` (§14.2 row "full (nemo, f5, hf)" gains `cosyvoice`).

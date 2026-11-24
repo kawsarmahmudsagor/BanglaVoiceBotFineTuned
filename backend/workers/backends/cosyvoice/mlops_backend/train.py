@@ -21,7 +21,8 @@ Checkpoints (`checkpoints/`): `<component>-epoch-<n>/model.pt` after each finish
 the epoch field of epoch n-1, so a resume REPEATS epoch n from its start with the saved weights and step counter;
 upstream does not save optimizer state). A finished component is `<component>-final/model.pt` (inference format: no epoch/step
 keys; hifigan = generator only, no `generator.` prefix) and its epoch dirs are removed. `final/` is assembled at the
-end (see assemble_final). Every complete dir carries init_meta.json (format `cosyvoice-pt`) before `.complete`.
+end (see assemble_final). Every complete dir carries init_meta.json before `.complete`: format `cosyvoice-pt` for
+`final/`, `cosyvoice-component` for the per-component dirs (not warm-start sources).
 
 Resume semantics (upstream saves WEIGHTS ONLY): a resume restores the weights and the step counter (scheduler position)
 but restarts the optimizer state (Adam moments) and the GradScaler. A mid-epoch save (save_steps, SIGTERM, max_steps) makes
@@ -49,7 +50,8 @@ from .compat import ensure_deepspeed_stub
 from .files import link_or_copy, link_tree
 
 BACKEND = "cosyvoice"
-CKPT_FORMAT = "cosyvoice-pt"
+CKPT_FORMAT = "cosyvoice-pt"  # `final/` only: the three weight files CosyVoice3 loads
+COMPONENT_FORMAT = "cosyvoice-component"  # one component's weights; not a warm-start source (resolve_init rejects it)
 COMPONENTS = ("llm", "flow", "hifigan")
 DEFAULT_COMPONENTS = ("llm", "flow")
 WEIGHT_FILE = {"llm": "llm.pt", "flow": "flow.pt", "hifigan": "hift.pt"}
@@ -140,7 +142,8 @@ def publish_checkpoint(src: Path, dst: Path, cfg: RunConfig, step: int) -> None:
     dst.mkdir(parents=True, exist_ok=True)
     (dst / ".complete").unlink(missing_ok=True)
     os.replace(src, dst / "model.pt")
-    write_init_meta(dst, backend=BACKEND, base_model=cfg.base_model, method="full", format=CKPT_FORMAT, step=step)
+    write_init_meta(dst, backend=BACKEND, base_model=cfg.base_model, method="full", format=COMPONENT_FORMAT,
+                    step=step)
     mark_complete(dst)
 
 
@@ -308,7 +311,7 @@ def make_component_final(rd: RunDir, cfg: RunConfig, component: str) -> Path:
     torch.save(clean_state(sd, component), str(tmp))
     del sd
     os.replace(tmp, out / "model.pt")
-    write_init_meta(out, backend=BACKEND, base_model=cfg.base_model, method="full", format=CKPT_FORMAT,
+    write_init_meta(out, backend=BACKEND, base_model=cfg.base_model, method="full", format=COMPONENT_FORMAT,
                     step=int(meta.get("step", 0)))
     mark_complete(out)
     for _, d, _ in checkpoint_dirs(rd, component):
