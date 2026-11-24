@@ -259,15 +259,25 @@ def _eval_one(model, tok, rd, cfg, rep, rows, *, prefix: str, max_samples: int) 
     return run_llm_eval(rd, rep, rows, _make_generate(model, tok), loss=loss, prefix=prefix, max_samples=max_samples)
 
 
+def _baseline_eval_key(cfg: RunConfig, max_samples: int, max_seq_len: int) -> dict:
+    key: dict = {"max_samples": max_samples, "max_seq_len": max_seq_len,
+                 "load_in_4bit": _method(cfg) == "qlora"}
+    if cfg.init_from is not None:
+        key["init"] = [cfg.init_from.source_run, cfg.init_from.checkpoint]
+    return key
+
+
 def eval_llm(rd: RunDir, cfg: RunConfig, rep) -> int:
+    final = rd.checkpoints_dir / "final"
+    if not (final / ".complete").exists():
+        raise RuntimeError(f"no completed final checkpoint at {final}")
     import unsloth  # noqa: F401  (must precede transformers/datasets imports)
     from unsloth import FastLanguageModel
 
     do_baseline, user_max = eval_opts(cfg)
-    max_samples = min(200, user_max) if user_max is not None else 200
+    max_samples = max(1, min(200, user_max)) if user_max is not None else 200
     max_seq_len = int(cfg.hparams.get("max_seq_len", 2048))
     rows = eval_rows(cfg)
-    final = rd.checkpoints_dir / "final"
 
     model, tok = FastLanguageModel.from_pretrained(
         str(final), max_seq_length=max_seq_len, load_in_4bit=_method(cfg) == "qlora")
@@ -279,7 +289,7 @@ def eval_llm(rd: RunDir, cfg: RunConfig, rep) -> int:
     if do_baseline:
         ds, _ = _eval_ds(cfg)
         init = cfg.init_from
-        eval_key = {"init": [init.source_run, init.checkpoint]} if init is not None else {}
+        eval_key = _baseline_eval_key(cfg, max_samples, max_seq_len)
 
         def compute() -> dict[str, float]:
             if init is not None:
