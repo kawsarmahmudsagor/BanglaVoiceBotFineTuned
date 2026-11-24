@@ -74,6 +74,26 @@ def test_warning_cap(dir_with, audio):
     assert report.stats["warning_counts"]["clipping"] == 1200
 
 
+def test_error_cap(dir_with, audio):
+    n = 1200  # rows whose audio is missing, plus one undecodable file
+    meta = "file,text\n" + "".join(f"m{i:04d}.wav,ক{i}\n" for i in range(n)) + "bad.wav,খ\n"
+    root = dir_with({"bad.wav": b"RIFFnotreallyawav"}, meta)
+    report, rows = validate_audio(root, "asr", workers=1)
+    assert not report.ok and rows == []
+    assert sum(e.code == "missing_audio" for e in report.errors) == 1000
+    assert report.stats["error_counts"] == {"missing_audio": n, "undecodable": 1}
+    assert any(e.code == "undecodable" for e in report.errors)
+
+
+def test_report_add_error_cap_keeps_not_ok():
+    from app.datasets.report import Issue, Report
+    r = Report()
+    for i in range(5):
+        r.add_error(Issue("x", str(i)), cap=3)
+    assert [e.message for e in r.errors] == ["0", "1", "2"]
+    assert r.stats["error_counts"] == {"x": 5} and not r.ok
+
+
 def test_report_add_warning_cap():
     from app.datasets.report import Issue, Report
     r = Report()

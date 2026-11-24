@@ -20,6 +20,14 @@ class Report:
     def ok(self) -> bool:
         return not self.errors
 
+    def add_error(self, issue: Issue, cap: int = 1000) -> None:
+        """Store at most `cap` errors per code; stats["error_counts"] counts every one. The first error of a
+        code is always stored, so `ok` is False as soon as any error is added."""
+        counts = self.stats.setdefault("error_counts", {})
+        counts[issue.code] = counts.get(issue.code, 0) + 1
+        if counts[issue.code] <= cap:
+            self.errors.append(issue)
+
     def add_warning(self, issue: Issue, cap: int = 1000) -> None:
         """Store at most `cap` warnings per code; stats["warning_counts"] always counts every one."""
         counts = self.stats.setdefault("warning_counts", {})

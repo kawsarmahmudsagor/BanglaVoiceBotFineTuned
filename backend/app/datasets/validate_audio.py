@@ -81,14 +81,15 @@ def validate_audio(
     report.stats.update(n_samples=0, total_duration_s=0.0)
     plain, per_split, problems = metadata_files(root)
     if problems:
-        report.errors.extend(problems)
+        for problem in problems:
+            report.add_error(problem)
         return report, []
     if plain is not None and per_split:
-        report.errors.append(Issue(
+        report.add_error(Issue(
             "mixed_metadata", "both metadata.csv and metadata_<split>.csv found: use one layout"))
         return report, []
     if plain is None and not per_split:
-        report.errors.append(Issue("missing_metadata", "metadata.csv not found at the dataset root"))
+        report.add_error(Issue("missing_metadata", "metadata.csv not found at the dataset root"))
         return report, []
     sources: list[tuple[Path, str | None]] = [(plain, None)] if plain else [
         (per_split[sp], sp) for sp in ("train", "val", "test") if sp in per_split]
@@ -97,11 +98,11 @@ def validate_audio(
         try:
             fieldnames, recs = _read_records(path)
         except UnicodeDecodeError:
-            report.errors.append(Issue("missing_metadata", f"{path.name} is not valid UTF-8"))
+            report.add_error(Issue("missing_metadata", f"{path.name} is not valid UTF-8"))
             return report, []
         missing = [c for c in _REQUIRED[task] if c not in fieldnames]
         for c in missing:
-            report.errors.append(Issue("missing_column", f"{path.name} has no '{c}' column"))
+            report.add_error(Issue("missing_column", f"{path.name} has no '{c}' column"))
         if missing:
             return report, []
         records += [(ln, r, file_split, path.name) for ln, r in recs]
@@ -175,12 +176,12 @@ def validate_audio(
     rates: set[int] = set()
     for item in plan:
         if isinstance(item, Issue):
-            report.errors.append(item)
+            report.add_error(item)
             continue
         rel, text, split, rec, _path = item
         res = next(results)
         if res["error"] is not None:
-            report.errors.append(Issue("undecodable", f"'{rel}' cannot be decoded: {res['error']}"))
+            report.add_error(Issue("undecodable", f"'{rel}' cannot be decoded: {res['error']}"))
             continue
         sample_id, sr, duration = res["sample_id"], res["sr"], res["duration"]
         row = {"sample_id": sample_id, "file": rel, "text": text,
@@ -195,7 +196,7 @@ def validate_audio(
             report.add_warning(Issue(code, msg, sample_id))
 
     for rel in sorted(set(on_disk) - referenced):
-        report.errors.append(Issue("missing_transcript", f"'{rel}' has no row in the metadata"))
+        report.add_error(Issue("missing_transcript", f"'{rel}' has no row in the metadata"))
     if len(rates) > 1:
         report.add_warning(Issue("mixed_sample_rates", f"sample rates differ: {sorted(rates)}"))
     report.stats["n_samples"] = len(rows)
