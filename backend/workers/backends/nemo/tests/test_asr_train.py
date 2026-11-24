@@ -162,7 +162,7 @@ def test_nemo_checkpoints_resume_and_warm_start(run_dir, monkeypatch, tmp_path):
     from app.core.contract import InitRef, RunDir, write_config
 
     hp = {"max_steps": 10, "save_steps": 5, "batch_size": 1, "grad_accum": 1, "learning_rate": 1e-5}
-    rd = run_dir("asr", NEMOTRON, hp, method={"type": "full"}, texts=BN_TEXTS)
+    rd = run_dir("asr", INDIC, hp, method={"type": "full"}, texts=BN_TEXTS)  # Nemotron has no Bangla tokens
     cfg = read_config(rd)
     rep = Reporter(rd)
     assert asr.prepare(rd, cfg, rep) == 0

@@ -256,6 +256,64 @@ def test_deepspeed_stub_provides_import_time_names_and_raises(monkeypatch):
         monkeypatch.delitem(sys.modules, k)
 
 
+def test_deepspeed_stub_reads_as_not_installed_to_find_spec_checks(monkeypatch):
+    """transformers probes optional packages with importlib.util.find_spec, which raises ValueError for a
+    sys.modules entry whose __spec__ is None; with a spec it returns, and the metadata lookup says 'not installed'."""
+    import importlib.metadata
+    import importlib.util
+    import sys
+
+    from mlops_backend.compat import ensure_deepspeed_stub
+
+    _drop_deepspeed(monkeypatch)
+    if importlib.util.find_spec("deepspeed") is not None:
+        pytest.skip("deepspeed is installed here")
+    ensure_deepspeed_stub()
+    try:
+        assert importlib.util.find_spec("deepspeed") is not None
+        assert importlib.util.find_spec("deepspeed.runtime.zero.stage_1_and_2") is not None
+        with pytest.raises(importlib.metadata.PackageNotFoundError):
+            importlib.metadata.version("deepspeed")
+    finally:
+        for k in [k for k in sys.modules if k == "deepspeed" or k.startswith("deepspeed.")]:
+            monkeypatch.delitem(sys.modules, k)
+
+
+def test_preload_cuda_libs_loads_global_and_retries_dependents(monkeypatch, tmp_path):
+    import ctypes
+    import sys
+
+    from mlops_backend.compat import preload_cuda_libs
+
+    d = tmp_path / "nvidia" / "cudnn" / "lib"
+    d.mkdir(parents=True)
+    for n in ("libcudnn_adv.so.9", "libcudnn.so.9", "libbroken.so.1"):
+        (d / n).write_bytes(b"")
+    loaded, calls = set(), []
+
+    def fake_cdll(path, mode=0):
+        name = path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        calls.append((name, mode))
+        if name == "libbroken.so.1" or (name == "libcudnn_adv.so.9" and "libcudnn.so.9" not in loaded):
+            raise OSError(name)
+        loaded.add(name)
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(ctypes, "CDLL", fake_cdll)
+    assert preload_cuda_libs([d]) == 2
+    assert loaded == {"libcudnn.so.9", "libcudnn_adv.so.9"}
+    assert all(mode == ctypes.RTLD_GLOBAL for _, mode in calls)
+
+
+def test_preload_cuda_libs_is_a_noop_off_linux(monkeypatch, tmp_path):
+    import sys
+
+    from mlops_backend.compat import preload_cuda_libs
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert preload_cuda_libs([tmp_path]) == 0
+
+
 def test_deepspeed_stub_leaves_a_real_install_alone(monkeypatch):
     import sys
     import types
