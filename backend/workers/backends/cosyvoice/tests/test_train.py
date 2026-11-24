@@ -441,7 +441,6 @@ def test_cosyvoice_20_steps_llm_and_synthesize(run_dir, monkeypatch, tmp_path):
 
     from mlops_backend import cosyvoice as p
 
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
     # prepare reads run_dir's own dataset; clips under 1 s are skipped (MIN_SECONDS), so make them 1.5 s
     rd = run_dir("tts", MODEL, {"components": ["llm"], "max_steps": 20, "grad_accum": 1, "learning_rate": 1e-5,
                                 "warmup_steps": 0, "save_steps": 10, "keep_checkpoints": 2,

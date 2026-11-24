@@ -138,7 +138,6 @@ def test_nemo_20_steps(run_dir, monkeypatch, tmp_path, model):
     from app.core.backend_kit import Reporter
     from app.core.contract import read_eval_results
 
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
     rd = run_dir("asr", model, {"max_steps": 20, "batch_size": 1, "grad_accum": 1, "learning_rate": 1e-5},
                  method={"type": "full"}, export=["nemo"], texts=BN_TEXTS)
     cfg = read_config(rd)
@@ -162,7 +161,6 @@ def test_nemo_checkpoints_resume_and_warm_start(run_dir, monkeypatch, tmp_path):
     from app.core.backend_kit import Reporter, latest_checkpoint, read_init_meta
     from app.core.contract import InitRef, RunDir, write_config
 
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
     hp = {"max_steps": 10, "save_steps": 5, "batch_size": 1, "grad_accum": 1, "learning_rate": 1e-5}
     rd = run_dir("asr", NEMOTRON, hp, method={"type": "full"}, texts=BN_TEXTS)
     cfg = read_config(rd)

@@ -151,7 +151,6 @@ def test_parler_20_steps_and_synthesize(run_dir, monkeypatch, tmp_path):
     from app.core.contract import read_eval_results
     from mlops_backend import parler as p
 
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
     rd = run_dir("tts", PARLER, {"max_steps": 20, "batch_size": 1, "grad_accum": 1, "learning_rate": 1e-5},
                  export=["safetensors"])
     cfg = read_config(rd)

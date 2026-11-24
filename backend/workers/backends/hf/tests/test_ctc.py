@@ -171,7 +171,6 @@ def test_wav2vec2_20_steps(run_dir, monkeypatch, tmp_path):
     from app.core.contract import read_eval_results
     from mlops_backend import ctc as c
 
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
     rd = run_dir("asr", W2V, {"max_steps": 20, "batch_size": 1, "grad_accum": 1, "learning_rate": 1e-4},
                  export=["safetensors"])
     cfg = read_config(rd)
@@ -195,7 +194,6 @@ def test_mms_adapter_only_trains_adapter(run_dir, monkeypatch, tmp_path):
     from app.core.backend_kit import Reporter
     from mlops_backend import ctc as c
 
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
     rd = run_dir("asr", MMS, {"max_steps": 5, "batch_size": 1, "grad_accum": 1},
                  export=["safetensors", "adapter-safetensors"], method={"type": "adapter"})
     cfg = read_config(rd)

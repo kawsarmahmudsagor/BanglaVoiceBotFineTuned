@@ -171,7 +171,6 @@ def test_whisper_full_20_steps(run_dir, monkeypatch, tmp_path):
     from app.core.contract import read_eval_results
     from mlops_backend import whisper_full as w
 
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
     rd = run_dir("asr", WHISPER, {"max_steps": 20, "batch_size": 1, "grad_accum": 1, "learning_rate": 1e-5},
                  export=["safetensors", "ct2"])
     cfg = read_config(rd)

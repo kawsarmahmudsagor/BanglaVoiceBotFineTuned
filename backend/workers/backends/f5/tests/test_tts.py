@@ -358,7 +358,6 @@ def test_f5_20_updates_and_synthesize(run_dir, monkeypatch, tmp_path):
     from app.core.contract import read_eval_results
     from mlops_backend import f5 as p
 
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
     rd = run_dir("tts", MODEL, {"max_steps": 20, "batch_size_frames": 3200, "grad_accum": 1, "learning_rate": 1e-5,
                                 "warmup_steps": 2, "save_steps": 10, "eval": {"max_samples": 2}},
                  export=["f5-ckpt"])
@@ -408,7 +407,6 @@ def test_f5_stop_then_resume_and_retention(run_dir, monkeypatch, tmp_path):
     from mlops_backend import f5 as p
     import mlops_backend.tts as t
 
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
     hp = {"max_steps": 30, "batch_size_frames": 3200, "grad_accum": 1, "learning_rate": 1e-5, "warmup_steps": 2,
           "save_steps": 10, "keep_checkpoints": 2}
     rd = run_dir("tts", MODEL, hp)
