@@ -1,0 +1,76 @@
+{
+  "name": "nemo",
+  "label": "NVIDIA NeMo (ASR)",
+  "tasks": {
+    "asr": {
+      "methods": [
+        "full"
+      ],
+      "export_formats": [
+        "nemo"
+      ],
+      "serve_formats": [],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "base_model": {
+            "type": "string",
+            "enum": [
+              "ai4bharat/indicconformer_stt_bn_hybrid_ctc_rnnt_large",
+              "bengaliAI/BanglaConformer",
+              "nvidia/nemotron-3.5-asr-streaming-0.6b"
+            ]
+          },
+          "method": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "enum": [
+                  "full"
+                ]
+              }
+            }
+          },
+          "hparams": {
+            "type": "object",
+            "properties": {
+              "learning_rate": {
+                "type": "number",
+                "minimum": 1e-06,
+                "maximum": 0.01
+              },
+              "epochs": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 50
+              },
+              "batch_size": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              "grad_accum": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              "max_steps": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "seed": {
+                "type": "integer"
+              },
+              "eval": {
+                "type": "object"
+              },
+              "prepare": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
