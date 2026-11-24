@@ -1,4 +1,4 @@
-"""F5 family handlers (IndicF5). Only `prepare` so far; train/eval/export come with the training task.
+"""F5 family handlers (IndicF5): prepare here; train/eval/export live in tts.py and are re-exported below.
 huggingface_hub is imported inside functions only."""
 from __future__ import annotations
 
@@ -67,3 +67,7 @@ def prepare_f5(rd: RunDir, cfg: RunConfig, rep) -> int:
 
 
 prepare = prepare_f5  # phase handler looked up by phases._dispatch
+
+from .tts import eval_f5 as eval  # noqa: E402,A001,F401  (phase handler names looked up by phases._dispatch)
+from .tts import export_f5 as export  # noqa: E402,F401
+from .tts import train  # noqa: E402,F401
