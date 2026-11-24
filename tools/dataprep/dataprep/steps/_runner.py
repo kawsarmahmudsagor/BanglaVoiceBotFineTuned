@@ -26,8 +26,12 @@ def run_step(
     force: bool,
     retry_errors: bool,
     params: dict | None = None,
+    only_ids: set[str] | None = None,
 ) -> int:
-    """Run row_fn over the clips that still need it and rewrite the step file. Returns rows computed."""
+    """Run row_fn over the clips that still need it and rewrite the step file. Returns rows computed.
+
+    `only_ids` restricts the clips to compute (rows outside it are simply not scored).
+    """
     params = params or {}
     clips = StepFile.read(wd.clips_path, step="import", version=1)
     path = wd.step_path(step)
@@ -39,6 +43,8 @@ def run_step(
         if retry_errors:
             prev = prev[prev["error"].isna()]
         todo = clips[~clips["id"].isin(prev["id"])]
+    if only_ids is not None:
+        todo = todo[todo["id"].isin(only_ids)]
     new = run_rows(row_fn, todo[input_cols].to_dict("records"), workers=workers, desc=step)
     new_df = pd.DataFrame(new).reindex(columns=columns)
     out = new_df if prev.empty else pd.concat([prev, new_df], ignore_index=True)

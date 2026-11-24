@@ -43,6 +43,18 @@ cosyvoice = [
   "numpy<2",
 ]
 
+# DNSMOS (torchmetrics) and Brouhaha SNR/C50/VAD scoring (spec 6.1). The pyannote/brouhaha weights are
+# gated on Hugging Face: set HF_TOKEN at runtime. brouhaha pins pyannote.audio<3.3.1, speechbrain<1.0, numpy<2.
+score = [
+  "torch==2.7.1",
+  "torchaudio==2.7.1",
+  "torchmetrics[audio]>=1.4",
+  "onnxruntime-gpu>=1.20",
+  "brouhaha",
+  "speechbrain",
+  "scikit-learn",
+]
+
 [dependency-groups]
 dev = ["pytest"]
 
@@ -56,6 +68,7 @@ build-constraint-dependencies = ["setuptools<81"]
 bangla-voice-backend = { path = "../../backend", editable = true }
 torch = { index = "pytorch-cu128" }
 torchaudio = { index = "pytorch-cu128" }
+brouhaha = { git = "https://github.com/marianne-m/brouhaha-vad", rev = "9132cbe62ac78f90abdbc21bcf6ec6cfe9bb4891" }
 
 [[tool.uv.index]]
 name = "pytorch-cu128"

@@ -26,8 +26,9 @@ _TEXT = ("text", 1, {})
 COLUMN_STEPS: dict[str, tuple[str, int, dict | None]] = {
     "dur": _AUDIO, "clip_frac": _AUDIO, "silence_share": _AUDIO, "lufs": _AUDIO, "src_sr": _AUDIO,
     "has_latin": _TEXT, "has_digits": _TEXT, "n_chars": _TEXT, "text_clean": _TEXT,
-    "dnsmos_ovrl": ("dnsmos", 1, None), "dnsmos_sig": ("dnsmos", 1, None), "dnsmos_bak": ("dnsmos", 1, None),
+    "dnsmos_p808": ("dnsmos", 1, None), "dnsmos_ovrl": ("dnsmos", 1, None), "dnsmos_sig": ("dnsmos", 1, None), "dnsmos_bak": ("dnsmos", 1, None),
     "snr_db": ("brouhaha", 1, None), "c50_db": ("brouhaha", 1, None), "max_pause_s": ("brouhaha", 1, None),
+    "speech_segments": ("brouhaha", 1, None),
     "speaker": ("speakers", 1, None),
 }
 DERIVED = {"cps": ("n_chars", "dur")}  # cps = n_chars / dur
@@ -139,9 +140,29 @@ def _char_audit(df: pd.DataFrame) -> tuple[list[dict], list[dict]]:
     return chars, [c for c in chars if not _expected(c["char"])]
 
 
-def select(wd: WorkDir, profile: Profile, labeller: str | None = None) -> SelectResult:
-    """Apply the profile; `labeller` (from --labeller) overrides `profile.cer_labeller`."""
+def eligible(
+    wd: WorkDir, profile: Profile, labeller: str | None = None, *, skip_columns: frozenset[str] = frozenset()
+) -> pd.DataFrame:
+    """Rows that pass the profile's filters, ignoring filters on `skip_columns`. Writes nothing."""
+    return select(wd, profile, labeller, skip_columns=skip_columns, write=False).rows
+
+
+def select(
+    wd: WorkDir,
+    profile: Profile,
+    labeller: str | None = None,
+    *,
+    skip_columns: frozenset[str] = frozenset(),
+    write: bool = True,
+) -> SelectResult:
+    """Apply the profile; `labeller` (from --labeller) overrides `profile.cer_labeller`.
+
+    `skip_columns` drops the filters on those columns (and does not load their steps); used by
+    `brouhaha --only-profile` and `listen`. `write=False` skips the selection and report files.
+    """
     labeller = labeller or profile.cer_labeller
+    if skip_columns:
+        profile = profile.model_copy(update={"filters": [f for f in profile.filters if f.column not in skip_columns]})
     df, steps_loaded = _load(wd, profile, labeller)
     df["cps"] = df["n_chars"].astype("float64") / df["dur"].astype("float64")
 
@@ -201,6 +222,8 @@ def select(wd: WorkDir, profile: Profile, labeller: str | None = None) -> Select
         "overlap_dropped": overlap_dropped,
     }
     rows = df[[c for c in df.columns if not c.startswith("_")]].reset_index(drop=True)
+    if not write:
+        return SelectResult(rows=rows, report=report)
     StepFile.write(wd.selection_path(profile.name), rows, step="select", version=1, params={"profile": profile.name})
     report_path = wd.selection_path(profile.name).with_name(f"{profile.name}.report.json")
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

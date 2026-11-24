@@ -4,9 +4,9 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import export, roundtrip_cosyvoice, select
+from . import export, listen, roundtrip_cosyvoice, select
 from .sources import bengaliai
-from .steps import audio_stats, text
+from .steps import audio_stats, brouhaha, dnsmos, text
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -15,6 +15,9 @@ def main(argv: list[str] | None = None) -> int:
     roundtrip_cosyvoice.add_parser(commands)
     text.add_parser(commands)
     audio_stats.add_parser(commands)
+    dnsmos.add_parser(commands)
+    brouhaha.add_parser(commands)
+    listen.add_parser(commands)
     select.add_parser(commands)
     export.add_parser(commands)
     imp = commands.add_parser("import", help="import a source corpus into the work dir")
