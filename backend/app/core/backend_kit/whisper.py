@@ -245,9 +245,21 @@ def ct2_command(merged: Path, out: Path) -> list[str]:
                    "--copy_files", "tokenizer.json", "preprocessor_config.json"]
 
 
+def ensure_tokenizer_json(model_dir: Path) -> None:
+    """ct2 --copy_files needs tokenizer.json. Older transformers (4.46, the hf backend) may save only the slow
+    tokenizer files (vocab.json, merges.txt); convert them to the fast tokenizer in place when it is missing."""
+    model_dir = Path(model_dir)
+    if (model_dir / "tokenizer.json").exists():
+        return
+    from transformers import WhisperTokenizerFast
+
+    WhisperTokenizerFast.from_pretrained(str(model_dir)).save_pretrained(str(model_dir))
+
+
 def run_ct2(merged: Path, out: Path) -> None:
     import subprocess
 
+    ensure_tokenizer_json(merged)
     subprocess.run(ct2_command(merged, out), check=True)
 
 
@@ -275,4 +287,4 @@ def prepare_whisper(rd, cfg, rep) -> int:
 __all__ = ["whisper_spec", "row_to_example", "pad_labels", "build_whisper", "make_transcriber",
            "prepare_whisper", "WhisperCollator", "batch_parts", "probe_duration", "check_audio_refs",
            "check_prepared_audio", "check_prepared_refs", "load_train_val", "load_processor", "processor_kwarg",
-           "dataloader_workers", "whisper_eval_loss", "asr_baseline_key", "ct2_command", "run_ct2"]
+           "dataloader_workers", "whisper_eval_loss", "asr_baseline_key", "ct2_command", "ensure_tokenizer_json", "run_ct2"]

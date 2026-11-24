@@ -15,6 +15,8 @@ dependencies = [
   "ctranslate2<4.6.3",
   "parler-tts",
   "descript-audio-codec",
+  # 0.2.3 ships protobuf-7 gencode (google.protobuf.runtime_version); descript-audiotools holds protobuf at 4.x.
+  "sentencepiece<0.2.3",
 ]
 
 [dependency-groups]
