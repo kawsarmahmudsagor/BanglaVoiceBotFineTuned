@@ -48,6 +48,8 @@ dev = ["pytest", "jsonschema"]
 
 [tool.uv]
 environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+# openai-whisper 20231117 is sdist-only and its setup.py imports pkg_resources, removed in setuptools 81.
+build-constraint-dependencies = ["setuptools<81"]
 
 [tool.uv.sources]
 bangla-voice-backend = { path = "../../..", editable = true }
