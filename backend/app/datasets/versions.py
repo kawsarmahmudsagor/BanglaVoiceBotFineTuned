@@ -51,7 +51,8 @@ async def run_ingest(session, ingest_id: int, settings) -> None:
         if len(files) != 1:
             raise RuntimeError(f"expected exactly one file for upload {row.upload_id}, found {len(files)}")
         result = await asyncio.to_thread(
-            ingest, files[0], row.task, settings.datasets_dir / row.dataset_name, settings.disk_min_gb
+            ingest, files[0], row.task, settings.datasets_dir / row.dataset_name, settings.disk_min_gb,
+            settings.ingest_workers,
         )
         report = asdict(result.report)
         if not result.report.ok:

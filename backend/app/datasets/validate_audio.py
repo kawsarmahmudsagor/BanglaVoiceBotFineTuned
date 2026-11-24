@@ -4,6 +4,7 @@ import csv
 import hashlib
 import re
 import unicodedata
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -71,7 +72,7 @@ def _read_records(path: Path) -> tuple[list[str], list[tuple[int, dict]]]:
     return fieldnames, records
 
 
-def validate_audio(root: Path, task: str) -> tuple[Report, list[dict]]:
+def validate_audio(root: Path, task: str, *, workers: int = 1) -> tuple[Report, list[dict]]:
     report = Report()
     report.stats.update(n_samples=0, total_duration_s=0.0)
     plain, per_split, problems = metadata_files(root)
@@ -108,15 +109,15 @@ def validate_audio(root: Path, task: str) -> tuple[Report, list[dict]]:
             on_disk[_nfc(p.relative_to(root).as_posix())] = p
     referenced: set[str] = set()
 
-    rows: list[dict] = []
-    rates: set[int] = set()
+    # Pass 1 (parent, cheap): metadata checks. `plan` keeps errors and decode jobs in metadata order.
+    plan: list[Issue | tuple] = []
     for line_no, rec, file_split, meta_name in records:
         rel = _nfc((rec.get("file") or "").strip().replace("\\", "/"))
         text = (rec.get("text") or "").strip()
         raw_split = (rec.get("split") or "").strip()
         if file_split is not None:
             if raw_split:
-                report.errors.append(Issue(
+                plan.append(Issue(
                     "split_in_split_file", f"{meta_name} line {line_no}: row has a split value but its file already sets the split"))
                 referenced.add(rel)
                 continue
@@ -125,54 +126,91 @@ def validate_audio(root: Path, task: str) -> tuple[Report, list[dict]]:
             try:
                 split = normalize_split(raw_split)
             except ValueError:
-                report.errors.append(Issue(
+                plan.append(Issue(
                     "unknown_split", f"split value '{raw_split}' on line {line_no}: {SPLIT_ERR}"))
                 referenced.add(rel)
                 continue
         path = on_disk.get(rel)
         if path is None:
-            report.errors.append(
+            plan.append(
                 Issue("missing_audio", f"'{rel}' is listed in {meta_name} but not found in the upload")
             )
             continue
         if rel in referenced:
-            report.errors.append(Issue("duplicate_file", f"'{rel}' is listed more than once in the metadata"))
+            plan.append(Issue("duplicate_file", f"'{rel}' is listed more than once in the metadata"))
             continue
         referenced.add(rel)
         if not text:
-            report.errors.append(Issue("missing_transcript", f"'{rel}' has an empty transcript"))
+            plan.append(Issue("missing_transcript", f"'{rel}' has an empty transcript"))
             continue
-        try:
-            data, sr = sf.read(path, dtype="float32", always_2d=True)
-        except Exception as e:  # noqa: BLE001 - any decode failure is a data error
-            report.errors.append(Issue("undecodable", f"'{rel}' cannot be decoded: {e}"))
+        plan.append((rel, text, split, rec, path))
+
+    # Pass 2: decode + per-file warnings (in a process pool when workers > 1), merged in metadata order.
+    jobs = [(item[4], item[0], item[1]) for item in plan if isinstance(item, tuple)]
+    if workers > 1 and len(jobs) > 1:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(_process_file, jobs, chunksize=16))
+    else:
+        results = map(_process_file, jobs)
+    results = iter(results)
+
+    rows: list[dict] = []
+    rates: set[int] = set()
+    for item in plan:
+        if isinstance(item, Issue):
+            report.errors.append(item)
             continue
-        mono = data.mean(axis=1)
-        duration = len(mono) / sr
-        sample_id = hashlib.sha256((text + "\n" + _sha256_file(path)).encode("utf-8")).hexdigest()[:16]
+        rel, text, split, rec, _path = item
+        res = next(results)
+        if res["error"] is not None:
+            report.errors.append(Issue("undecodable", f"'{rel}' cannot be decoded: {res['error']}"))
+            continue
+        sample_id, sr, duration = res["sample_id"], res["sr"], res["duration"]
         row = {"sample_id": sample_id, "file": rel, "text": text,
-               "duration_s": round(duration, 6), "sample_rate": int(sr), "split": split}
+               "duration_s": round(duration, 6), "sample_rate": sr, "split": split}
         for k, v in rec.items():
             if k and k not in row and k not in _RESERVED and isinstance(v, str):
                 row[k] = v
         rows.append(row)
-        rates.add(int(sr))
+        rates.add(sr)
         report.stats["total_duration_s"] += duration
-        _audio_warnings(report, sample_id, rel, mono, int(sr), duration)
+        for code, msg in res["warnings"]:
+            report.add_warning(Issue(code, msg, sample_id))
 
     for rel in sorted(set(on_disk) - referenced):
         report.errors.append(Issue("missing_transcript", f"'{rel}' has no row in the metadata"))
     if len(rates) > 1:
-        report.warnings.append(Issue("mixed_sample_rates", f"sample rates differ: {sorted(rates)}"))
+        report.add_warning(Issue("mixed_sample_rates", f"sample rates differ: {sorted(rates)}"))
     report.stats["n_samples"] = len(rows)
     report.stats["total_duration_s"] = round(report.stats["total_duration_s"], 3)
     report.stats["sample_rates"] = sorted(rates)
     return report, rows
 
 
+def _process_file(job: tuple[Path, str, str]) -> dict:
+    """Decode one file and compute its id and warnings. Module-level and pure so a process pool can run it."""
+    path, rel, text = job
+    try:
+        data, sr = sf.read(path, dtype="float32", always_2d=True)
+    except Exception as e:  # noqa: BLE001 - any decode failure is a data error
+        return {"error": str(e)}
+    mono = data.mean(axis=1)
+    duration = len(mono) / sr
+    sample_id = hashlib.sha256((text + "\n" + _sha256_file(path)).encode("utf-8")).hexdigest()[:16]
+    return {"error": None, "sample_id": sample_id, "sr": int(sr), "duration": duration,
+            "warnings": _file_warnings(rel, mono, int(sr), duration)}
+
+
 def _audio_warnings(report: Report, sid: str, rel: str, x: np.ndarray, sr: int, duration: float) -> None:
+    for code, msg in _file_warnings(rel, x, sr, duration):
+        report.add_warning(Issue(code, msg, sid))
+
+
+def _file_warnings(rel: str, x: np.ndarray, sr: int, duration: float) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+
     def warn(code: str, msg: str) -> None:
-        report.warnings.append(Issue(code, f"{rel}: {msg}", sid))
+        out.append((code, f"{rel}: {msg}"))
 
     if not _MIN_S <= duration <= _MAX_S:
         warn("duration_out_of_range", f"{duration:.2f}s is outside {_MIN_S}-{_MAX_S}s")
@@ -191,3 +229,4 @@ def _audio_warnings(report: Report, sid: str, rel: str, x: np.ndarray, sr: int, 
             lufs = pyloudnorm.Meter(sr).integrated_loudness(x.astype(np.float64))
         if not -30 <= lufs <= -14:
             warn("loudness_out_of_range", f"{lufs:.1f} LUFS is outside -30..-14")
+    return out

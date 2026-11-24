@@ -105,7 +105,7 @@ def _locate(root: Path, rel: str) -> Path:
     raise FileNotFoundError(rel)
 
 
-def ingest(upload_file: Path, task: str, dest_root: Path, disk_min_gb: float = 0) -> IngestResult:
+def ingest(upload_file: Path, task: str, dest_root: Path, disk_min_gb: float = 0, workers: int = 1) -> IngestResult:
     upload_file = Path(upload_file)
     dest_root = Path(dest_root)
     want = _TASK_EXT.get(task)
@@ -126,7 +126,7 @@ def ingest(upload_file: Path, task: str, dest_root: Path, disk_min_gb: float = 0
             rows = []
             root = _extract(upload_file, extracted, report, disk_min_gb)
             if root is not None:
-                report, rows = validate_audio(root, task)
+                report, rows = validate_audio(root, task, workers=workers)
         if report.ok and not rows:
             report.errors.append(Issue("no_samples", "upload contains no samples"))
         if not report.ok:

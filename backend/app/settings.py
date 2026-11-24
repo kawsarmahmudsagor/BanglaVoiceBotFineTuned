@@ -1,3 +1,4 @@
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -24,6 +25,7 @@ class Settings(BaseSettings):
     mlflow_tracking_uri: str | None = None
     disk_warn_gb: float = 20
     disk_min_gb: float = 10
+    ingest_workers: int = max(1, (os.cpu_count() or 2) // 2)
     cancel_grace_s: float = 60
     poll_interval_s: float = 2
     hf_token: SecretStr | None = None  # env HF_TOKEN; handed to backend subprocesses, never logged
