@@ -87,6 +87,53 @@ The Catalog page lists base models you can fine-tune, in three sections: LLM, ST
 - `cd backend && uv run pytest tests/core/test_repo_catalog.py` validates every committed entry. A file that fails to load also shows as a warning on the Catalog page, and the other entries still load.
 - The API reads the directory in `CATALOG_DIR` (default `<repo>/catalog`; compose mounts it read-only).
 
+## Training backends
+
+Real training runs in five backends under `backend/workers/backends/`, each with its own uv environment:
+
+| Backend | Tasks and models |
+|---|---|
+| `unsloth` | LLM SFT (Qwen3, Gemma 3, TituLM Llama 3.2; lora, qlora, full) and Whisper LoRA |
+| `hf` | Whisper full or adapter, wav2vec2 and MMS CTC, Indic Parler-TTS |
+| `nemo` | ASR (IndicConformer, BanglaConformer, Nemotron streaming) |
+| `f5` | TTS (IndicF5) |
+| `cosyvoice` | TTS (CosyVoice 3, experimental for Bangla) |
+
+Setup on the VM:
+
+- System packages: `build-essential cmake` (the unsloth backend builds llama.cpp for GGUF export) and `ffmpeg` (decodes m4a/aac sources).
+- `bash scripts/setup_venvs.sh [backend]` syncs the backend venvs (all of them without an argument). Lockfiles target Linux x86_64 only.
+- Set `HF_TOKEN` in `.env` and accept the model terms on Hugging Face for the gated repos: `ai4bharat/IndicF5`, `ai4bharat/indic-parler-tts`, `ai4bharat/indicconformer_stt_bn_hybrid_ctc_rnnt_large` and `google/gemma-3-4b-it`. Without access a run fails in prepare with `no access to <repo>: accept its terms on Hugging Face and set HF_TOKEN`. Weights are cached in `$DATA_ROOT/models/hf`.
+- `bash scripts/check_backend.sh <name>` syncs one backend and checks torch, CUDA and its key imports.
+- `bash scripts/test_backend.sh <name>` runs a backend's light tests (no GPU, no weights). Add `--heavy` for the GPU tests, on the VM only. Shared code: `cd backend && uv run pytest`.
+
+### End-to-end smoke
+
+With the stack and worker up (`scripts/dev.sh`), `bash scripts/smoke_backends.sh [backend...]` runs every backend (or the ones named) through the API. For each it:
+
+1. ingests a 16-sample fixture (`scripts/smoke/fixtures/llm.jsonl`, or sine-tone `asr.zip`/`tts.zip` of 1.5 s clips that `scripts/smoke/make_audio_fixtures.py` builds at run time with `uv run` in `backend/`);
+2. saves a recipe for the backend's first model with `hparams.max_steps=20` and `hparams.eval.max_samples=4`, and trains it;
+3. checks the run is `done`, `/prepared` is non-empty, `eval.metrics` has `perplexity` (LLM), `wer` (ASR) or `rtf` (TTS), and every export artifact exists on disk;
+4. starts a second run with `init_from: {run: <first run>, checkpoint: final}` and repeats the checks plus `parent_run_id`.
+
+It prints `PASS <backend>/<model>` and `PASS <backend>/<model> warm-start`, or `FAIL ...` with the reason, and exits non-zero on any failure. Environment: `API` (default `http://localhost:8000/api`), `SKIP_BACKENDS` (space-separated; a backend skipped at its VM gate), `RUN_TIMEOUT` (seconds per run, default 3600). The script reads export paths from the host filesystem, so run it on the VM.
+
+### Dataset format to prepared format
+
+Upload formats are validated at ingest (`file,text` for ASR; `file,text,speaker` for TTS; chat JSONL for LLM). At run start each backend converts the dataset version into a prepared cache under `$DATA_ROOT/data/prepared/<dataset_hash>/<spec_hash>/`, shared by runs with the same conversion spec. Audio converters keep references to the uploaded files instead of copying audio, to stay within the disk budget.
+
+| Family | Backend | Input fields | Prepared output |
+|---|---|---|---|
+| `chat` | unsloth | `messages`, `tools` | Tokenized rows (JSONL) with the model's chat template applied and labels only on assistant turns; samples over `max_seq_len` are skipped |
+| `whisper` | unsloth, hf | `file`, `text` | No audio: `audio_path`, duration and label ids (Bengali transcribe tokens). Audio is decoded to 16 kHz log-mel in the dataloader. Clips over 30 s or 448 label tokens are skipped |
+| `ctc` | hf | `file`, `text` | No audio: `<split>.jsonl` of `audio_path`, duration, text, plus `vocab.json` (character vocabulary for wav2vec2; the `ben` adapter vocabulary for MMS) |
+| `parler` | hf | `file`, `text`, `speaker` | DAC codes at 44.1 kHz (not audio), prompt and description token ids |
+| `nemo-manifest` | nemo | `file`, `text` | `<split>.jsonl` manifests (`audio_filepath`, `duration`, `text`) pointing at the source files; only formats soundfile cannot read are transcoded to 16 kHz FLAC |
+| `f5` | f5 | `file`, `text`, `speaker` | `<split>/raw.arrow` (audio path, text, duration), `duration.json`, `vocab.txt` (base vocabulary plus new characters appended) and one reference clip per speaker |
+| `cosyvoice` | cosyvoice | `file`, `text`, `speaker` | Kaldi lists, speaker embeddings, speech tokens, and parquet shards that embed the source audio bytes; one reference clip per speaker |
+
+Text goes through `bn_normalize` first. Rows that cannot be converted are skipped and listed on the run page; a run fails if more than 5% are skipped (`hparams.prepare.max_skip_share`).
+
 ## Adding a backend
 
 A backend is a directory under `backend/workers/backends/<name>/` that the worker runs as a subprocess in its own venv.

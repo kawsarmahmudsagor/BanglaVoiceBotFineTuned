@@ -1,0 +1,16 @@
+{"messages": [{"role": "user", "content": "আজকের আবহাওয়া কেমন?"}, {"role": "assistant", "content": "আজ আকাশ মেঘলা, বিকেলে বৃষ্টি হতে পারে।"}]}
+{"messages": [{"role": "user", "content": "ঢাকা থেকে চট্টগ্রাম কত দূর?"}, {"role": "assistant", "content": "সড়কপথে প্রায় ২৫০ কিলোমিটার।"}]}
+{"messages": [{"role": "user", "content": "আমার বিলের অবস্থা জানতে চাই।"}, {"role": "assistant", "content": "আপনার অ্যাকাউন্ট নম্বরটি বলুন, আমি দেখে দিচ্ছি।"}]}
+{"messages": [{"role": "user", "content": "অফিস কখন খোলে?"}, {"role": "assistant", "content": "সকাল ৯টা থেকে বিকেল ৫টা পর্যন্ত।"}]}
+{"messages": [{"role": "user", "content": "ধন্যবাদ।"}, {"role": "assistant", "content": "আপনাকেও ধন্যবাদ, আর কিছু জানার থাকলে বলুন।"}]}
+{"messages": [{"role": "user", "content": "আমার ইন্টারনেট কাজ করছে না।"}, {"role": "assistant", "content": "দুঃখিত, রাউটারটি একবার বন্ধ করে আবার চালু করে দেখবেন কি?"}]}
+{"messages": [{"role": "user", "content": "নতুন সংযোগ নিতে কী কী কাগজ লাগবে?"}, {"role": "assistant", "content": "জাতীয় পরিচয়পত্রের কপি আর এক কপি ছবি লাগবে।"}]}
+{"messages": [{"role": "user", "content": "আমার অর্ডারটা কবে পৌঁছাবে?"}, {"role": "assistant", "content": "আপনার অর্ডারটি আগামী দুই দিনের মধ্যে পৌঁছে যাবে।"}]}
+{"messages": [{"role": "user", "content": "টাকা ফেরত পেতে কত দিন লাগে?"}, {"role": "assistant", "content": "সাধারণত পাঁচ থেকে সাত কর্মদিবসের মধ্যে টাকা ফেরত দেওয়া হয়।"}]}
+{"messages": [{"role": "user", "content": "আপনাদের শাখা কি শুক্রবার খোলা থাকে?"}, {"role": "assistant", "content": "না, শুক্রবার আমাদের শাখা বন্ধ থাকে।"}]}
+{"messages": [{"role": "user", "content": "পাসওয়ার্ড ভুলে গেছি, কী করব?"}, {"role": "assistant", "content": "লগইন পাতায় পাসওয়ার্ড ভুলে গেছি লিঙ্কে চাপ দিন, আপনার ফোনে একটি কোড যাবে।"}]}
+{"messages": [{"role": "user", "content": "ডাক্তারের অ্যাপয়েন্টমেন্ট নিতে চাই।"}, {"role": "assistant", "content": "কোন দিন এবং কোন সময় আপনার জন্য সুবিধাজনক বলুন।"}]}
+{"messages": [{"role": "user", "content": "এই পণ্যটির দাম কত?"}, {"role": "assistant", "content": "এই পণ্যটির দাম এক হাজার দুইশো টাকা।"}]}
+{"messages": [{"role": "user", "content": "আমি কি আমার ঠিকানা বদলাতে পারি?"}, {"role": "assistant", "content": "হ্যাঁ, আপনার প্রোফাইলে গিয়ে নতুন ঠিকানা দিলেই হবে।"}]}
+{"messages": [{"role": "user", "content": "আপনার সঙ্গে কথা বলে ভালো লাগল।"}, {"role": "assistant", "content": "আপনার সঙ্গে কথা বলে আমারও ভালো লাগল, আপনার দিনটি শুভ হোক।"}]}
+{"messages": [{"role": "user", "content": "কাল কি বৃষ্টি হবে?"}, {"role": "assistant", "content": "পূর্বাভাস অনুযায়ী কাল হালকা বৃষ্টির সম্ভাবনা আছে।"}]}
