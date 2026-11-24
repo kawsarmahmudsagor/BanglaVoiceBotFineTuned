@@ -157,7 +157,7 @@ def test_eval_asr_requires_complete_final(run_dir):
 
 def test_asr_baseline_eval_key_varies(run_dir):
     from app.core.contract import InitRef
-    from mlops_backend.asr import _asr_baseline_key
+    from mlops_backend.asr import asr_baseline_key as _asr_baseline_key
     cfg = read_config(run_dir("asr", WHISPER))
     a = _asr_baseline_key(cfg, None)
     assert _asr_baseline_key(cfg, 5) != a

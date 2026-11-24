@@ -4,16 +4,18 @@ torch, transformers, unsloth, trl and datasets are imported inside functions onl
 """
 from __future__ import annotations
 
-import math
 from pathlib import Path
 from typing import Literal
 
 from app.core.backend_kit import (
     NanGuard, StopFlag, eval_opts, init_source, latest_checkpoint, mark_complete, write_init_meta,
 )
-from app.core.contract import DatasetRef, RunConfig, RunDir, read_prepared_refs
+from app.core.backend_kit.runutil import eval_ds as _eval_ds  # noqa: F401
+from app.core.backend_kit.runutil import eval_loss_files, eval_rows  # noqa: F401
+from app.core.backend_kit.runutil import free_gpu as _free_gpu  # noqa: F401
+from app.core.backend_kit.runutil import total_steps, train_ref as _train_ref, trainer_args  # noqa: F401
+from app.core.contract import RunConfig, RunDir
 from app.core.evaluation import baseline_metrics, merge_results, run_llm_eval
-from app.core.prepare import iter_rows
 
 from .export import export  # noqa: F401  (phase handler looked up by phases._dispatch)
 from .prepare.chat import prepare_llm as prepare  # noqa: F401
@@ -39,50 +41,8 @@ def _method(cfg: RunConfig) -> str:
     return str(cfg.method.get("type", "lora"))
 
 
-def _train_ref(rd: RunDir) -> dict:
-    for r in read_prepared_refs(rd):
-        if r.get("role") == "train":
-            return r
-    raise RuntimeError("no prepared train dataset (prepared_refs.json has no train entry)")
-
-
-def total_steps(cfg: RunConfig, rd: RunDir) -> int:
-    hp = cfg.hparams
-    if hp.get("max_steps"):
-        return int(hp["max_steps"])
-    n = int(_train_ref(rd).get("counts", {}).get("train", 0))
-    per_step = int(hp.get("batch_size", 2)) * int(hp.get("grad_accum", 4))
-    return max(1, math.ceil(n / per_step) * math.ceil(float(hp.get("epochs", 1))))
-
-
 def _trainer_args(cfg: RunConfig, rd: RunDir) -> dict:
-    """TrainingArguments kwargs as a plain dict (max_steps overrides num_train_epochs)."""
-    hp = cfg.hparams
-    method = _method(cfg)
-    save_steps = max(50, total_steps(cfg, rd) // 10)
-    args: dict = {
-        "output_dir": str(rd.checkpoints_dir),
-        "per_device_train_batch_size": int(hp.get("batch_size", 2)),
-        "per_device_eval_batch_size": int(hp.get("batch_size", 2)),
-        "gradient_accumulation_steps": int(hp.get("grad_accum", 4)),
-        "learning_rate": float(hp.get("learning_rate", 2e-4)),
-        "warmup_steps": int(hp.get("warmup_steps", 5)),
-        "save_steps": save_steps,
-        "save_total_limit": 3,
-        "logging_steps": 10,
-        "eval_strategy": "steps",
-        "eval_steps": save_steps,
-        "bf16": True,
-        "optim": "adamw_8bit" if method == "full" else "adamw_torch",
-        "report_to": [],
-        "seed": cfg.seed,
-        "remove_unused_columns": False,
-    }
-    if hp.get("max_steps"):
-        args["max_steps"] = int(hp["max_steps"])
-    else:
-        args["num_train_epochs"] = float(hp.get("epochs", 1))
-    return args
+    return trainer_args(cfg, rd, "adamw_8bit" if _method(cfg) == "full" else "adamw_torch")
 
 
 def merged_init_dir(rd: RunDir) -> Path:
@@ -193,29 +153,6 @@ def train_llm(rd: RunDir, cfg: RunConfig, rep) -> int:
     return 0
 
 
-def _eval_ds(cfg: RunConfig) -> tuple[DatasetRef, list[str]]:
-    """Dataset and splits used for eval: the eval dataset's own splits, else the train dataset's `val`."""
-    ev = cfg.datasets.get("eval")
-    if ev is not None:
-        return ev, list(ev.splits)
-    return cfg.datasets["train"], ["val"]
-
-
-def eval_rows(cfg: RunConfig) -> list[dict]:
-    ds, splits = _eval_ds(cfg)
-    return [row for s in splits for row in iter_rows(ds, s)]
-
-
-def eval_loss_files(rd: RunDir, cfg: RunConfig) -> list[Path]:
-    """Prepared JSONL files behind the eval rows (same selection as eval_rows)."""
-    role = "eval" if cfg.datasets.get("eval") is not None else "train"
-    ref = next((r for r in read_prepared_refs(rd) if r.get("role") == role), None)
-    if ref is None:
-        raise RuntimeError(f"no prepared {role} dataset (prepared_refs.json has no {role} entry)")
-    _, splits = _eval_ds(cfg)
-    return [Path(ref["path"]) / f"{s}.jsonl" for s in splits]
-
-
 def _eval_loss(model, tok, rd: RunDir, cfg: RunConfig) -> float | None:
     from datasets import load_dataset
     from transformers import DataCollatorForSeq2Seq, Trainer, TrainingArguments
@@ -244,15 +181,6 @@ def _make_generate(model, tok):
         return tok.decode(out[0][enc["input_ids"].shape[1]:], skip_special_tokens=True)
 
     return generate
-
-
-def _free_gpu() -> None:
-    import gc
-
-    import torch
-
-    gc.collect()
-    torch.cuda.empty_cache()
 
 
 def _eval_one(model, tok, rd, cfg, rep, rows, *, prefix: str, max_samples: int) -> dict[str, float]:

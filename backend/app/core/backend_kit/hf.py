@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from pathlib import Path
 
 from transformers import TrainerCallback
@@ -41,3 +42,15 @@ class ContractCallback(TrainerCallback):
 
     def on_save(self, args, state, control, **kwargs):
         mark_complete(Path(args.output_dir) / f"checkpoint-{state.global_step}")
+
+
+class MetaContractCallback(ContractCallback):
+    """ContractCallback that writes init_meta into each checkpoint BEFORE `.complete` appears."""
+
+    def __init__(self, rep, stop, nan, total_steps: int, write_meta: Callable[[Path, int], None]):
+        super().__init__(rep, stop, nan, total_steps)
+        self.write_meta = write_meta
+
+    def on_save(self, args, state, control, **kwargs):
+        self.write_meta(Path(args.output_dir) / f"checkpoint-{state.global_step}", state.global_step)
+        super().on_save(args, state, control, **kwargs)

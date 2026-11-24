@@ -5,24 +5,23 @@ Start-from-checkpoint rules (plan_init, init_meta, read-only init dir) are share
 """
 from __future__ import annotations
 
-import os
 import shutil
-import subprocess
-import sys
 from pathlib import Path
 
 from app.core.backend_kit import (
     NanGuard, StopFlag, eval_opts, export_all, init_source, latest_checkpoint, mark_complete,
 )
 from app.core.backend_kit.whisper import (
-    LANGUAGE, TASK, WhisperCollator, check_audio_refs, make_transcriber, prepare_whisper,
+    TASK, WhisperCollator, asr_baseline_key, check_prepared_audio, check_prepared_refs,  # noqa: F401
+    dataloader_workers, ct2_command, load_processor, load_train_val, make_transcriber, prepare_whisper, run_ct2,
+    whisper_eval_loss,
 )
 from app.core.contract import RunConfig, RunDir
 from app.core.evaluation import baseline_metrics, merge_results, run_asr_eval
 
 from .export import _dir_artifact
 from .llm import (
-    _eval_ds, _free_gpu, eval_loss_files, _require_trainable, _train_ref, _trainer_args, eval_rows, plan_init,
+    _eval_ds, _free_gpu, eval_loss_files, _require_trainable, _trainer_args, eval_rows, plan_init,
     total_steps, write_ckpt_meta,
 )
 
@@ -34,16 +33,12 @@ def asr_trainer_args(cfg: RunConfig, rd: RunDir) -> dict:
     args = _trainer_args(cfg, rd)
     args["label_names"] = ["labels"]
     args["predict_with_generate"] = False
-    args["dataloader_num_workers"] = min(8, os.cpu_count() or 1)
+    args["dataloader_num_workers"] = dataloader_workers()
     return args
 
 
 def _processor(cfg: RunConfig):
-    from transformers import WhisperProcessor
-
-    p = WhisperProcessor.from_pretrained(cfg.base_model)
-    p.tokenizer.set_prefix_tokens(language=LANGUAGE, task=TASK)
-    return p
+    return load_processor(cfg.base_model)
 
 
 def _from_pretrained(name: str):
@@ -85,47 +80,24 @@ def _load_asr(cfg: RunConfig, rd: RunDir):
     return model
 
 
-def check_prepared_audio(ds, prepared) -> None:
-    """First and last audio_path of a prepared split must still exist."""
-    if len(ds):
-        check_audio_refs([ds[0]["audio_path"], ds[len(ds) - 1]["audio_path"]], str(prepared))
-
-
-def _check_prepared_refs(rd: RunDir) -> None:
-    from datasets import load_from_disk
-
-    prepared = Path(_train_ref(rd)["path"])
-    check_prepared_audio(load_from_disk(str(prepared / "train")), prepared)
-
-
 def train_asr(rd: RunDir, cfg: RunConfig, rep) -> int:
     import unsloth  # noqa: F401  (must precede transformers/trl/datasets imports)
-    from datasets import load_from_disk
     from transformers import Seq2SeqTrainer, Seq2SeqTrainingArguments
 
-    from app.core.backend_kit.hf import ContractCallback
+    from app.core.backend_kit.hf import MetaContractCallback
 
     stop = StopFlag().install()
     model = _load_asr(cfg, rd)
     _require_trainable(model)
     processor = _processor(cfg)
-    prepared = Path(_train_ref(rd)["path"])
-    train_ds = load_from_disk(str(prepared / "train"))
-    check_prepared_audio(train_ds, prepared)
-    val_ds = load_from_disk(str(prepared / "val"))
+    train_ds, val_ds, _ = load_train_val(rd)
     total = total_steps(cfg, rd)
-
-    class _Callback(ContractCallback):
-        def on_save(self, args, state, control, **kwargs):
-            # init_meta must exist before `.complete` appears.
-            write_ckpt_meta(Path(args.output_dir) / f"checkpoint-{state.global_step}", cfg, state.global_step)
-            super().on_save(args, state, control, **kwargs)
 
     trainer = Seq2SeqTrainer(
         model=model, args=Seq2SeqTrainingArguments(**asr_trainer_args(cfg, rd)),
         train_dataset=train_ds, eval_dataset=val_ds, processing_class=processor.feature_extractor,
         data_collator=WhisperCollator(processor, int(model.config.decoder_start_token_id)),
-        callbacks=[_Callback(rep, stop, NanGuard(), total)],
+        callbacks=[MetaContractCallback(rep, stop, NanGuard(), total, lambda d, step: write_ckpt_meta(d, cfg, step))],
     )
     last = latest_checkpoint(rd) if cfg.resume else None
     trainer.train(resume_from_checkpoint=str(last) if last else None)
@@ -155,30 +127,9 @@ def _transcriber(model, cfg: RunConfig):
 
 
 def _eval_loss(model, cfg: RunConfig, rd: RunDir) -> float | None:
-    from datasets import concatenate_datasets, load_from_disk
-    from transformers import Seq2SeqTrainer, Seq2SeqTrainingArguments
-
     dirs = [f.with_suffix("") for f in eval_loss_files(rd, cfg)]  # prepared split dirs (llm helper lists <split>.jsonl)
-    parts = [load_from_disk(str(d)) for d in dirs if d.is_dir()]
-    parts = [p for p in parts if len(p)]
-    if not parts:
-        return None
-    processor = _processor(cfg)
-    args = Seq2SeqTrainingArguments(
-        output_dir=str(rd.path / "work" / "eval_tmp"), per_device_eval_batch_size=int(cfg.hparams.get("batch_size", 2)),
-        bf16=True, report_to=[], remove_unused_columns=False, label_names=["labels"], seed=cfg.seed,
-        dataloader_num_workers=min(8, os.cpu_count() or 1))
-    trainer = Seq2SeqTrainer(model=model, args=args, eval_dataset=concatenate_datasets(parts),
-                             processing_class=processor.feature_extractor,
-                             data_collator=WhisperCollator(processor, int(model.config.decoder_start_token_id)))
-    return float(trainer.evaluate()["eval_loss"])
-
-
-def _asr_baseline_key(cfg: RunConfig, max_samples: int | None) -> dict:
-    key: dict = {"max_samples": max_samples}
-    if cfg.init_from is not None:
-        key["init"] = [cfg.init_from.source_run, cfg.init_from.checkpoint]
-    return key
+    return whisper_eval_loss(model, _processor(cfg), dirs, batch_size=int(cfg.hparams.get("batch_size", 2)),
+                             seed=cfg.seed, work_dir=rd.path / "work" / "eval_tmp")
 
 
 def eval_asr(rd: RunDir, cfg: RunConfig, rep) -> int:
@@ -189,7 +140,7 @@ def eval_asr(rd: RunDir, cfg: RunConfig, rep) -> int:
 
     do_baseline, max_samples = eval_opts(cfg)
     rows = eval_rows(cfg)
-    _check_prepared_refs(rd)
+    check_prepared_refs(rd)
 
     model, _ = _from_pretrained(str(final))
     loss = _eval_loss(model, cfg, rd)
@@ -218,18 +169,9 @@ def eval_asr(rd: RunDir, cfg: RunConfig, rep) -> int:
                 del m
                 _free_gpu()
 
-        base = baseline_metrics(cfg, ds, _asr_baseline_key(cfg, max_samples), compute)
+        base = baseline_metrics(cfg, ds, asr_baseline_key(cfg, max_samples), compute)
     merge_results(rd, tuned, base)
     return 0
-
-
-def ct2_command(merged: Path, out: Path) -> list[str]:
-    """ct2-transformers-converter from this interpreter's environment (never a bare PATH lookup)."""
-    script = Path(sys.executable).parent / ("ct2-transformers-converter.exe" if sys.platform == "win32"
-                                            else "ct2-transformers-converter")
-    head = [str(script)] if script.exists() else [sys.executable, "-m", "ctranslate2.converters.transformers"]
-    return head + ["--model", str(merged), "--output_dir", str(out), "--force", "--quantization", "float16",
-                   "--copy_files", "tokenizer.json", "preprocessor_config.json"]
 
 
 def asr_exporters(rd: RunDir, cfg: RunConfig) -> dict:
@@ -267,7 +209,7 @@ def asr_exporters(rd: RunDir, cfg: RunConfig) -> dict:
             merge_into(tmp)
             src = tmp
         try:
-            subprocess.run(ct2_command(Path(src), out), check=True)
+            run_ct2(Path(src), out)
         finally:
             if tmp is not None:
                 shutil.rmtree(tmp, ignore_errors=True)
