@@ -136,6 +136,8 @@ export interface IngestStatus {
   error: string | null;
   dataset: string;
   created_at: string | null;
+  /** Files validated so far; null until validation starts (and on older API responses). */
+  progress?: { done: number; total: number } | null;
 }
 
 // recipes

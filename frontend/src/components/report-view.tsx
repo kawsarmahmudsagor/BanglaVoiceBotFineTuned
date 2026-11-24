@@ -9,17 +9,39 @@ function group(issues: ReportIssue[]): [string, ReportIssue[]][] {
   return [...m.entries()];
 }
 
+/** Per-code totals (stats.warning_counts / stats.error_counts): the backend stores only a capped sample. */
+function readCounts(v: unknown): Record<string, number> {
+  if (!v || typeof v !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(v as Record<string, unknown>).filter((e): e is [string, number] => typeof e[1] === "number"),
+  );
+}
+
+/** The true total: the per-code counts where present, else the number of stored issues. */
+function total(issues: ReportIssue[], counts: Record<string, number>): number {
+  return group(issues).reduce((n, [code, items]) => n + Math.max(counts[code] ?? 0, items.length), 0)
+    + Object.entries(counts).filter(([code]) => !issues.some((i) => i.code === code)).reduce((n, [, c]) => n + c, 0);
+}
+
 function IssueGroups({
-  issues, tone, dataset, version,
-}: { issues: ReportIssue[]; tone: string; dataset?: string; version?: number }) {
+  issues, counts, tone, dataset, version,
+}: { issues: ReportIssue[]; counts: Record<string, number>; tone: string; dataset?: string; version?: number }) {
   return (
     <ul className="space-y-1">
-      {group(issues).map(([code, items]) => (
+      {group(issues).map(([code, items]) => {
+        const all = Math.max(counts[code] ?? 0, items.length);
+        return (
         <li key={code}>
           <details className="rounded-md border px-2 py-1 text-sm">
             <summary className="cursor-pointer">
               <span className={`font-mono ${tone}`}>{code}</span>{" "}
-              <span className="text-muted-foreground">({items.length})</span>
+              <span className="text-muted-foreground">({all})</span>
+              {all > items.length && (
+                <>
+                  {" "}
+                  <span className="text-xs text-muted-foreground">{`showing first ${items.length} of ${all}`}</span>
+                </>
+              )}
             </summary>
             <ul className="mt-1 max-h-64 space-y-0.5 overflow-auto pl-3">
               {items.map((i, idx) => (
@@ -42,7 +64,8 @@ function IssueGroups({
             </ul>
           </details>
         </li>
-      ))}
+        );
+      })}
     </ul>
   );
 }
@@ -54,19 +77,23 @@ export function ReportView({
   const errors = report.errors ?? [];
   const warnings = report.warnings ?? [];
   const stats = (report.stats ?? {}) as Record<string, unknown>;
+  const errorCounts = readCounts(stats.error_counts);
+  const warningCounts = readCounts(stats.warning_counts);
+  const nErrors = total(errors, errorCounts);
+  const nWarnings = total(warnings, warningCounts);
   return (
     <div className="space-y-3">
       <div className="flex gap-4 text-sm font-semibold">
-        <span className={errors.length ? "text-red-700 dark:text-red-300" : ""}>{plural(errors.length, "error")}</span>
-        <span className={warnings.length ? "text-amber-700 dark:text-amber-300" : ""}>
-          {plural(warnings.length, "warning")}
+        <span className={nErrors ? "text-red-700 dark:text-red-300" : ""}>{plural(nErrors, "error")}</span>
+        <span className={nWarnings ? "text-amber-700 dark:text-amber-300" : ""}>
+          {plural(nWarnings, "warning")}
         </span>
       </div>
       {errors.length > 0 && (
-        <IssueGroups issues={errors} tone="text-red-700 dark:text-red-300" dataset={dataset} version={version} />
+        <IssueGroups issues={errors} counts={errorCounts} tone="text-red-700 dark:text-red-300" dataset={dataset} version={version} />
       )}
       {warnings.length > 0 && (
-        <IssueGroups issues={warnings} tone="text-amber-700 dark:text-amber-300" dataset={dataset} version={version} />
+        <IssueGroups issues={warnings} counts={warningCounts} tone="text-amber-700 dark:text-amber-300" dataset={dataset} version={version} />
       )}
       {Object.keys(stats).length > 0 && (
         <dl className="flex flex-wrap gap-x-4 gap-y-1 text-xs">

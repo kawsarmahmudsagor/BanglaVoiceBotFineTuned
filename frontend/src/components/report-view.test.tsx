@@ -45,6 +45,34 @@ describe("ReportView", () => {
     expect(link).toHaveAttribute("href", "/datasets/ds/v/3?warning=too_short");
   });
 
+  it("shows per-code totals from the stats counts when stored issues are capped", () => {
+    const warnings = [
+      ...Array.from({ length: 3 }, (_, i) => ({ code: "clipping", message: `c${i}`, sample_id: `s${i}` })),
+      { code: "high_silence", message: "quiet", sample_id: "q" },
+    ];
+    const errors = [
+      { code: "undecodable", message: "e0", sample_id: null },
+      { code: "undecodable", message: "e1", sample_id: null },
+    ];
+    render(
+      <ReportView
+        report={{
+          errors,
+          warnings,
+          stats: { warning_counts: { clipping: 1200, high_silence: 1 }, error_counts: { undecodable: 5000 } },
+        }}
+      />,
+    );
+    expect(screen.getByText("5000 errors")).toBeInTheDocument();
+    expect(screen.getByText("1201 warnings")).toBeInTheDocument();
+    expect(screen.getByText("(1200)")).toBeInTheDocument();
+    expect(screen.getByText("showing first 3 of 1200")).toBeInTheDocument();
+    expect(screen.getByText("(5000)")).toBeInTheDocument();
+    expect(screen.getByText("showing first 2 of 5000")).toBeInTheDocument();
+    expect(screen.getByText("(1)")).toBeInTheDocument(); // high_silence: not capped, no "showing" note
+    expect(screen.getAllByText(/showing first/)).toHaveLength(2);
+  });
+
   it("renders nothing useful-but-safe for a null report", () => {
     render(<ReportView report={null} />);
     expect(screen.getByText("No report")).toBeInTheDocument();

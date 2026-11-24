@@ -156,9 +156,18 @@ export function IngestErrorNotice({ error }: { error: string | null }) {
 }
 
 export function IngestingNote({ phase, ingest }: { phase: IngestPhase; ingest: IngestStatus | null }) {
-  return phase === "ingesting" ? (
+  if (phase !== "ingesting") return null;
+  const p = ingest?.progress;
+  if (p && p.total > 0) {
+    return (
+      <div className="text-sm text-muted-foreground">
+        Validating {p.done.toLocaleString()} of {p.total.toLocaleString()} files...
+      </div>
+    );
+  }
+  return (
     <div className="text-sm text-muted-foreground">Validating and ingesting{ingest ? ` (${ingest.state})` : ""}...</div>
-  ) : null;
+  );
 }
 
 export function FailedReport({ ingest }: { ingest: IngestStatus | null }) {
