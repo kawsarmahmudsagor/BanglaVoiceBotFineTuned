@@ -60,8 +60,12 @@ class Profile(_Base):
 
 
 def load_profile(name_or_path: str | Path) -> Profile:
+    """A YAML path (a .yaml/.yml name, or any existing file), else a shipped profile by name.
+
+    A directory in the cwd named like a shipped profile (e.g. `voice/`) is not a profile file and is ignored.
+    """
     p = Path(name_or_path)
-    if not (p.suffix in (".yaml", ".yml") or p.exists()):
+    if not (p.suffix in (".yaml", ".yml") or p.is_file()):
         p = PROFILES_DIR / f"{name_or_path}.yaml"
     if not p.is_file():
         raise FileNotFoundError(f"profile not found: {name_or_path} (looked at {p})")

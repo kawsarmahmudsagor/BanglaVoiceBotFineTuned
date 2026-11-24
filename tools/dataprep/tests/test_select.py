@@ -228,6 +228,14 @@ def test_select_drops_short_speech_span(tmp_path):
     assert steps(res)["speech_span_s in [0.5, inf]"]["rows_after"] == 1
 
 
+def test_load_profile_ignores_same_named_dir_in_cwd(tmp_path, monkeypatch):
+    (tmp_path / "voice").mkdir()  # e.g. an audio dir named like the shipped profile
+    (tmp_path / "asr-v1").mkdir()
+    monkeypatch.chdir(tmp_path)
+    assert load_profile("voice").name == "voice"
+    assert load_profile("asr-v1").name == "asr-v1"
+
+
 def test_load_profile_by_path(tmp_path):
     y = tmp_path / "mine.yaml"
     y.write_text("name: mine\ntask: asr\nfilters:\n  - {kind: range, column: dur, min: 2}\n")
