@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end smoke test of the dataprep CLI on the Linux VM, with real models, on a 20-clip fixture:
-#   import -> text -> audio-stats -> dnsmos -> brouhaha -> speakers -> transcribe -> select (4 profiles)
-#   -> export (asr-v1, tts-loose) -> ingest both exports in-process with the backend's ingest_dir.
+#   import -> text, audio-stats (--workers 2) -> dnsmos -> transcribe -> brouhaha, speakers (--only-profile
+#   tts-loose, relaxed) -> select (4 profiles) -> export (asr-v1, tts-loose) -> check-eval-text (must exit 1)
+#   -> ingest both exports in-process with the backend's ingest_dir (workers=2).
 # Thresholds are relaxed with `select --override` so a 20-clip set keeps at least one row per profile.
 # Prints "SMOKE OK" as the last line; the temp dir is removed on success and kept on failure.
 #
@@ -55,31 +56,51 @@ PY
 echo "== uv sync (extra score)"
 uv sync --project tools/dataprep --extra score
 
-echo "== import, text, audio-stats"
+echo "== import, text, audio-stats (2 workers: the process pool path)"
 dp import bengaliai --src "${SRC}" --work "${WORK}"
-dp text --work "${WORK}"
-dp audio-stats --work "${WORK}"
+dp text --work "${WORK}" --workers 2
+dp audio-stats --work "${WORK}" --workers 2
 
-echo "== dnsmos, brouhaha, speakers (GPU)"
+echo "== dnsmos (GPU)"
 dp dnsmos --work "${WORK}"
-dp brouhaha --work "${WORK}"
-dp speakers --work "${WORK}"
 
 echo "== uv sync (extras score + labeller), transcribe with ${STT_LABELLER}"
 uv sync --project tools/dataprep --extra score --extra labeller
 dp transcribe --work "${WORK}" --labeller "${STT_LABELLER}"
 
-echo "== select, thresholds relaxed for a ${N_CLIPS}-clip set"
-dp select --work "${WORK}" --profile asr-v1 \
-  --override dur.min=0 --override cps.lo=0 --override cps.hi=100
-dp select --work "${WORK}" --profile asr-v2 --labeller "${STT_LABELLER}" \
-  --override dur.min=0 --override cps.lo=0 --override cps.hi=100 --override cer.max=100
 TTS_RELAX=(
   --override dur.min=0 --override dur.max=100 --override speech_span_s.min=0 --override clip_frac.max=1
   --override cps.lo=0 --override cps.hi=100 --override cer.max=100
   --override dnsmos_ovrl.min=0 --override dnsmos_bak.min=0 --override max_pause_s.max=1000
   --override min_speaker_minutes=0
 )
+
+echo "== brouhaha, speakers --only-profile tts-loose (GPU), as the README's TTS stage A runs them"
+# --only-profile takes no --override, so a tts-loose copy with the same relaxed bounds (still named tts-loose)
+# is written as YAML; on 20 clips the shipped thresholds could leave nothing to score.
+dp_py() { uv run --project tools/dataprep --no-sync python "$@"; }
+dp_py - "${SMOKE}/tts-loose.yaml" "${TTS_RELAX[@]}" <<'PY'
+import sys
+
+import yaml
+
+from dataprep.profiles import load_profile
+from dataprep.select import apply_overrides
+
+out, args = sys.argv[1], [a for a in sys.argv[2:] if a != "--override"]
+profile = apply_overrides(load_profile("tts-loose"), args)
+with open(out, "w", encoding="utf-8") as f:
+    yaml.safe_dump(profile.model_dump(mode="json"), f, allow_unicode=True)
+print(f"relaxed tts-loose written to {out}")
+PY
+dp brouhaha --work "${WORK}" --only-profile "${SMOKE}/tts-loose.yaml" --labeller "${STT_LABELLER}"
+dp speakers --work "${WORK}" --only-profile "${SMOKE}/tts-loose.yaml" --labeller "${STT_LABELLER}"
+
+echo "== select, thresholds relaxed for a ${N_CLIPS}-clip set"
+dp select --work "${WORK}" --profile asr-v1 \
+  --override dur.min=0 --override cps.lo=0 --override cps.hi=100
+dp select --work "${WORK}" --profile asr-v2 --labeller "${STT_LABELLER}" \
+  --override dur.min=0 --override cps.lo=0 --override cps.hi=100 --override cer.max=100
 dp select --work "${WORK}" --profile tts-loose --labeller "${STT_LABELLER}" "${TTS_RELAX[@]}"
 dp select --work "${WORK}" --profile tts-strict --labeller "${STT_LABELLER}" "${TTS_RELAX[@]}" \
   --override snr_db.min=-1000 --override c50_db.min=-1000
@@ -95,25 +116,37 @@ with open(sys.argv[1], newline="", encoding="utf-8") as f:
     row = next(csv.DictReader(f))
 open(sys.argv[2], "w", encoding="utf-8").write("# eval sentences\n" + row["sentence"] + "\n")
 PY
-if dp check-eval-text --sentences "${SMOKE}/eval.txt" --against "${WORK}"; then
-  echo "ERROR: check-eval-text found no match for a training sentence" >&2
+# Exit code 1 means "a sentence matched"; 0 (no match) or anything else (a crash, a traceback) fails the smoke.
+rc=0
+dp check-eval-text --sentences "${SMOKE}/eval.txt" --against "${WORK}" || rc=$?
+if [ "${rc}" -ne 1 ]; then
+  echo "ERROR: check-eval-text exited ${rc}; expected 1 (a training sentence must match)" >&2
   exit 1
 fi
 
-echo "== ingest_dir (in-process, backend venv)"
+echo "== ingest_dir with workers=2 (in-process, backend venv: the spawn validation pool on Linux)"
 uv run --project backend python - "${IMPORT}" "${DEST}" <<'PY'
 import sys
 from pathlib import Path
 
 from app.datasets.ingest import ingest_dir
 
-import_root, dest_root = Path(sys.argv[1]), Path(sys.argv[2])
-for task, name in (("asr", "asr-v1"), ("tts", "tts-loose")):
-    res = ingest_dir(import_root / name, task, dest_root / name)
-    errors = [f"{i.code}: {i.message}" for i in res.report.errors]
-    assert not errors, f"{name}: ingest errors: {errors}"
-    assert res.n_samples > 0, f"{name}: nothing ingested"
-    print(f"{name}: {res.n_samples} samples, version {res.version_hash}")
+
+def main() -> None:
+    import_root, dest_root = Path(sys.argv[1]), Path(sys.argv[2])
+    for task, name in (("asr", "asr-v1"), ("tts", "tts-loose")):
+        seen = []
+        res = ingest_dir(import_root / name, task, dest_root / name, workers=2,
+                         progress=lambda done, total: seen.append((done, total)))
+        errors = [f"{i.code}: {i.message}" for i in res.report.errors]
+        assert not errors, f"{name}: ingest errors: {errors}"
+        assert res.n_samples > 0, f"{name}: nothing ingested"
+        assert seen and seen[-1][0] == seen[-1][1], f"{name}: progress did not reach the total: {seen[-3:]}"
+        print(f"{name}: {res.n_samples} samples, version {res.version_hash}")
+
+
+if __name__ == "__main__":
+    main()
 PY
 
 trap - ERR
