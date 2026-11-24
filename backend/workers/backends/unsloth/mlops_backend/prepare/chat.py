@@ -29,6 +29,7 @@ def _ids(tokenizer, text: str) -> list[int]:
 
 NOT_STABLE = "chat template is not prefix-stable"
 NO_ASSISTANT = "no assistant turn"
+EMPTY_ASSISTANT = "empty assistant turn"
 
 
 def _candidates(content: str) -> list[str]:
@@ -46,9 +47,8 @@ def _encode(tokenizer, messages: list[dict], tools) -> tuple[list[int], list[int
     Fast path: when every prefix render is a literal prefix of the full render, each assistant span is
     the token-length difference between the generation-prompt prefix and the prefix including the turn.
     Otherwise (templates that rewrite earlier turns) the full text is tokenized once with offsets and the
-    assistant contents are located in it. In the fast path the "
-" after an end marker is labelled when
-    it is a separate token (harmless; not masked)."""
+    assistant contents are located in it. In the fast path a newline token after an end marker is labelled
+    too (harmless; not masked)."""
     def render(msgs, gen=False):
         kw = {"add_generation_prompt": True} if gen else {}
         return tokenizer.apply_chat_template(msgs, tools=tools, tokenize=False, **kw)
@@ -56,6 +56,8 @@ def _encode(tokenizer, messages: list[dict], tools) -> tuple[list[int], list[int
     turns = [i for i, m in enumerate(messages) if m.get("role") == "assistant"]
     if not turns:
         return NO_ASSISTANT
+    if any(not messages[i].get("content") for i in turns):
+        return EMPTY_ASSISTANT
     full = render(messages)
     pairs = []
     stable = True
@@ -70,7 +72,9 @@ def _encode(tokenizer, messages: list[dict], tools) -> tuple[list[int], list[int
         labels = [IGNORE] * len(ids)
         for pre, upto in pairs:
             start, end = len(_ids(tokenizer, pre)), len(_ids(tokenizer, upto))
-            assert start < end <= len(ids), (start, end, len(ids))
+            if start >= end:
+                return EMPTY_ASSISTANT
+            assert end <= len(ids), (start, end, len(ids))
             labels[start:end] = ids[start:end]
         return ids, labels
     enc = tokenizer(full, add_special_tokens=False, return_offsets_mapping=True)
@@ -78,8 +82,15 @@ def _encode(tokenizer, messages: list[dict], tools) -> tuple[list[int], list[int
     eos = getattr(tokenizer, "eos_token", None)
     spans = []
     cursor = 0
-    for i in turns:
-        for cand in _candidates(messages[i].get("content") or ""):
+    for i, m in enumerate(messages):
+        content = m.get("content") or ""
+        if m.get("role") != "assistant":
+            # Anchor the cursor past this turn; templates may rewrite system/tool text, so a miss is fine.
+            at = full.find(content, cursor) if content else -1
+            if at >= 0:
+                cursor = at + len(content)
+            continue
+        for cand in _candidates(content):
             at = full.find(cand, cursor)
             if at >= 0:
                 break

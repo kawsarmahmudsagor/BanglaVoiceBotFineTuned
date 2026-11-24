@@ -110,6 +110,46 @@ def test_unstable_template_falls_back_to_offsets(tmp_path):
     assert _labeled(tok, _read(tmp_path)[0]) == "a1a2"
 
 
+def test_fallback_search_anchored_past_earlier_turns(tmp_path):
+    msgs = [{"role": "user", "content": "a1"}, {"role": "assistant", "content": "a1"},
+            {"role": "user", "content": "q2"}, {"role": "assistant", "content": "a2"}]
+    tok, _ = _build([_row(msgs)], tok=RewritingTok(), tmp=tmp_path)
+    rec = _read(tmp_path)[0]
+    full = tok.apply_chat_template(msgs)  # <|user|>a1<|assistant|>(a1)<|user|>q2<|assistant|>a2
+    first = full.index("(a1)")
+    pos = [i for i, t in enumerate(rec["labels"]) if t != -100]
+    last = full.rindex("a2")
+    assert pos == [first + 1, first + 2, last, last + 1]
+    assert not any(i < first for i in pos)
+
+
+class EosTok(RewritingTok):
+    eos_token = "<|end|>"
+
+    def apply_chat_template(self, messages, tools=None, tokenize=False, add_generation_prompt=False, **kw):
+        last = max((i for i, m in enumerate(messages) if m["role"] == "assistant"), default=-1)
+        out = "".join(
+            f"<|{m['role']}|>" + (f" {m['content']}" if m["role"] == "assistant" and i != last else m["content"])
+            + ("<|end|>" if m["role"] == "assistant" else "") for i, m in enumerate(messages))
+        return out + ("<|assistant|>" if add_generation_prompt else "")
+
+
+def test_fallback_labels_end_token(tmp_path):
+    tok, _ = _build([_row(_TWO)], tok=EosTok(), tmp=tmp_path)
+    assert _labeled(tok, _read(tmp_path)[0]) == "a1<|end|>a2<|end|>"
+
+
+def test_empty_assistant_turn_skipped_both_paths(tmp_path):
+    for tok in (FakeTok(), RewritingTok()):
+        msgs = [{"role": "user", "content": "q"}, {"role": "assistant", "content": ""}]
+        _, res = _build([_row(msgs)], tok=tok, tmp=tmp_path)
+        assert [s.reason for s in res.skipped] == ["empty assistant turn"]
+        msgs = [{"role": "user", "content": "q"}, {"role": "assistant", "content": None},
+                {"role": "user", "content": "r"}, {"role": "assistant", "content": "a"}]
+        _, res = _build([_row(msgs)], tok=tok, tmp=tmp_path)
+        assert [s.reason for s in res.skipped] == ["empty assistant turn"]
+
+
 def test_unstable_template_content_not_found_skipped(tmp_path):
     _, res = _build([_row(_TWO)], tok=DroppingTok(), tmp=tmp_path)
     assert res.counts == {"train": 0}
