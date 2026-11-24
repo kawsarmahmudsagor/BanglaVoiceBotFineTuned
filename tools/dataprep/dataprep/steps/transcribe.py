@@ -25,7 +25,9 @@ BATCH_SIZE = 16
 SAMPLE_RATE = 16000
 
 Labeller = Callable[[list[Path]], list[str]]
-_labeller: Labeller | None = None
+_labeller: Labeller | None = None  # injected by tests
+_labellers: dict[tuple[str, int], Labeller] = {}
+CHECKPOINT_BATCHES = 64
 
 
 def step_name(labeller: str) -> str:
@@ -49,7 +51,7 @@ def _whisper(model: str, batch_size: int) -> Labeller:
         import librosa
 
         wavs = [{"raw": librosa.load(str(p), sr=SAMPLE_RATE, mono=True)[0], "sampling_rate": SAMPLE_RATE} for p in paths]
-        out = asr(wavs, batch_size=batch_size, generate_kwargs=kwargs)
+        out = asr(wavs, batch_size=batch_size, chunk_length_s=30, generate_kwargs=kwargs)
         return [o["text"].strip() for o in out]
 
     return transcribe
@@ -81,10 +83,12 @@ def make_labeller(spec: str, *, batch_size: int = BATCH_SIZE) -> Labeller:
 
 
 def get_labeller(spec: str, *, batch_size: int = BATCH_SIZE) -> Labeller:
-    global _labeller
-    if _labeller is None:
-        _labeller = make_labeller(spec, batch_size=batch_size)
-    return _labeller
+    if _labeller is not None:
+        return _labeller
+    key = (spec, batch_size)
+    if key not in _labellers:
+        _labellers[key] = make_labeller(spec, batch_size=batch_size)
+    return _labellers[key]
 
 
 def _result(row: dict, ref: str, hyp: str) -> dict:
@@ -148,7 +152,7 @@ def run(
     return run_step(
         wd, step=step_name(spec), version=VERSION, columns=COLUMNS, row_fn=lambda r: r, input_cols=["id", "src_path"],
         dtypes={"hyp": "object", "cer": "float64"}, workers=1, force=force, retry_errors=retry_errors,
-        only_ids=only_ids, rows_fn=rows_fn,
+        only_ids=only_ids, rows_fn=rows_fn, checkpoint_every=batch_size * CHECKPOINT_BATCHES,
     )
 
 

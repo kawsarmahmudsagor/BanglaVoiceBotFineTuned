@@ -280,14 +280,17 @@ def resynthesize(model, source_wav: Path, prompt_wav: Path):
 def load_asr_pipeline(name: str):
     """A transformers ASR pipeline (fp16 on GPU). Shared with dataprep's `transcribe` labeller."""
     import torch
-    from transformers import pipeline
+    import transformers
+    from packaging.version import Version
 
     cuda = torch.cuda.is_available()
-    return pipeline(
+    # transformers >= 4.56 renamed torch_dtype to dtype (and 5.x warns on the old name); cosyvoice pins 4.51.3.
+    dtype_key = "dtype" if Version(transformers.__version__) >= Version("4.56") else "torch_dtype"
+    return transformers.pipeline(
         "automatic-speech-recognition",
         model=name,
-        torch_dtype=torch.float16 if cuda else torch.float32,
         device="cuda:0" if cuda else "cpu",
+        **{dtype_key: torch.float16 if cuda else torch.float32},
     )
 
 

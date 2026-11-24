@@ -146,3 +146,77 @@ def test_nemo_return_shapes():
     assert tr._texts(["a", "b"]) == ["a", "b"]
     assert tr._texts([H("a")]) == ["a"]
     assert tr._texts(([H("a")], [H("b")])) == ["a"]  # (best, all) tuple from RNNT models
+
+
+def _fake_modules(monkeypatch, version):
+    import sys
+    import types
+
+    calls = {}
+    torch = types.SimpleNamespace(
+        float16="f16", float32="f32", cuda=types.SimpleNamespace(is_available=lambda: False)
+    )
+    tf = types.SimpleNamespace(__version__=version, pipeline=lambda *a, **kw: calls.update(kw) or "pipe")
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "transformers", tf)
+    return calls
+
+
+@pytest.mark.parametrize("version,key", [("4.51.3", "torch_dtype"), ("4.55.9", "torch_dtype"), ("4.56.0", "dtype"), ("5.24.0", "dtype")])
+def test_asr_pipeline_dtype_kwarg_follows_transformers_version(monkeypatch, version, key):
+    from dataprep.roundtrip_cosyvoice import load_asr_pipeline
+
+    calls = _fake_modules(monkeypatch, version)
+    assert load_asr_pipeline("m") == "pipe"
+    assert calls[key] == "f32" and ({"dtype", "torch_dtype"} - {key}).isdisjoint(calls)
+
+
+def test_get_labeller_caches_per_spec_and_batch_size(monkeypatch):
+    made = []
+    monkeypatch.setattr(tr, "_labeller", None)
+    monkeypatch.setattr(tr, "_labellers", {})
+    monkeypatch.setattr(tr, "make_labeller", lambda spec, batch_size: made.append((spec, batch_size)) or object())
+    a = tr.get_labeller("nemo:a", batch_size=4)
+    assert tr.get_labeller("nemo:a", batch_size=4) is a
+    assert tr.get_labeller("nemo:b", batch_size=4) is not a
+    assert tr.get_labeller("nemo:a", batch_size=8) is not a
+    assert made == [("nemo:a", 4), ("nemo:b", 4), ("nemo:a", 8)]
+
+
+def test_whisper_uses_30s_chunking(monkeypatch):
+    import sys
+    import types
+    from pathlib import Path
+
+    seen = {}
+
+    def asr(wavs, **kw):
+        seen.update(kw)
+        return [{"text": " x "} for _ in wavs]
+
+    monkeypatch.setattr("dataprep.roundtrip_cosyvoice.load_asr_pipeline", lambda name: asr)
+    monkeypatch.setitem(sys.modules, "librosa", types.SimpleNamespace(load=lambda p, sr, mono: ([0.0], sr)))
+    assert tr.make_labeller("whisper-hf:m", batch_size=3)([Path("a.wav")]) == ["x"]
+    assert seen["chunk_length_s"] == 30 and seen["batch_size"] == 3
+
+
+def test_interrupted_run_keeps_checkpointed_rows_and_resumes_remainder(tmp_path, monkeypatch):
+    wd = _wd(tmp_path, n=6)
+    monkeypatch.setattr(tr, "CHECKPOINT_BATCHES", 1)  # checkpoint every batch_size=2 rows
+    fake = Fake({f"r{i}": REF for i in range(6)})
+    real = fake.__call__
+
+    def flaky(paths):
+        if paths[0].stem == "r4":
+            raise KeyboardInterrupt
+        return real(paths)
+
+    monkeypatch.setattr(tr, "_labeller", flaky)
+    with pytest.raises(KeyboardInterrupt):
+        tr.run(wd, "fake:1", batch_size=2)
+    assert set(_read(wd, "fake:1").index) == {"r0", "r1", "r2", "r3"}
+    fake.batches.clear()
+    monkeypatch.setattr(tr, "_labeller", fake)
+    assert tr.run(wd, "fake:1", batch_size=2) == 2
+    assert fake.batches == [["r4", "r5"]]
+    assert set(_read(wd, "fake:1").index) == {f"r{i}" for i in range(6)}
