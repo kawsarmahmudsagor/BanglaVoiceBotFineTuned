@@ -86,6 +86,13 @@ def trim_codes(codes, lengths: list[int], hop: float) -> list:
     return [np.asarray(codes[i, :, :math.ceil(n / hop)]).astype(np.int16) for i, n in enumerate(lengths)]
 
 
+def encoder_inputs(batch, device) -> tuple:
+    """(input_values, padding_mask or None) on `device`. The DAC feature extractor of transformers 4.46 returns no
+    padding_mask; parler's DAC encode() treats it as optional (all ones), and trim_codes cuts each row to its length."""
+    mask = batch.get("padding_mask")
+    return batch["input_values"].to(device), (None if mask is None else mask.to(device))
+
+
 def make_encoder(feature_extractor, audio_encoder) -> Callable[[list], list]:
     """audios (float32 arrays at 44.1 kHz) -> per-row DAC codes of shape (codebooks, frames), on GPU when
     available. Rows are zero-padded to the batch's longest and trimmed to their own frame count."""
@@ -98,7 +105,7 @@ def make_encoder(feature_extractor, audio_encoder) -> Callable[[list], list]:
     def encode(audios: list) -> list:
         b = feature_extractor(list(audios), sampling_rate=SAMPLE_RATE, padding="longest", return_tensors="pt")
         with torch.no_grad():
-            out = audio_encoder.encode(b["input_values"].to(device), b["padding_mask"].to(device))
+            out = audio_encoder.encode(*encoder_inputs(b, device))
         codes = out.audio_codes
         codes = codes[0] if codes.ndim == 4 else codes  # (1, bsz, K, T) -> (bsz, K, T)
         codes = codes.cpu().numpy()
