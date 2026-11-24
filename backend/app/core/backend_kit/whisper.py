@@ -10,6 +10,9 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from app.core.backend_kit.audio_refs import (  # noqa: F401 - re-exported for callers
+    PROBE_THREADS, PROGRESS_EVERY, check_audio_refs, probe_duration, probed_rows, progress_ticker,
+)
 from app.core.prepare import BuildResult, PrepareError, PrepSpec, Skip, ensure_prepared
 from app.core.text import BN_NORMALIZE_VERSION, bn_normalize
 
@@ -29,19 +32,6 @@ def whisper_spec(cfg) -> "PrepSpec":
         "max_label_tokens": MAX_LABEL_TOKENS,
         "storage": "audio-ref",
     })
-
-
-def probe_duration(path, sr: int = SAMPLE_RATE) -> float:
-    """Seconds of audio, verifying the file is decodable: a header read, else a full decode.
-    Raises if the file cannot be decoded."""
-    import soundfile as sf
-
-    try:
-        return float(sf.info(str(path)).duration)
-    except Exception:  # noqa: BLE001 - header unreadable for this format: decode instead
-        from app.core.backend_kit.audio import load_audio
-
-        return len(load_audio(path, sr)) / sr
 
 
 def row_to_example(row: dict, *, probe: Callable, tokenize: Callable,
@@ -100,57 +90,24 @@ class WhisperCollator:
         return {"input_features": feats.input_features, "labels": torch.tensor(labels, dtype=torch.long)}
 
 
-PROBE_THREADS = 16
-PROGRESS_EVERY = 10_000
-_CHUNK = 1000
-
-
-def check_audio_refs(paths: list[str], cache: str = "") -> None:
-    """Raise if a prepared dataset's audio files are gone (the cache outlived its source files)."""
-    from pathlib import Path as _P
-
-    for p in paths:
-        if not _P(p).exists():
-            raise RuntimeError(f"prepared cache {cache} points at missing audio {p}; "
-                               "delete the cache and re-run prepare")
-
-
-def _attempt(probe: Callable):
-    def run(path):
-        try:
-            return probe(path)
-        except Exception as e:  # noqa: BLE001 - reported as an undecodable skip by row_to_example
-            return e
-
-    return run
-
-
 def _write_split(items: list[dict], out_dir: Path, probe: Callable, tokenize: Callable,
                  tick: Callable[[int], None] = lambda n: None) -> tuple[int, list[Skip]]:
     """Metadata-only dataset (tens of MB for ~1M clips): files are probed by a thread pool (row order kept),
     columns accumulated in memory."""
-    from concurrent.futures import ThreadPoolExecutor
-
     cols: dict[str, list] = {"sample_id": [], "audio_path": [], "duration_s": [], "labels": []}
     skips: list[Skip] = []
-    run = _attempt(probe)
-    with ThreadPoolExecutor(PROBE_THREADS) as pool:
-        for lo in range(0, len(items), _CHUNK):
-            chunk = items[lo:lo + _CHUNK]
-            probed = list(pool.map(run, [r["audio_path"] for r in chunk]))
-            for row, res in zip(chunk, probed):
-                def cached(_path, res=res):
-                    if isinstance(res, Exception):
-                        raise res
-                    return res
+    for row, res in probed_rows(items, probe, tick):
+        def cached(_path, res=res):
+            if isinstance(res, Exception):
+                raise res
+            return res
 
-                ex = row_to_example(row, probe=cached, tokenize=tokenize)
-                if isinstance(ex, str):
-                    skips.append(Skip(sample_id=str(row.get("sample_id", "")), split=out_dir.name, reason=ex))
-                    continue
-                for k in cols:
-                    cols[k].append(ex[k])
-            tick(len(chunk))
+        ex = row_to_example(row, probe=cached, tokenize=tokenize)
+        if isinstance(ex, str):
+            skips.append(Skip(sample_id=str(row.get("sample_id", "")), split=out_dir.name, reason=ex))
+            continue
+        for k in cols:
+            cols[k].append(ex[k])
     if not cols["sample_id"]:
         raise PrepareError(f"split {out_dir.name} is empty after prepare ({len(skips)} rows skipped)")
     from datasets import Dataset
@@ -161,18 +118,9 @@ def _write_split(items: list[dict], out_dir: Path, probe: Callable, tokenize: Ca
 
 def build_whisper(processor, rep=None) -> Callable[[dict[str, list[dict]], Path], BuildResult]:
     def build(rows: dict[str, list[dict]], out: Path) -> BuildResult:
-        from app.core.contract import Phase
-
         tok = processor.tokenizer
         tok.set_prefix_tokens(language=LANGUAGE, task=TASK)
-        total = sum(len(v) for v in rows.values())
-        state = {"done": 0, "reported": 0}
-
-        def tick(n: int) -> None:
-            state["done"] += n
-            if rep is not None and (state["done"] - state["reported"] >= PROGRESS_EVERY or state["done"] == total):
-                state["reported"] = state["done"]
-                rep.status(Phase.prepare, state["done"], total, f"prepared {state['done']}/{total} rows")
+        tick = progress_ticker(rep, sum(len(v) for v in rows.values()))
 
         counts: dict[str, int] = {}
         skipped: list[Skip] = []

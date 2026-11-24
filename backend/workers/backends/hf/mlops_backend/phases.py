@@ -1,4 +1,4 @@
-"""Phase handlers: dispatch on the base model family (whisper -> whisper_full, ctc/ctc-mms -> asr, parler -> tts)."""
+"""Phase handlers: dispatch on the base model family (whisper -> whisper_full, ctc/ctc-mms -> ctc, parler -> tts)."""
 from __future__ import annotations
 
 import importlib
@@ -10,7 +10,7 @@ from app.core.contract import Phase, RunConfig, RunDir
 from .models import MODELS
 
 BACKEND = "hf"
-_FAMILY_MODULE = {"whisper": "whisper_full", "ctc": "asr", "ctc-mms": "asr", "parler": "tts"}
+_FAMILY_MODULE = {"whisper": "whisper_full", "ctc": "ctc", "ctc-mms": "ctc", "parler": "tts"}
 
 
 def _dispatch(phase: Phase) -> Handler:
