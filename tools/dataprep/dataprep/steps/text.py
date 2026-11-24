@@ -6,11 +6,10 @@ import re
 import unicodedata
 from pathlib import Path
 
-import pandas as pd
 from app.core.text import _QUOTES, _strip_zero_width, bn_normalize
 
-from ..pool import run_rows
-from ..workdir import StepFile, WorkDir
+from ..workdir import WorkDir
+from ._runner import run_step
 
 STEP = "text"
 VERSION = 1
@@ -60,22 +59,11 @@ def _row(row: dict) -> dict:
 
 
 def run(wd: WorkDir, *, workers: int = 1, force: bool = False, retry_errors: bool = False) -> int:
-    clips = StepFile.read(wd.clips_path, step="import", version=1)
-    path = wd.step_path(STEP)
-    prev = pd.DataFrame(columns=COLUMNS)
-    todo = clips
-    if path.exists() and not force:
-        prev = StepFile.read(path, step=STEP, version=VERSION)
-        prev = prev[prev["id"].isin(clips["id"])]  # drop ids no longer in clips.parquet
-        if retry_errors:
-            prev = prev[prev["error"].isna()]
-        todo = clips[~clips["id"].isin(prev["id"])]
-    new = run_rows(_row, todo[["id", "text_raw"]].to_dict("records"), workers=workers, desc="text")
-    new_df = pd.DataFrame(new).reindex(columns=COLUMNS)
-    out = new_df if prev.empty else pd.concat([prev, new_df], ignore_index=True)
-    out = out.astype({"has_latin": "boolean", "has_digits": "boolean", "empty_asr": "boolean", "n_chars": "Int64"})
-    StepFile.write(path, out, step=STEP, version=VERSION, params={})
-    return len(new_df)
+    return run_step(
+        wd, step=STEP, version=VERSION, columns=COLUMNS, row_fn=_row, input_cols=["id", "text_raw"],
+        dtypes={"has_latin": "boolean", "has_digits": "boolean", "empty_asr": "boolean", "n_chars": "Int64"},
+        workers=workers, force=force, retry_errors=retry_errors,
+    )
 
 
 def _cmd(args: argparse.Namespace) -> int:
