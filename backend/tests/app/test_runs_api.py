@@ -429,3 +429,51 @@ async def test_checkpoints_final_first(client, session, settings):
 async def test_checkpoints_empty_without_dir(client, session):
     rid = await make_run(client, session)
     assert (await client.get(f"/api/runs/{rid}/checkpoints")).json() == {"items": []}
+
+
+def _dir_artifact(rd, name="ct2"):
+    d = rd.export_dir / name
+    (d / "sub").mkdir(parents=True)
+    (d / "model.bin").write_bytes(b"w" * 1000)
+    (d / "sub" / "cfg.json").write_text("{}", encoding="utf-8")
+    return d
+
+
+async def test_files_endpoint_streams_directory_artifact_as_zip(client, session):
+    import io
+    import zipfile
+    rid = await make_run(client, session)
+    rd = finish_files((await client.get(f"/api/runs/{rid}")).json()["run_dir"])
+    _dir_artifact(rd)
+    r = await client.get(f"/api/runs/{rid}/files/export/ct2")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/zip"
+    assert 'filename="ct2.zip"' in r.headers["content-disposition"]
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    assert sorted(zf.namelist()) == ["ct2/model.bin", "ct2/sub/cfg.json"]
+    assert zf.read("ct2/model.bin") == b"w" * 1000
+    assert all(i.compress_type == zipfile.ZIP_STORED for i in zf.infolist())
+    # directories are only served under export/
+    assert (await client.get(f"/api/runs/{rid}/files/eval")).status_code == 404
+    assert (await client.get(f"/api/runs/{rid}/files/export")).status_code == 404
+
+
+async def test_directory_zip_skips_symlinks_that_escape(client, session, tmp_path):
+    import io
+    import zipfile
+    rid = await make_run(client, session)
+    rd = finish_files((await client.get(f"/api/runs/{rid}")).json()["run_dir"])
+    d = _dir_artifact(rd)
+    secret = tmp_path / "secret.txt"
+    secret.write_text("nope", encoding="utf-8")
+    try:
+        os.symlink(secret, d / "leak.txt")
+        os.symlink(tmp_path, d / "leakdir", target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks not permitted")
+    r = await client.get(f"/api/runs/{rid}/files/export/ct2")
+    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    assert sorted(names) == ["ct2/model.bin", "ct2/sub/cfg.json"]
+    # a symlinked artifact dir pointing outside the run is refused
+    os.symlink(tmp_path, rd.export_dir / "outside", target_is_directory=True)
+    assert (await client.get(f"/api/runs/{rid}/files/export/outside")).status_code == 404

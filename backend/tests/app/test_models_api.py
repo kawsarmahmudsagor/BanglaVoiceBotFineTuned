@@ -95,3 +95,22 @@ async def test_promote_retries_number_on_conflict(client, session, session_facto
     monkeypatch.setattr(models_router, "_next_number", stale)
     r = await client.post(f"/api/runs/{b}/promote")
     assert r.status_code == 201 and r.json()["number"] == 2 and len(calls) == 2
+
+
+async def test_export_download_directory_artifact(client, session, session_factory):
+    import io
+    import zipfile
+    from app.core.contract import ExportArtifact, ExportManifest, RunDir, write_export_manifest
+    rid = await done_run(client, session, session_factory)
+    rd = RunDir((await client.get(f"/api/runs/{rid}")).json()["run_dir"])
+    d = rd.export_dir / "merged-safetensors"
+    d.mkdir()
+    (d / "model.safetensors").write_bytes(b"abc")
+    write_export_manifest(rd, ExportManifest(artifacts=[
+        ExportArtifact(format="merged-safetensors", path="merged-safetensors", size_bytes=3)]))
+    mid = (await client.post(f"/api/runs/{rid}/promote")).json()["id"]
+    r = await client.get(f"/api/models/{mid}/exports/0")
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    assert 'filename="merged-safetensors.zip"' in r.headers["content-disposition"]
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    assert zf.read("merged-safetensors/model.safetensors") == b"abc"

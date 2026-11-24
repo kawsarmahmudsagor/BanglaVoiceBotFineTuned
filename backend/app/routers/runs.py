@@ -4,12 +4,14 @@ import asyncio
 import datetime as dt
 import json
 import re
+import os
 import secrets
-from collections.abc import AsyncIterator
+import zipfile
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -58,6 +60,79 @@ def inside(path: Path, *roots: Path) -> bool:
     """True if `path` resolves to an existing file under one of `roots`."""
     resolved = path.resolve()
     return resolved.is_file() and any(root.resolve() in resolved.parents for root in roots)
+
+
+def inside_dir(path: Path, root: Path) -> bool:
+    """True if `path` resolves to an existing directory strictly under `root`."""
+    resolved = path.resolve()
+    return resolved.is_dir() and root.resolve() in resolved.parents
+
+
+ZIP_CHUNK = 1024 * 1024
+
+
+class _ChunkSink:
+    """Write-only, non-seekable file object: zipfile writes into it, the generator drains it."""
+
+    def __init__(self) -> None:
+        self.buf = bytearray()
+        self.pos = 0
+
+    def write(self, b) -> int:
+        self.buf += b
+        self.pos += len(b)
+        return len(b)
+
+    def tell(self) -> int:
+        return self.pos
+
+    def flush(self) -> None:
+        pass
+
+    def drain(self) -> bytes:
+        out = bytes(self.buf)
+        self.buf.clear()
+        return out
+
+
+def _dir_files(src: Path) -> Iterator[tuple[Path, str]]:
+    """(file, arcname) for every regular file under `src` whose real path stays inside `src`."""
+    root = src.resolve()
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames.sort()
+        for name in sorted(filenames):
+            f = Path(dirpath) / name
+            real = f.resolve()
+            if root in real.parents and real.is_file():
+                yield real, f"{src.name}/{f.relative_to(root).as_posix()}"
+
+
+def _zip_stream(src: Path) -> Iterator[bytes]:
+    """Stream `src` as a ZIP_STORED archive chunk by chunk; nothing is buffered beyond one chunk."""
+    sink = _ChunkSink()
+    with zipfile.ZipFile(sink, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+        for real, arcname in _dir_files(src):
+            info = zipfile.ZipInfo.from_file(real, arcname)
+            info.compress_type = zipfile.ZIP_STORED
+            with real.open("rb") as fin, zf.open(info, "w", force_zip64=True) as fout:
+                while chunk := fin.read(ZIP_CHUNK):
+                    fout.write(chunk)
+                    if len(sink.buf) >= ZIP_CHUNK:
+                        yield sink.drain()
+            yield sink.drain()
+    yield sink.drain()
+
+
+def artifact_response(target: Path, file_roots: tuple[Path, ...], dir_root: Path | None) -> Response:
+    """Serve a file under `file_roots`, or a directory under `dir_root` as a streamed `<name>.zip`."""
+    if inside(target, *file_roots):
+        return FileResponse(target.resolve())
+    if dir_root is not None and inside_dir(target, dir_root):
+        real = target.resolve()
+        return StreamingResponse(
+            _zip_stream(real), media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{real.name}.zip"'})
+    raise HTTPException(404, "file not found")
 
 
 def _check_disk(request: Request) -> None:
@@ -325,6 +400,4 @@ async def run_file(run_id: str, path: str, session: AsyncSession = Depends(get_s
     run = await get_run(session, run_id)
     rd = RunDir(Path(run.run_dir))
     target = Path(run.run_dir) / path
-    if not inside(target, rd.eval_dir, rd.export_dir):
-        raise HTTPException(404, "file not found")
-    return FileResponse(target.resolve())
+    return artifact_response(target, (rd.eval_dir, rd.export_dir), rd.export_dir)

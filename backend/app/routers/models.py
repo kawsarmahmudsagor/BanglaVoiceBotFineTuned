@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +13,7 @@ from app.core.contract import RunDir, read_eval_results, read_export_manifest
 from ..db import get_session
 from ..models import ModelVersion, Run
 from .datasets import iso
-from .runs import get_run, inside, run_recipe
+from .runs import artifact_response, get_run, run_recipe
 
 router = APIRouter(prefix="/api")
 
@@ -109,6 +109,7 @@ async def download_export(model_id: int, index: int, session: AsyncSession = Dep
     run = await session.get(Run, m.run_id)
     export_dir = RunDir(Path(run.run_dir)).export_dir
     target = export_dir / m.exports[index]["path"]
-    if not inside(target, export_dir):
-        raise HTTPException(404, "export file not found")
-    return FileResponse(target.resolve())
+    try:
+        return artifact_response(target, (export_dir,), export_dir)
+    except HTTPException:
+        raise HTTPException(404, "export file not found") from None
