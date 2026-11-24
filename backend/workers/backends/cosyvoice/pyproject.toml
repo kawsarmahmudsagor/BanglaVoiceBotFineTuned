@@ -32,6 +32,7 @@ dependencies = [
   "pydantic==2.7.0",
   "pyworld==0.3.4",
   "rich==13.7.1",
+  "gdown==5.1.0",  # imported at module level by Matcha-TTS matcha.utils (upstream requirements.txt pin)
   "soundfile==0.12.1",
   "tensorboard==2.14.0",
   "transformers==4.51.3",

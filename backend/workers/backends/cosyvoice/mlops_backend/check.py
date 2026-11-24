@@ -83,7 +83,13 @@ def main() -> int:
             ok = False
     except Exception:  # noqa: BLE001 - already reported by the import loop
         pass
-    for mod in ["cosyvoice", "matcha"]:
+    from .compat import ensure_deepspeed_stub, use_offline_features
+
+    ensure_deepspeed_stub()
+    use_offline_features()
+    # the modules train/eval import, so a missing upstream dependency shows here, not mid-run
+    for mod in ["cosyvoice", "matcha", "matcha.utils", "cosyvoice.utils.executor", "cosyvoice.utils.train_utils",
+                "cosyvoice.cli.cosyvoice"]:
         try:
             import_module(mod)
             print(f"{mod} OK")
