@@ -4,6 +4,7 @@ cer_labeller: null
 drop_latin: false
 filters:
   - {kind: range, column: dur, min: 1, max: 20}
+  - {kind: range, column: speech_span_s, min: 0.5}
   - {kind: range, column: clip_frac, max: 0.001, max_exclusive: true}
 # Spec §6.3 "(flag)": reported by check-voice, not applied by select.
 flags:

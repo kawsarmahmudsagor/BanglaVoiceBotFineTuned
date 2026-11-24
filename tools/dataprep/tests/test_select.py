@@ -133,7 +133,7 @@ def test_profile_missing_step_column(tmp_path):
     wd = make_wd(tmp_path)
     p = load_profile("tts-strict").model_copy(update={"cer_labeller": None})
     p = p.model_copy(update={"filters": [f for f in p.filters if f.column != "cer"]})
-    with pytest.raises(SelectError, match="dnsmos"):
+    with pytest.raises(SelectError, match="brouhaha|dnsmos"):
         select(wd, p)
     p2 = prof(filters=[Range(column="snr_db", min=25)])
     with pytest.raises(SelectError, match="brouhaha"):
@@ -169,7 +169,13 @@ def test_voice_flags_are_not_filters(tmp_path):
     p = load_profile("voice")
     assert {f.column for f in p.flags} == {"cer", "dnsmos_ovrl", "snr_db", "max_pause_s"}
     wd = make_wd(tmp_path)
-    assert len(select(wd, p).rows) == 10  # no cer/dnsmos/brouhaha files needed
+    StepFile.write(  # only the segments are needed (speech_span_s); no cer/dnsmos files
+        wd.step_path("brouhaha"),
+        pd.DataFrame({"id": [f"r{i}" for i in range(10)], "snr_db": 20.0, "c50_db": 50.0, "max_pause_s": 0.1,
+                      "speech_segments": [[[0.5, 4.0]]] * 10, "error": None}),
+        step="brouhaha", version=1, params={},
+    )
+    assert len(select(wd, p).rows) == 10
 
 
 def test_stale_step_file_refused(tmp_path):
@@ -198,6 +204,7 @@ def test_shipped_profiles_load():
     assert f(ps["tts-loose"], "cps").lo == 1 and f(ps["tts-loose"], "cps").hi == 99
     assert f(ps["tts-loose"], "clip_frac").max == 0.001 and f(ps["tts-loose"], "clip_frac").max_exclusive
     assert (f(ps["voice"], "dur").min, f(ps["voice"], "dur").max) == (1, 20)
+    assert all(f(ps[n], "speech_span_s").min == 0.5 for n in ["tts-loose", "tts-strict", "voice"])
     assert (f(ps["tts-strict"], "c50_db").min, f(ps["tts-strict"], "snr_db").min) == (30, 25)
     assert (ps["tts-loose"].min_speaker_minutes, ps["tts-strict"].min_speaker_minutes) == (5, 10)
     assert ps["tts-loose"].drop_latin and ps["tts-strict"].drop_latin and not ps["voice"].drop_latin

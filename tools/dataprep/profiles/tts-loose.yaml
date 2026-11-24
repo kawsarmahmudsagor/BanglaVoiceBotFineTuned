@@ -5,6 +5,7 @@ drop_latin: true
 min_speaker_minutes: 5
 filters:
   - {kind: range, column: dur, min: 1, max: 15}
+  - {kind: range, column: speech_span_s, min: 0.5}
   - {kind: range, column: clip_frac, max: 0.001, max_exclusive: true}
   - {kind: percentile, column: cps, lo: 1, hi: 99}
   - {kind: range, column: cer, max: 0.05}

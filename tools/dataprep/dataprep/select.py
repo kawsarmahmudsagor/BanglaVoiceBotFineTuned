@@ -11,6 +11,7 @@ from pathlib import Path
 import pandas as pd
 from app.core.text import bn_normalize
 
+from .audio_proc import speech_span_s
 from .profiles import Filter, Flag, Percentile, Profile, Range, load_profile
 from .workdir import StepFile, WorkDir
 
@@ -32,6 +33,8 @@ COLUMN_STEPS: dict[str, tuple[str, int, dict | None]] = {
     "speaker": ("speakers", 1, None),
 }
 DERIVED = {"cps": ("n_chars", "dur")}  # cps = n_chars / dur
+# speech_span_s = trimmed TTS length (audio_proc.speech_span_s), derived from the brouhaha segments
+COLUMN_STEPS["speech_span_s"] = ("brouhaha", 1, None)
 ALWAYS_STEPS = ("text", "audio_stats")  # text for the transcript and flags, audio_stats for durations
 
 _EXPECTED_PUNCT = set("।?,.!-'\"")
@@ -196,6 +199,8 @@ def select(
         profile = profile.model_copy(update=update)
     df, steps_loaded = _load(wd, profile, labeller)
     df["cps"] = df["n_chars"].astype("float64") / df["dur"].astype("float64")
+    if any(f.column == "speech_span_s" for f in profile.filters):
+        df["speech_span_s"] = [speech_span_s(sg, d) for sg, d in zip(df["speech_segments"], df["dur"])]
 
     report_steps: list[dict] = []
 

@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .audio_proc import MIN_SPAN_S, speech_span_s
 from .pool import run_rows
 from .profiles import Profile, load_profile
 from .workdir import StepFile, WorkDir
@@ -110,8 +111,10 @@ def _write_atomic(path: Path, write) -> None:
     os.replace(tmp, path)
 
 
-def _tts_inputs(wd: WorkDir, ids: list[str], speaker: str | None) -> tuple[dict[str, list], pd.Series | str]:
-    """Per-id speech segments and the speaker source. Raises before anything is written."""
+def _tts_inputs(
+    wd: WorkDir, ids: list[str], durs: dict[str, float], speaker: str | None
+) -> tuple[dict[str, list], pd.Series | str]:
+    """Per-id speech segments and the speaker source. Pre-flight: raises before any decode or write."""
     bro_path = wd.step_path("brouhaha")
     if not bro_path.exists():
         raise ExportError(f"TTS export needs speech segments but {bro_path} is missing; run `brouhaha` first")
@@ -120,6 +123,12 @@ def _tts_inputs(wd: WorkDir, ids: list[str], speaker: str | None) -> tuple[dict[
     if bad:
         raise ExportError(f"{len(bad)} selected id(s) have no brouhaha speech_segments: {bad[:10]}")
     segments = {i: [[float(a), float(b)] for a, b in bro[i]] for i in ids}
+    short = [i for i in ids if speech_span_s(segments[i], durs[i]) < MIN_SPAN_S]
+    if short:
+        raise ExportError(
+            f"{len(short)} selected id(s) have a speech span under {MIN_SPAN_S}s after trimming and cannot be "
+            f"loudness-normalised (stale selection? re-run `select` with a speech_span_s filter): {short[:10]}"
+        )
     if speaker is not None:
         return segments, speaker
     spk_path = wd.step_path("speakers")
@@ -153,7 +162,7 @@ def export(
     tts = profile.task == "tts"
     layout = TTS_LAYOUT if tts else ASR_LAYOUT
     ids = list(sel["id"])
-    segments, speakers = _tts_inputs(wd, ids, speaker) if tts else ({}, None)
+    segments, speakers = _tts_inputs(wd, ids, dict(zip(sel["id"], sel["dur"])), speaker) if tts else ({}, None)
 
     dest = Path(out) if out is not None else wd.export_dir(dataset)
     audio = dest / layout.subdir

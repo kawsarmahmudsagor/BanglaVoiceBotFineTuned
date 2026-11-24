@@ -156,3 +156,20 @@ def test_metadata_replaced_before_sweep(tmp_path, monkeypatch):
     export(wd, PROFILE, "d", workers=1)
     assert "c2.wav" not in seen["meta"]
     assert not (out / "wavs" / "c2.wav").exists()
+
+
+def test_tts_preflight_rejects_short_speech_span(tmp_path, monkeypatch):
+    wd = make_wd(tmp_path)
+    b = pd.read_parquet(wd.step_path("brouhaha"))
+    b["speech_segments"] = [[[1.0, 1.05]] if i == "c1" else s for i, s in zip(b["id"], b["speech_segments"])]
+    StepFile.write(wd.step_path("brouhaha"), b, step="brouhaha", version=1, params={})
+    import librosa
+
+    def no_decode(*a, **k):
+        raise AssertionError("decoded before pre-flight failed")
+
+    monkeypatch.setattr(librosa, "load", no_decode)
+    with pytest.raises(ExportError, match="c1") as e:
+        export(wd, PROFILE, "d", workers=1)
+    assert "select" in str(e.value)
+    assert not wd.export_dir("d").exists()
