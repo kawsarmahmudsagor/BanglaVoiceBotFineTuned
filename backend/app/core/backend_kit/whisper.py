@@ -31,6 +31,7 @@ def whisper_spec(cfg) -> "PrepSpec":
         "bn_normalize_version": BN_NORMALIZE_VERSION,
         "max_label_tokens": MAX_LABEL_TOKENS,
         "storage": "audio-ref",
+        "backend": cfg.backend,  # unsloth and hf pin different datasets/transformers: never share a cache
     })
 
 
@@ -216,7 +217,7 @@ def whisper_eval_loss(model, processor, split_dirs, *, batch_size: int, seed: in
 
 
 def asr_baseline_key(cfg, max_samples: int | None) -> dict:
-    key: dict = {"max_samples": max_samples}
+    key: dict = {"max_samples": max_samples, "backend": cfg.backend}  # each backend's loader computes its own base/
     if cfg.init_from is not None:
         key["init"] = [cfg.init_from.source_run, cfg.init_from.checkpoint]
     return key

@@ -15,9 +15,11 @@ def test_whisper_spec_includes_normalizer_version(run_dir):
     assert spec.family == "whisper" and spec.version == 1
     assert spec.params == {"base_model": WHISPER, "sample_rate": 16000,
                            "bn_normalize_version": BN_NORMALIZE_VERSION, "max_label_tokens": 448,
-                           "storage": "audio-ref"}
+                           "storage": "audio-ref", "backend": cfg.backend}
     other = whisper_spec(cfg.model_copy(update={"base_model": "mozilla-ai/whisper-large-v3-turbo-bn"}))
     assert other.hash() != spec.hash()
+    # unsloth and hf write the cache with different datasets/transformers versions: never share it
+    assert whisper_spec(cfg.model_copy(update={"backend": "hf"})).hash() !=         whisper_spec(cfg.model_copy(update={"backend": "unsloth"})).hash()
 
 
 def test_whisper_module_import_is_light():

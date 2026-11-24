@@ -102,6 +102,8 @@ def test_baseline_key_varies(run_dir):
     w = cfg.model_copy(update={"init_from": InitRef(path="p", source_run="r0", checkpoint="final",
                                                     method="full", format="hf-full")})
     assert asr_baseline_key(w, None)["init"] == ["r0", "final"]
+    assert a["backend"] == cfg.backend
+    assert asr_baseline_key(cfg.model_copy(update={"backend": "unsloth"}), None) != a
 
 
 def test_processor_kwarg_picks_supported_name():
