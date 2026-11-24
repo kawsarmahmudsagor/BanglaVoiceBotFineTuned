@@ -368,7 +368,7 @@ export interface PreparedRef {
   counts: Record<string, number>;
   skipped: PreparedSkip[];
   files: string[];
-  built_at: string | null;
+  built_at: number; // unix seconds (float), as the backend writes it
   build_s: number | null;
   path: string;
   cache_hit: boolean;

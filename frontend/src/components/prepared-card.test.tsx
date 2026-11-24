@@ -11,7 +11,7 @@ const REF: PreparedRef = {
   counts: { train: 90, val: 10 },
   skipped: [{ sample_id: "s9", split: "train", reason: "undecodable audio: RuntimeError" }],
   files: [],
-  built_at: null,
+  built_at: 1764000000.5,
   build_s: 1,
   path: "/p",
   cache_hit: true,
