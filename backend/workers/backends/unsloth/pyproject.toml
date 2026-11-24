@@ -6,6 +6,7 @@ dependencies = [
   "bangla-voice-backend[prepare,audio]",
   "torch==2.7.1",
   "unsloth",
+  "torchao<0.16",
   "trl",
   "transformers",
   "datasets",
@@ -21,6 +22,8 @@ dev = ["pytest", "jsonschema"]
 
 [tool.uv]
 environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+# xformers 0.0.31 FA3 dispatch is broken on SM 12.0 (RTX 5090); unsloth falls back to SDPA without it.
+override-dependencies = ["xformers; sys_platform == 'never'"]
 
 [tool.uv.sources]
 bangla-voice-backend = { path = "../../..", editable = true }

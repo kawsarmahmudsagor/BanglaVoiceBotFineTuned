@@ -8,6 +8,9 @@ supported-markers = [
     "platform_machine == 'x86_64' and sys_platform == 'linux'",
 ]
 
+[manifest]
+overrides = [{ name = "xformers", marker = "sys_platform == 'never'" }]
+
 [[package]]
 name = "accelerate"
 version = "1.16.0"
@@ -563,6 +566,7 @@ dependencies = [
     { name = "huggingface-hub" },
     { name = "peft" },
     { name = "torch" },
+    { name = "torchao" },
     { name = "transformers" },
     { name = "trl" },
     { name = "unsloth" },
@@ -584,6 +588,7 @@ requires-dist = [
     { name = "huggingface-hub" },
     { name = "peft" },
     { name = "torch", specifier = "==2.7.1", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "torchao", specifier = "<0.16" },
     { name = "transformers" },
     { name = "trl" },
     { name = "unsloth" },
@@ -1180,11 +1185,11 @@ wheels = [
 
 [[package]]
 name = "torchao"
-version = "0.18.0"
+version = "0.15.0"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/19/55/ed9ad98f0f09d5a1124d09830043d13a39e63539f9590d2bdb6d71cbc4a4/torchao-0.18.0-cp310-abi3-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:6540b148e40ba81cbd4de86392225a076a1591146e9cebb099b3b234ba9feebe", size = 3372585, upload-time = "2026-08-03T19:43:10.993Z" },
-    { url = "https://files.pythonhosted.org/packages/c4/4d/485477bb8f05bd501016059c6d8abd742f830cb1b24ab7704e086c7cc35a/torchao-0.18.0-py3-none-any.whl", hash = "sha256:5c2b4485341bf28b7fed2c4fc95b9f298e209f41685350f067de85527a05585e", size = 1369798, upload-time = "2026-08-03T19:43:12.649Z" },
+    { url = "https://files.pythonhosted.org/packages/57/2d/472b9362dceae05a4599e2b94f86e69a29c0e20964a6af84f34f6ead5938/torchao-0.15.0-cp310-abi3-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:1cbe813201314ba6329a650a76944502f3e8ec4b1b44523f3f48676810d8d1f6", size = 7163930, upload-time = "2025-12-18T23:14:41.876Z" },
+    { url = "https://files.pythonhosted.org/packages/f6/3b/6b9d5618720f63dbc2e2509cd6b57aae9c0d61b738d1d2172f4d5d9efaab/torchao-0.15.0-py3-none-any.whl", hash = "sha256:3f3812676048ef8a2a0e9d492d12d8971ba7a7ebb16f54aa56f690414e130d2c", size = 1080679, upload-time = "2025-12-18T23:14:43.807Z" },
 ]
 
 [[package]]
@@ -1361,7 +1366,6 @@ dependencies = [
     { name = "tyro" },
     { name = "unsloth-zoo" },
     { name = "wheel" },
-    { name = "xformers", marker = "'linux' in sys_platform" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a1/4f/3d34b8e198c68acf478ed621381413ce4b2619bd66bb73a79e210bfaf3de/unsloth-2026.11.9-py3-none-any.whl", hash = "sha256:84ca39a877bc81ab436e6eb69114d8d38b3c46d01439557b238905be87791cd0", size = 31353744, upload-time = "2026-11-20T23:52:31.633Z" },
@@ -1423,19 +1427,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/d0/20/50ed6bdf27dec98b568a8ae25dc599f35baa3d9709f9e83fd1edb56b9a90/wheel-0.48.0.tar.gz", hash = "sha256:94800765601e9171bf5d58d066e640662842bcedcbab982b2c90787a2c987322", size = 66471, upload-time = "2026-08-11T22:02:27.327Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2e/29/69cfbb602cd91690c55d38ba9fe53e6a7e76a6fa647bf38f19c138d25449/wheel-0.48.0-py3-none-any.whl", hash = "sha256:3217dcc807155e45db462d7ef2431f5ddda0d7273b700d05a67b271ceb1287ab", size = 33320, upload-time = "2026-08-11T22:02:26.1Z" },
-]
-
-[[package]]
-name = "xformers"
-version = "0.0.31.post1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-    { name = "torch" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/29/e2/77fb19e49e2ee06e070c8383b286c5510c1451404440aa9639544e180e5e/xformers-0.0.31.post1.tar.gz", hash = "sha256:06a12031a00aadd56fbe543a73258b18064bccdf85fbf5de4c3e67c69e301505", size = 12110280, upload-time = "2025-07-08T15:35:49.125Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/84/bb/7faaaeffbb120c6d4240586f323fed6756afe13e92cfe5ad582d155bde87/xformers-0.0.31.post1-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:81ecbcaf6253f61378189bd1cc3a1e2ff994d3ecb391fe098ef88834c6ff6358", size = 117058051, upload-time = "2025-07-08T15:35:37.914Z" },
 ]
 
 [[package]]
