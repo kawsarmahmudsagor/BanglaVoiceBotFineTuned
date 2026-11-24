@@ -38,6 +38,8 @@ dependencies = [
   "wget==3.2",
   # Not in upstream requirements.txt but imported by cosyvoice / third_party/Matcha-TTS.
   "einops",
+  # upstream parquet_opener reads shards with pyarrow .to_pandas()
+  "pandas",
   "scipy",
 ]
 
