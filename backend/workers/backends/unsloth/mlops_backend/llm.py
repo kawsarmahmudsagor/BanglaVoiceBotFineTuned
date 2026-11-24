@@ -9,9 +9,11 @@ from pathlib import Path
 from typing import Literal
 
 from app.core.backend_kit import (
-    NanGuard, StopFlag, init_source, latest_checkpoint, mark_complete, write_init_meta,
+    NanGuard, StopFlag, eval_opts, init_source, latest_checkpoint, mark_complete, write_init_meta,
 )
-from app.core.contract import RunConfig, RunDir, read_prepared_refs
+from app.core.contract import DatasetRef, RunConfig, RunDir, read_prepared_refs
+from app.core.evaluation import baseline_metrics, merge_results, run_llm_eval
+from app.core.prepare import iter_rows
 
 from .prepare.chat import prepare_llm as prepare  # noqa: F401
 
@@ -188,3 +190,115 @@ def train_llm(rd: RunDir, cfg: RunConfig, rep) -> int:
     write_ckpt_meta(final, cfg, trainer.state.global_step)
     mark_complete(final)
     return 0
+
+
+def _eval_ds(cfg: RunConfig) -> tuple[DatasetRef, list[str]]:
+    """Dataset and splits used for eval: the eval dataset's own splits, else the train dataset's `val`."""
+    ev = cfg.datasets.get("eval")
+    if ev is not None:
+        return ev, list(ev.splits)
+    return cfg.datasets["train"], ["val"]
+
+
+def eval_rows(cfg: RunConfig) -> list[dict]:
+    ds, splits = _eval_ds(cfg)
+    return [row for s in splits for row in iter_rows(ds, s)]
+
+
+def eval_loss_files(rd: RunDir, cfg: RunConfig) -> list[Path]:
+    """Prepared JSONL files behind the eval rows (same selection as eval_rows)."""
+    role = "eval" if cfg.datasets.get("eval") is not None else "train"
+    ref = next((r for r in read_prepared_refs(rd) if r.get("role") == role), None)
+    if ref is None:
+        raise RuntimeError(f"no prepared {role} dataset (prepared_refs.json has no {role} entry)")
+    _, splits = _eval_ds(cfg)
+    return [Path(ref["path"]) / f"{s}.jsonl" for s in splits]
+
+
+def _eval_loss(model, tok, rd: RunDir, cfg: RunConfig) -> float | None:
+    from datasets import load_dataset
+    from transformers import DataCollatorForSeq2Seq, Trainer, TrainingArguments
+
+    files = [str(f) for f in eval_loss_files(rd, cfg) if f.exists() and f.stat().st_size > 0]
+    if not files:
+        return None
+    data = load_dataset("json", data_files={"eval": files})["eval"]
+    args = TrainingArguments(
+        output_dir=str(rd.path / "work" / "eval_tmp"), per_device_eval_batch_size=int(cfg.hparams.get("batch_size", 2)),
+        bf16=True, report_to=[], remove_unused_columns=False, seed=cfg.seed)
+    trainer = Trainer(model=model, args=args, eval_dataset=data, processing_class=tok,
+                      data_collator=DataCollatorForSeq2Seq(tok, label_pad_token_id=-100))
+    return float(trainer.evaluate()["eval_loss"])
+
+
+def _make_generate(model, tok):
+    from unsloth import FastLanguageModel
+
+    FastLanguageModel.for_inference(model)
+
+    def generate(prompt: list[dict]) -> str:
+        enc = tok.apply_chat_template(prompt, add_generation_prompt=True, tokenize=True,
+                                      return_tensors="pt", return_dict=True).to(model.device)
+        out = model.generate(**enc, max_new_tokens=512, do_sample=False)
+        return tok.decode(out[0][enc["input_ids"].shape[1]:], skip_special_tokens=True)
+
+    return generate
+
+
+def _free_gpu() -> None:
+    import gc
+
+    import torch
+
+    gc.collect()
+    torch.cuda.empty_cache()
+
+
+def _eval_one(model, tok, rd, cfg, rep, rows, *, prefix: str, max_samples: int) -> dict[str, float]:
+    loss = _eval_loss(model, tok, rd, cfg)
+    return run_llm_eval(rd, rep, rows, _make_generate(model, tok), loss=loss, prefix=prefix, max_samples=max_samples)
+
+
+def eval_llm(rd: RunDir, cfg: RunConfig, rep) -> int:
+    import unsloth  # noqa: F401  (must precede transformers/datasets imports)
+    from unsloth import FastLanguageModel
+
+    do_baseline, user_max = eval_opts(cfg)
+    max_samples = min(200, user_max) if user_max is not None else 200
+    max_seq_len = int(cfg.hparams.get("max_seq_len", 2048))
+    rows = eval_rows(cfg)
+    final = rd.checkpoints_dir / "final"
+
+    model, tok = FastLanguageModel.from_pretrained(
+        str(final), max_seq_length=max_seq_len, load_in_4bit=_method(cfg) == "qlora")
+    tuned = _eval_one(model, tok, rd, cfg, rep, rows, prefix="", max_samples=max_samples)
+    del model, tok
+    _free_gpu()
+
+    base: dict[str, float] = {}
+    if do_baseline:
+        ds, _ = _eval_ds(cfg)
+        init = cfg.init_from
+        eval_key = {"init": [init.source_run, init.checkpoint]} if init is not None else {}
+
+        def compute() -> dict[str, float]:
+            if init is not None:
+                m, t = _load_model(cfg.model_copy(update={"resume": False}), rd, max_seq_len)
+            else:
+                m, t = FastLanguageModel.from_pretrained(
+                    cfg.base_model, max_seq_length=max_seq_len, load_in_4bit=_method(cfg) == "qlora")
+            try:
+                res = _eval_one(m, t, rd, cfg, rep, rows, prefix="base/", max_samples=max_samples)
+                # baseline_metrics adds the `base/` prefix itself; prefix here only skips sample writing.
+                return {k.removeprefix("base/"): v for k, v in res.items()}
+            finally:
+                del m, t
+                _free_gpu()
+
+        base = baseline_metrics(cfg, ds, eval_key, compute)
+    merge_results(rd, tuned, base)
+    return 0
+
+
+train = train_llm
+eval = eval_llm  # noqa: A001  (phase handler name looked up by phases._dispatch)
