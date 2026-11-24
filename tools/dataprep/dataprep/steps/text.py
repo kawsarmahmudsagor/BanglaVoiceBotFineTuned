@@ -28,6 +28,7 @@ def _bn_fix(text: str) -> str:
         from bnunicodenormalizer import Normalizer
 
         _normalizer = Normalizer()
+    # The library returns None for a run it judges unrepairable (e.g. a lone vowel sign); that run is kept as is.
     return _BN_RUN.sub(lambda m: _normalizer(m[0])["normalized"] or m[0], text)
 
 
@@ -62,13 +63,13 @@ def run(wd: WorkDir, *, workers: int = 1, force: bool = False, retry_errors: boo
     clips = StepFile.read(wd.clips_path, step="import", version=1)
     path = wd.step_path(STEP)
     prev = pd.DataFrame(columns=COLUMNS)
+    todo = clips
     if path.exists() and not force:
         prev = StepFile.read(path, step=STEP, version=VERSION)
-        keep = set(prev["id"]) if retry_errors is False else set(prev.loc[prev["error"].isna(), "id"])
-        todo = clips[~clips["id"].isin(keep)]
-        prev = prev[prev["id"].isin(keep)]
-    else:
-        todo = clips
+        prev = prev[prev["id"].isin(clips["id"])]  # drop ids no longer in clips.parquet
+        if retry_errors:
+            prev = prev[prev["error"].isna()]
+        todo = clips[~clips["id"].isin(prev["id"])]
     new = run_rows(_row, todo[["id", "text_raw"]].to_dict("records"), workers=workers, desc="text")
     new_df = pd.DataFrame(new).reindex(columns=COLUMNS)
     out = new_df if prev.empty else pd.concat([prev, new_df], ignore_index=True)
