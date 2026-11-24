@@ -105,6 +105,14 @@ def test_export_test_count_larger_than_available_fails_before_writing(tmp_path):
     assert not wd.export_dir("voice").exists()
 
 
+@pytest.mark.parametrize("n", [-1, 13])
+def test_test_count_out_of_range_is_rejected(tmp_path, n):
+    wd = make_wd(tmp_path)
+    with pytest.raises(ExportError, match="--test-count"):
+        export(wd, PROFILE, "voice", workers=1, speaker="v", provenance=PROV, test_count=n)
+    assert not wd.export_dir("voice").exists()
+
+
 def test_voice_export_requires_provenance(tmp_path):
     wd = make_wd(tmp_path)
     with pytest.raises(ExportError, match="--provenance"):

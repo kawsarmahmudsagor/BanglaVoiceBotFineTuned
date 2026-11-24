@@ -61,9 +61,28 @@
 ম্ন
 
 # Retroflex contrasts
+# Note: after NFC, ড় is ড + nukta, so the ড count includes every ড় (the two overlap).
 ট
 ঠ
 ড
 ঢ
 ণ
 ড়
+
+# Aspirated / unaspirated pairs
+খ
+ক
+ঘ
+গ
+ছ
+চ
+ঝ
+জ
+থ
+ত
+ধ
+দ
+ফ
+প
+ভ
+ব

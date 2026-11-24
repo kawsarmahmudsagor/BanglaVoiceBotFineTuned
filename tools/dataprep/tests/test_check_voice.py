@@ -125,7 +125,9 @@ def test_coverage_counts_nfc(tmp_path):
 
 def test_default_coverage_list_is_reasonable():
     targets = check_voice.load_targets(check_voice.DEFAULT_COVERAGE)
-    assert 40 <= len(targets) <= 60 and "ক্ষ" in targets and "ি" in targets and len(set(targets)) == len(targets)
+    assert 40 <= len(targets) <= 90 and "ক্ষ" in targets and "ি" in targets and len(set(targets)) == len(targets)
+    for letter in "খকঘগছচঝজথতধদফপভবঠটঢড":
+        assert letter in targets, letter
 
 
 def test_html_has_player_text_and_flags_per_flagged_take(tmp_path):

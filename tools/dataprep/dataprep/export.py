@@ -218,6 +218,8 @@ def export(
     if missing:
         raise ExportError(f"selected ids not in clips.parquet (stale selection? rerun `select`): {missing[:10]}")
 
+    if test_count is not None and not 0 <= test_count <= len(sel):
+        raise ExportError(f"--test-count {test_count} must be between 0 and the {len(sel)} selected take(s)")
     provenance = _provenance(wd, provenance)
     splits = dict(zip(sel["id"], sel["src_split"]))
     if test_count:

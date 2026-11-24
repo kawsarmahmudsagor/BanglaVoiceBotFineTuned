@@ -21,7 +21,7 @@ import pandas as pd
 
 from .profiles import Filter, Percentile, Profile, Range, load_profile
 from .roundtrip_cosyvoice import _REPORT_CSS
-from .select import _apply, cer_step_name
+from .select import COLUMN_STEPS, _apply, cer_step_name
 from .workdir import StaleStepError, StepFile, WorkDir
 
 DEFAULT_COVERAGE = Path(__file__).resolve().parent.parent / "data" / "phonetic_coverage.txt"
@@ -30,13 +30,8 @@ EXPECTED_SR = 48000
 EXPECTED_BITS = 24
 _BITS = {"PCM_U8": 8, "PCM_S8": 8, "PCM_16": 16, "PCM_24": 24, "PCM_32": 32, "FLOAT": 32, "DOUBLE": 64}
 
-# column -> (step name, version, params or None to skip the params check)
-_STEPS = {
-    "text": ("text", 1, {}),
-    "audio_stats": ("audio_stats", 1, {}),
-    "dnsmos": ("dnsmos", 1, None),
-    "brouhaha": ("brouhaha", 1, None),
-}
+# step -> a column it provides; name, version and params come from select.COLUMN_STEPS (one source of truth)
+_STEP_COLUMN = {"text": "n_chars", "audio_stats": "dur", "dnsmos": "dnsmos_ovrl", "brouhaha": "snr_db"}
 
 
 class CheckVoiceError(RuntimeError):
@@ -84,7 +79,7 @@ def _read_step(wd: WorkDir, name: str, labeller: str) -> pd.DataFrame:
     if name == "cer":
         step, version, params = cer_step_name(labeller), 1, None
     else:
-        step, version, params = _STEPS[name]
+        step, version, params = COLUMN_STEPS[_STEP_COLUMN[name]]
     path = wd.step_path(step)
     if not path.exists():
         raise CheckVoiceError(f"{path} is missing; run `check-voice` (or the `{step}` step) first")
