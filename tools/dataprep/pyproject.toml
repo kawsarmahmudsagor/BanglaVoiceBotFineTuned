@@ -55,10 +55,21 @@ score = [
   "scikit-learn",
 ]
 
+# ASR labellers for `dataprep transcribe` (spec 6.2): Whisper via transformers, NeMo (BanglaConformer).
+# transformers>=4.53 conflicts with cosyvoice's transformers==4.51.3 pin.
+labeller = [
+  "torch==2.7.1",
+  "torchaudio==2.7.1",
+  "transformers>=4.53",
+  "accelerate",
+  "nemo_toolkit[asr]",
+]
+
 [dependency-groups]
 dev = ["pytest"]
 
 [tool.uv]
+conflicts = [[{ extra = "cosyvoice" }, { extra = "labeller" }]]
 environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 # openai-whisper 20231117 (upstream CosyVoice pin) imports pkg_resources in setup.py,
 # which setuptools 81 removed.

@@ -277,17 +277,22 @@ def resynthesize(model, source_wav: Path, prompt_wav: Path):
     return torch.cat(chunks, dim=1).squeeze(0).float().cpu().numpy()
 
 
-def load_stt(name: str, language: str | None):
+def load_asr_pipeline(name: str):
+    """A transformers ASR pipeline (fp16 on GPU). Shared with dataprep's `transcribe` labeller."""
     import torch
     from transformers import pipeline
 
     cuda = torch.cuda.is_available()
-    asr = pipeline(
+    return pipeline(
         "automatic-speech-recognition",
         model=name,
         torch_dtype=torch.float16 if cuda else torch.float32,
         device="cuda:0" if cuda else "cpu",
     )
+
+
+def load_stt(name: str, language: str | None):
+    asr = load_asr_pipeline(name)
     kwargs = {"task": "transcribe", **({"language": language} if language else {})}
 
     def transcribe(path: Path) -> str:
