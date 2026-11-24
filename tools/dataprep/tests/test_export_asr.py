@@ -118,6 +118,14 @@ def test_export_needs_selection(tmp_path):
         export(wd, PROFILE, "d", workers=1)
 
 
+def test_export_ignores_foreign_parquet_in_work_dir(tmp_path):
+    wd = prepared(tmp_path)
+    pd.DataFrame({"x": [1, 2]}).to_parquet(wd.root / "notes.parquet")  # no dataprep metadata
+    out = export(wd, PROFILE, "bn-asr", workers=1)
+    cur = json.loads((out / "curation.json").read_text(encoding="utf-8"))
+    assert cur["step_versions"]["text"] == 1 and "notes" not in json.dumps(cur["step_versions"])
+
+
 def test_export_aborts_on_failed_transcode(tmp_path):
     wd = prepared(tmp_path)
     (tmp_path / "c3.wav").write_bytes(b"junk")

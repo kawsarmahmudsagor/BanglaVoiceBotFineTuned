@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from .audio_proc import MIN_SPAN_S, speech_span_s
 from .pool import run_rows
 from .profiles import Profile, load_profile
-from .workdir import StepFile, WorkDir
+from .workdir import StaleStepError, StepFile, WorkDir
 
 TARGET_SR = 16000
 TTS_SR = 24000
@@ -157,10 +157,15 @@ def _tool_commit() -> str | None:
 
 
 def _step_versions(wd: WorkDir) -> dict[str, int]:
+    """Step name -> version for every step file in the work dir. Parquet files without dataprep metadata (or
+    unreadable ones) are not step files and are skipped: this runs after the audio is written."""
     versions: dict[str, int] = {}
     for p in sorted(wd.root.glob("*.parquet")):
-        meta = StepFile._meta(p)
-        versions[meta["step"]] = meta["version"]
+        try:
+            meta = StepFile._meta(p)
+            versions[meta["step"]] = meta["version"]
+        except (StaleStepError, ValueError, OSError, KeyError, TypeError):
+            continue
     return versions
 
 

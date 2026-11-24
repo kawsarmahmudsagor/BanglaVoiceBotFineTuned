@@ -20,11 +20,20 @@ def read_sentences(path: Path) -> list[tuple[int, str]]:
     return out
 
 
+def unmatchable(sentences: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    """Sentences whose normalized form is empty (punctuation only): skipped, they would match every empty clip."""
+    return [(n, s) for n, s in sentences if not bn_normalize(s, mode="asr")]
+
+
 def find_matches(sentences: list[tuple[int, str]], work_dirs: list[Path]) -> list[tuple[int, str, Path, str]]:
-    """(line, sentence, work dir, clip id) for each clip whose normalized text_clean equals a sentence's."""
+    """(line, sentence, work dir, clip id) for each clip whose normalized text_clean equals a sentence's.
+
+    Sentences that normalize to an empty string are skipped (see `unmatchable`)."""
     wanted: dict[str, list[tuple[int, str]]] = {}
     for n, s in sentences:
-        wanted.setdefault(bn_normalize(s, mode="asr"), []).append((n, s))
+        key = bn_normalize(s, mode="asr")
+        if key:
+            wanted.setdefault(key, []).append((n, s))
     matches = []
     for root in work_dirs:
         df: pd.DataFrame = StepFile.read(WorkDir(root).step_path("text"), step="text", version=1)
@@ -37,6 +46,9 @@ def find_matches(sentences: list[tuple[int, str]], work_dirs: list[Path]) -> lis
 def _cmd(args: argparse.Namespace) -> int:
     sentences = read_sentences(args.sentences)
     matches = find_matches(sentences, args.against)
+    skipped = unmatchable(sentences)
+    if skipped:
+        print(f"skipped {len(skipped)} line(s) that normalize to nothing: {', '.join(str(n) for n, _ in skipped)}")
     for n, s, root, rid in matches:
         print(f"line {n}: {s}  <- {root} clip {rid}")
     print(f"{len({m[0] for m in matches})} of {len(sentences)} sentences found in the training text")
