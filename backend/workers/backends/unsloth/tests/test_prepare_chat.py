@@ -228,7 +228,7 @@ def test_prepare_llm_writes_refs(run_dir, monkeypatch):
     refs = read_prepared_refs(rd)
     assert [r["role"] for r in refs] == ["train", "eval"]
     assert refs[0]["spec"]["family"] == "chat"
-    assert refs[0]["counts"] == {"train": 2, "val": 1}
+    assert refs[0]["counts"] == {"train": 2, "val": 1, "test": 1}  # every declared split is built once
 
 
 @pytest.mark.heavy
