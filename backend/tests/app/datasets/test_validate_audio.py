@@ -95,3 +95,24 @@ def test_parallel_matches_serial(dir_with, audio):
     assert serial[1] == parallel[1] and len(serial[1]) == 13
     assert serial[0] == parallel[0]
     assert codes(serial[0].errors) == {"undecodable", "missing_audio"}
+
+
+def _progress_dataset(dir_with, audio, n=40):
+    files = {f"p{i:03d}.wav": audio.sine(0.6) for i in range(n)}
+    files["bad.wav"] = b"RIFFnotreallyawav"
+    meta = "file,text\n" + "".join(f"p{i:03d}.wav,ক{i}\n" for i in range(n)) + "bad.wav,খ\nnope.wav,ঘ\n"
+    return dir_with(files, meta)
+
+
+def test_progress_callback(dir_with, audio):
+    root = _progress_dataset(dir_with, audio)
+    for workers in (1, 3):
+        calls: list[tuple[int, int]] = []
+        report, rows = validate_audio(root, "asr", workers=workers, progress=lambda d, t: calls.append((d, t)))
+        assert len(rows) == 40
+        total = 41  # decode jobs: the 40 good files plus bad.wav; nope.wav is missing, never decoded
+        assert calls and all(t == total for _, t in calls), workers
+        done = [d for d, _ in calls]
+        assert done == sorted(done) and len(set(done)) == len(done), workers  # strictly increasing
+        assert done[-1] == total, workers
+        assert len(calls) > 2, workers  # reported as files complete, not only at the end

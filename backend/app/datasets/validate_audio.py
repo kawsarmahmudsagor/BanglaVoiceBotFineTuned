@@ -5,6 +5,7 @@ import hashlib
 import multiprocessing
 import re
 import unicodedata
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -73,7 +74,9 @@ def _read_records(path: Path) -> tuple[list[str], list[tuple[int, dict]]]:
     return fieldnames, records
 
 
-def validate_audio(root: Path, task: str, *, workers: int = 1) -> tuple[Report, list[dict]]:
+def validate_audio(
+    root: Path, task: str, *, workers: int = 1, progress: Callable[[int, int], None] | None = None,
+) -> tuple[Report, list[dict]]:
     report = Report()
     report.stats.update(n_samples=0, total_duration_s=0.0)
     plain, per_split, problems = metadata_files(root)
@@ -147,13 +150,26 @@ def validate_audio(root: Path, task: str, *, workers: int = 1) -> tuple[Report, 
         plan.append((rel, text, split, rec, path))
 
     # Pass 2: decode + per-file warnings (in a process pool when workers > 1), merged in metadata order.
+    # `progress(done, total)` is called in this (parent) process as results arrive, in metadata order.
     jobs = [(item[4], item[0], item[1]) for item in plan if isinstance(item, tuple)]
+    total = len(jobs)
+    decoded: list[dict] = []
+
+    def collect(it) -> None:
+        if progress is not None:
+            progress(0, total)
+        for res in it:
+            decoded.append(res)
+            if progress is not None:
+                progress(len(decoded), total)
+
     if workers > 1 and len(jobs) > 1:
         with ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn")) as pool:
-            results = list(pool.map(_process_file, jobs, chunksize=16))
+            # map() yields lazily in submission order, so progress advances while the pool works
+            collect(pool.map(_process_file, jobs, chunksize=max(1, min(16, total // (workers * 4) or 1))))
     else:
-        results = map(_process_file, jobs)
-    results = iter(results)
+        collect(map(_process_file, jobs))
+    results = iter(decoded)
 
     rows: list[dict] = []
     rates: set[int] = set()

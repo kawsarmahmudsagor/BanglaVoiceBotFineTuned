@@ -252,6 +252,63 @@ async def test_import_dirs_skips_unreadable(client, import_root, monkeypatch):
     assert [i["path"] for i in r.json()["items"]] == ["a"]
 
 
+def test_ingest_dir_passes_progress(tmp_path):
+    d = make_dataset(tmp_path, "src")
+    calls: list[tuple[int, int]] = []
+    r = ingest_dir(d, "asr", tmp_path / "out", progress=lambda done, total: calls.append((done, total)))
+    assert r.report.ok and calls[-1] == (2, 2)
+
+
+def _sample_id(text: str, path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256((text + "\n" + hashlib.sha256(path.read_bytes()).hexdigest()).encode()).hexdigest()[:16]
+
+
+def test_ingest_dir_validates_the_staged_copy(tmp_path):
+    """A re-export (os.replace) after staging must not split the manifest from the stored files."""
+    import pyarrow.parquet as pq
+
+    d = make_dataset(tmp_path, "src")
+    original = (d / "a.wav").read_bytes()
+    ref = ingest_dir(make_dataset(tmp_path, "ref"), "asr", tmp_path / "ref_out")  # untouched copy of the same data
+    seen = []
+
+    def mutate(staged: Path) -> None:
+        seen.append(staged)
+        new = d / "a.wav.tmp"
+        new.write_bytes(Audio.sine(2.0, freq=880))
+        os.replace(new, d / "a.wav")
+
+    r = ingest_dir(d, "asr", tmp_path / "out", _on_staged=mutate)
+    assert seen and r.report.ok
+    assert (d / "a.wav").read_bytes() != original  # the source did change
+    files = {p.name: p for p in (r.version_dir / "files").rglob("*.wav")}
+    assert files["a.wav"].read_bytes() == original  # the version holds the staged content
+    manifest = {m["file"]: m for m in pq.read_table(r.version_dir / "manifest.parquet").to_pylist()}
+    for name, p in files.items():
+        assert manifest[name]["sample_id"] == _sample_id(manifest[name]["text"], p)  # hashes match stored bytes
+    assert r.version_hash == ref.version_hash
+
+
+def test_ingest_dir_failed_validation_leaves_source_untouched(tmp_path):
+    d = make_dataset(tmp_path, "src")
+    (d / "metadata.csv").write_text("file,text,split\na.wav,এক,train\n", encoding="utf-8")  # b.wav unlisted
+    before = snapshot(d)
+    r = ingest_dir(d, "asr", tmp_path / "out")
+    assert not r.report.ok
+    assert snapshot(d) == before  # modes included: nothing made read-only
+    assert not list((tmp_path / "out").rglob("*.wav"))
+
+
+def test_ingest_dir_link_failure_checks_disk_before_copy(tmp_path, monkeypatch):
+    d = make_dataset(tmp_path, "src")
+    monkeypatch.setattr(os, "link", lambda *a, **k: (_ for _ in ()).throw(OSError(1, "not permitted")))
+    r = ingest_dir(d, "asr", tmp_path / "out", disk_min_gb=10**9)  # same device: link fails, copy cannot fit
+    assert not r.report.ok and r.report.errors[0].code == "insufficient_disk"
+    assert not list((tmp_path / "out").rglob("*.wav"))
+
+
 def test_ingest_dir_rejects_file_symlink_escape(tmp_path):
     d = make_dataset(tmp_path, "src")
     outside = tmp_path / "outside.wav"

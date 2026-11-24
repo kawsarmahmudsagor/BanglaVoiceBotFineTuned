@@ -7,6 +7,7 @@ import shutil
 import unicodedata
 import uuid
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -14,7 +15,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from .report import Issue, Report
-from .validate_audio import metadata_files, validate_audio
+from .validate_audio import _AUDIO_EXT, _META_SPLIT_RE, metadata_files, validate_audio
 from .validate_llm import validate_llm
 
 _TASK_EXT = {"llm-sft": (".jsonl", ".zip"), "asr": (".zip",), "tts": (".zip",)}
@@ -150,7 +151,10 @@ def _publish(report: Report, rows: list[dict], dest_root: Path, staging: Path, t
     return IngestResult(report, vhash, final, len(rows))
 
 
-def ingest(upload_file: Path, task: str, dest_root: Path, disk_min_gb: float = 0, workers: int = 1) -> IngestResult:
+def ingest(
+    upload_file: Path, task: str, dest_root: Path, disk_min_gb: float = 0, workers: int = 1,
+    progress: Callable[[int, int], None] | None = None,
+) -> IngestResult:
     upload_file = Path(upload_file)
     dest_root = Path(dest_root)
     want = _TASK_EXT.get(task)
@@ -171,7 +175,7 @@ def ingest(upload_file: Path, task: str, dest_root: Path, disk_min_gb: float = 0
             rows = []
             root = _extract(upload_file, extracted, report, disk_min_gb)
             if root is not None:
-                report, rows = validate_audio(root, task, workers=workers)
+                report, rows = validate_audio(root, task, workers=workers, progress=progress)
         if root is None:
             return _publish(report, rows, dest_root, staging, None)
         return _publish(report, rows, dest_root, staging,
@@ -184,19 +188,78 @@ def ingest(upload_file: Path, task: str, dest_root: Path, disk_min_gb: float = 0
             pass
 
 
-def _link_or_copy_ro(src: Path, dst: Path) -> None:
-    """Hard link src to dst, falling back to a copy (cross-device); the version file is then read-only."""
-    try:
-        os.link(src, dst)
-    except OSError:
-        shutil.copy2(src, dst)
-    os.chmod(dst, 0o444)
+def _stage_dir(src: Path, staged: Path, dest_root: Path, disk_min_gb: float, report: Report) -> bool:
+    """Hard-link (or copy) the dataset's metadata and audio files from `src` into `staged`.
+
+    Returns False after recording an error. Every file is checked to resolve inside `src` before anything is
+    linked. Metadata files are always copied (small; linking would let the version share their mode). Audio is
+    hard-linked when `src` and `dest_root` share a device; a failed link falls back to a copy only after a disk
+    check for that file. Across devices every byte is copied, so the total is checked up front.
+    """
+    real_src = src.resolve()
+    meta: list[Path] = []
+    audio: list[Path] = []
+    for p in sorted(src.rglob("*")):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(src)
+        if p.suffix.lower() in _AUDIO_EXT:
+            audio.append(rel)
+        elif len(rel.parts) == 1 and (p.name == "metadata.csv" or _META_SPLIT_RE.match(p.name)):
+            meta.append(rel)
+    for rel in [*meta, *audio]:
+        if not (src / rel).resolve().is_relative_to(real_src):
+            report.errors.append(Issue(
+                "unsafe_path", f"'{rel.as_posix()}' is a symlink that resolves outside the dataset directory"))
+            return False
+
+    def room() -> float:
+        return shutil.disk_usage(staged).free - disk_min_gb * GB
+
+    def no_room(need: int) -> bool:
+        report.errors.append(Issue(
+            "insufficient_disk",
+            f"dataset needs {need / GB:.1f} GB of copies but only {max(room(), 0) / GB:.1f} GB is free "
+            f"above the {disk_min_gb:g} GB reserve",
+        ))
+        return False
+
+    same_dev = os.stat(src).st_dev == os.stat(dest_root).st_dev
+    size = {rel: (src / rel).stat().st_size for rel in [*meta, *audio]}
+    need = sum(size[r] for r in meta) + (0 if same_dev else sum(size[r] for r in audio))
+    if need > room():
+        return no_room(need)
+    for rel in meta:
+        shutil.copyfile(src / rel, staged / rel)
+    for rel in audio:
+        dst = staged / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if same_dev:
+            try:
+                os.link(src / rel, dst)
+                continue
+            except OSError:
+                if size[rel] > room():  # the link failed: this file must be copied after all
+                    return no_room(size[rel])
+        shutil.copy2(src / rel, dst)
+    return True
 
 
-def ingest_dir(src: Path, task: str, dest_root: Path, disk_min_gb: float = 0, workers: int = 1) -> IngestResult:
-    """Ingest an audio dataset directory in place: validate it, then hard-link (or copy) its files.
+def _move_ro(src: Path, dst: Path) -> None:
+    os.replace(src, dst)
+    os.chmod(dst, 0o444)  # version files are read-only (a hard-linked source shares the mode, by design)
 
-    Nothing under `src` is modified, moved or deleted.
+
+def ingest_dir(
+    src: Path, task: str, dest_root: Path, disk_min_gb: float = 0, workers: int = 1,
+    progress: Callable[[int, int], None] | None = None, *, _on_staged: Callable[[Path], None] | None = None,
+) -> IngestResult:
+    """Ingest an audio dataset directory in place: stage it, validate the staged copy, then publish.
+
+    Every file is hard-linked (or copied) into the staging dir first, and the staged files are what gets
+    validated, hashed and stored, so a re-export of `src` during a long validation cannot make the manifest
+    describe other content than the version holds. Nothing under `src` is modified, moved or deleted (a
+    hard-linked audio file shares the version's read-only mode). `_on_staged(staged_dir)` is a test hook.
     """
     src = Path(src)
     dest_root = Path(dest_root)
@@ -207,31 +270,16 @@ def ingest_dir(src: Path, task: str, dest_root: Path, disk_min_gb: float = 0, wo
     staging = dest_root / ".staging" / uuid.uuid4().hex
     staging.mkdir(parents=True)
     try:
-        report, rows = validate_audio(src, task, workers=workers)
-        if report.ok:
-            real_src = src.resolve()
-            for r in rows:
-                if not _locate(src, r["file"]).resolve().is_relative_to(real_src):
-                    report.errors.append(Issue(
-                        "unsafe_path", f"'{r['file']}' is a symlink that resolves outside the dataset directory"))
-                    break
-
-        def disk_check(rs: list[dict]) -> Issue | None:
-            # Hard links on the same filesystem cost nothing; otherwise every file is copied.
-            if os.stat(src).st_dev == os.stat(dest_root).st_dev:
-                return None
-            need = sum(_locate(src, r["file"]).stat().st_size for r in rs)
-            room = shutil.disk_usage(dest_root).free - disk_min_gb * GB
-            if need <= room:
-                return None
-            return Issue(
-                "insufficient_disk",
-                f"dataset needs {need / GB:.1f} GB of copies but only {max(room, 0) / GB:.1f} GB is free "
-                f"above the {disk_min_gb:g} GB reserve",
-            )
-
+        staged = staging / "src"
+        staged.mkdir()
+        report = Report()
+        if not _stage_dir(src, staged, dest_root, disk_min_gb, report):
+            return IngestResult(report, None, None, 0)
+        if _on_staged is not None:
+            _on_staged(staged)
+        report, rows = validate_audio(staged, task, workers=workers, progress=progress)
         return _publish(report, rows, dest_root, staging,
-                        lambda r, dst: _link_or_copy_ro(_locate(src, r["file"]), dst), disk_check)
+                        lambda r, dst: _move_ro(_locate(staged, r["file"]), dst))
     finally:
         shutil.rmtree(staging, ignore_errors=True)
         try:
