@@ -1,0 +1,71 @@
+id: cosyvoice3
+task: tts
+name: Fun-CosyVoice3-0.5B
+hf_repo: FunAudioLLM/Fun-CosyVoice3-0.5B-2512
+params: 500M
+role: comparison
+license:
+  id: apache-2.0
+  commercial_ok: true
+  url: https://huggingface.co/FunAudioLLM/Fun-CosyVoice3-0.5B-2512
+  notes: "Experimental: Bangla is not a pretrained language; needs many hours of clean single-language TTS data."
+bangla:
+  status: none
+  evidence: CosyVoice 3 officially covers nine languages (Chinese, English, Japanese, Korean, German, Spanish, French, Italian, Russian), not Bangla. Its byte-level BPE tokenizer can encode Bangla text, but whether fine-tuning teaches it a new language is unproven.
+  url: https://huggingface.co/FunAudioLLM/Fun-CosyVoice3-0.5B-2512
+runtime:
+  engine: custom
+  streaming: true
+description: |
+  FunAudioLLM's CosyVoice 3, a 0.5B text-to-speech model made of an LLM that predicts speech tokens, a flow-matching
+  decoder and a HiFi-GAN vocoder. It clones a voice from a short prompt clip and supports streaming synthesis.
+
+  Experimental: Bangla is not a pretrained language; needs many hours of clean single-language TTS data.
+dataset:
+  format: tts
+  required_fields: [file, text, speaker]
+  optional_fields: [style]
+  example: "clips/0001.wav,আপনার অর্ডারটি আগামীকাল বিকেলের মধ্যে পৌঁছে যাবে।,speaker_01"
+  recommended:
+    hours: "50+"
+    speakers: "1-5"
+    sample_rate: "24000"
+    clip_seconds: "2-15"
+  notes: |
+    Studio-quality, single-microphone recordings with no music or background noise. Transcripts must match the audio
+    exactly, in Bangla script, Unicode NFC. Because Bangla is not a pretrained language, plan for many hours of clean
+    single-language data rather than the few hours that suffice for a supported language.
+finetune:
+  methods: [full]
+  frameworks: [cosyvoice]
+  targets:
+    - "Fine-tune the LLM and flow components with the upstream CosyVoice training recipe; the HiFi-GAN vocoder is optional."
+    - "Speech tokens and speaker embeddings are extracted once at prepare time with the frozen helper models."
+    - "Treat the result as an experiment: compare against IndicF5 before adopting it."
+  hyperparams:
+    learning_rate: 1.0e-5
+    epochs: 10
+    max_frames_in_batch: 2000
+    grad_accum: 2
+    warmup_steps: 2500
+  metrics: [mos, cer_via_asr, speaker_similarity, rtf]
+  pitfalls:
+    - "Bangla is outside the pretrained languages; expect mispronunciation unless the dataset is large."
+    - "Prompt clips with noise or a wrong transcript produce mumbling or skipped words."
+recipe_template:
+  backend: cosyvoice
+  method: {type: full}
+  hparams:
+    components: [llm, flow]
+    learning_rate: 1.0e-5
+    epochs: 10
+    max_frames_in_batch: 2000
+    grad_accum: 2
+    warmup_steps: 2500
+  export: [cosyvoice-dir]
+sources:
+  - title: Fun-CosyVoice3-0.5B model card
+    url: https://huggingface.co/FunAudioLLM/Fun-CosyVoice3-0.5B-2512
+  - title: CosyVoice repository
+    url: https://github.com/FunAudioLLM/CosyVoice
+verified: 2026-11-24

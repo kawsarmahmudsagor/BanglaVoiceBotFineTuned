@@ -55,12 +55,13 @@ finetune:
     - "Starting from 79% WER needs far more data than continuing from the Bengali fine-tune."
     - "Hallucination on silence; add non-speech clips and keep VAD on."
 recipe_template:
+  backend: hf
   method: {type: full}
   hparams:
     learning_rate: 1.0e-5
+    epochs: 3
     warmup_steps: 500
     max_steps: 10000
-    language: bn
   export: [ct2]
 sources:
   - title: openai/whisper-large-v3-turbo model card

@@ -47,12 +47,12 @@ finetune:
   pitfalls:
     - "Non-commercial: a fine-tune inherits CC-BY-NC and cannot ship."
 recipe_template:
+  backend: hf
   method: {type: adapter}
   hparams:
     learning_rate: 1.0e-3
-    num_train_epochs: 4
-    target_lang: ben
-  export: []
+    epochs: 4
+  export: [adapter-safetensors]
 sources:
   - title: mms-1b-all model card
     url: https://huggingface.co/facebook/mms-1b-all

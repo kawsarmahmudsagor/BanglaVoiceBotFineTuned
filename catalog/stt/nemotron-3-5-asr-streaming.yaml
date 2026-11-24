@@ -52,12 +52,12 @@ finetune:
     - "A tokenizer swap with too little data can collapse (a community Malay run did); budget hundreds of hours."
     - "Training with full context but serving with a short chunk raises WER; train with the chunk sizes you serve."
 recipe_template:
+  backend: nemo
   method: {type: full}
   hparams:
     learning_rate: 5.0e-4
     max_steps: 50000
-    new_tokenizer: true
-  export: [onnx]
+  export: [nemo]
 sources:
   - title: Nemotron 3.5 ASR streaming model card
     url: https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b

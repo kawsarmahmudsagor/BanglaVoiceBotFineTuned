@@ -63,12 +63,13 @@ finetune:
     - "Orthographic WER is far higher than normalised WER (26% vs 11% here); decide which normalisation you report before comparing runs."
     - "Overfitting to Common Voice read speech; conversational phone audio needs its own eval split."
 recipe_template:
+  backend: hf
   method: {type: full}
   hparams:
     learning_rate: 1.0e-5
+    epochs: 3
     warmup_steps: 500
     max_steps: 5000
-    language: bn
   export: [ct2]
 sources:
   - title: mozilla-ai/whisper-large-v3-turbo-bn model card

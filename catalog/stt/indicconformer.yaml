@@ -51,11 +51,12 @@ finetune:
     - "Upstream NeMo may not load the checkpoint; use the AI4Bharat fork the card names."
     - "The card's sample code names a different repo id (`..._hybrid_rnnt_large`); use the repo id above."
 recipe_template:
+  backend: nemo
   method: {type: full}
   hparams:
     learning_rate: 1.0e-4
-    max_epochs: 20
-  export: [onnx]
+    epochs: 20
+  export: [nemo]
 sources:
   - title: IndicConformer Bengali model card
     url: https://huggingface.co/ai4bharat/indicconformer_stt_bn_hybrid_ctc_rnnt_large

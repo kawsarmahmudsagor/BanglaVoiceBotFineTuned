@@ -57,11 +57,12 @@ finetune:
     - "The card's environment is old (NeMo 1.19.0, torchmetrics 0.9.2); newer NeMo may need config changes to restore the checkpoint."
     - "CTC without a language model misspells rare words; add an n-gram LM for product names."
 recipe_template:
+  backend: nemo
   method: {type: full}
   hparams:
     learning_rate: 1.0e-4
-    max_epochs: 30
-  export: [onnx]
+    epochs: 30
+  export: [nemo]
 sources:
   - title: BanglaConformer model card
     url: https://huggingface.co/bengaliAI/BanglaConformer

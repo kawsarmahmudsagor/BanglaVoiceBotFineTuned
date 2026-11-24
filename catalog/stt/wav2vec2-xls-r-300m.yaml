@@ -52,11 +52,12 @@ finetune:
     - "Build the vocabulary from NFC-normalised text, or Bengali vowel signs and conjuncts inflate WER."
     - "Without a language model, CTC output is spelled phonetically; add KenLM for usable WER."
 recipe_template:
+  backend: hf
   method: {type: full}
   hparams:
     learning_rate: 3.0e-4
-    num_train_epochs: 30
-  export: []
+    epochs: 30
+  export: [safetensors]
 sources:
   - title: wav2vec2-xls-r-300m model card
     url: https://huggingface.co/facebook/wav2vec2-xls-r-300m

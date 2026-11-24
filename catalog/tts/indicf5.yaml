@@ -55,12 +55,14 @@ finetune:
     - "Reference clips with noise or a wrong transcript produce mumbling or skipped words."
     - "No streaming: first-audio latency equals one sentence's synthesis time."
 recipe_template:
+  backend: f5
   method: {type: full}
   hparams:
     learning_rate: 1.0e-5
     epochs: 50
-    warmup_updates: 1000
-  export: []
+    batch_size_frames: 3200
+    warmup_steps: 1000
+  export: [f5-ckpt]
 sources:
   - title: IndicF5 model card
     url: https://huggingface.co/ai4bharat/IndicF5

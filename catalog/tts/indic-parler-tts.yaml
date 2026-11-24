@@ -59,12 +59,13 @@ finetune:
     - "Over-training on one speaker erases the other Bengali voices; mix in some original-speaker data or keep epochs low."
     - "Two tokenizers (prompt and description): loading the wrong one gives garbage audio."
 recipe_template:
+  backend: hf
   method: {type: full}
   hparams:
     learning_rate: 1.0e-4
-    num_train_epochs: 10
+    epochs: 10
     warmup_steps: 250
-  export: []
+  export: [safetensors]
 sources:
   - title: Indic Parler-TTS model card
     url: https://huggingface.co/ai4bharat/indic-parler-tts
