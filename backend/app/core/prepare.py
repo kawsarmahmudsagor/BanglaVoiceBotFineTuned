@@ -62,6 +62,14 @@ class PrepInfo(BaseModel):
 _ASSIGN_CACHE: dict[tuple, list[str]] = {}
 
 
+def empty_split_error(split: str, skipped: list[Skip]) -> PrepareError:
+    """The error for a split with no rows left, naming the commonest skip reasons for that split."""
+    reasons = Counter(s.reason for s in skipped if s.split == split)
+    total = sum(reasons.values())
+    top = "; ".join(f"{n}x {r}" for r, n in reasons.most_common(3))
+    return PrepareError(f"split {split} is empty after prepare ({total} rows skipped" + (f": {top})" if top else ")"))
+
+
 def _assigned(ds: DatasetRef, rows: list[dict]) -> list[str]:
     st = os.stat(ds.manifest)
     key = (ds.manifest, st.st_mtime_ns, st.st_size, json.dumps(ds.split.model_dump(), sort_keys=True))

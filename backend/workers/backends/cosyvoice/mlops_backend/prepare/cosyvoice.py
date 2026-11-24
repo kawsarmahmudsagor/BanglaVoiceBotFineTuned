@@ -16,7 +16,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from app.core.backend_kit.audio_refs import check_audio_refs, probed_rows, progress_ticker
-from app.core.prepare import BuildResult, PrepareError, PrepSpec, Skip
+from app.core.prepare import BuildResult, PrepSpec, Skip, empty_split_error
 from app.core.text import BN_NORMALIZE_VERSION, bn_normalize
 from app.core.tts_refs import DEFAULT_SPEAKER, pick_reference
 
@@ -223,7 +223,7 @@ def _write_split(out: Path, split: str, recs: list[dict], extractor: Callable, s
              for sid, e in failed.items()]
     recs = [r for r in recs if r["sample_id"] not in failed]
     if not recs:
-        raise PrepareError(f"split {split} is empty after prepare ({len(skips)} rows skipped)")
+        raise empty_split_error(split, skips)
     write_kaldi_lists(recs, d)
     files = [f"{split}/{n}" for n in ("wav.scp", "text", "utt2spk", "spk2utt", "instruct")]
     by_spk: dict[str, list] = {}
@@ -321,7 +321,7 @@ def build_cosyvoice(model_dir: Path | None = None, rep=None, probe: Callable | N
                 else:
                     recs.append(rec)
             if not recs:
-                raise PrepareError(f"split {split} is empty after prepare ({len(skipped)} rows skipped)")
+                raise empty_split_error(split, skipped)
             kept[split] = recs
             counts[split] = len(recs)
         ext = extractor or make_extractor(model_dir)

@@ -10,6 +10,8 @@ from mlops_backend import asr
 
 INDIC = "ai4bharat/indicconformer_stt_bn_hybrid_ctc_rnnt_large"
 NEMOTRON = "nvidia/nemotron-3.5-asr-streaming-0.6b"
+# Bangla transcripts without digits: bn_normalize maps "0" to "০", and tokenizers may lack the Bangla digits.
+BN_TEXTS = ["আমি বাংলায় কথা বলি", "আজ আকাশ পরিষ্কার", "তুমি কোথায় যাচ্ছ", "আমরা ভাত খাই"]
 
 
 def test_nemo_init_path_choice(tmp_path):
@@ -138,7 +140,7 @@ def test_nemo_20_steps(run_dir, monkeypatch, tmp_path, model):
 
     monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
     rd = run_dir("asr", model, {"max_steps": 20, "batch_size": 1, "grad_accum": 1, "learning_rate": 1e-5},
-                 method={"type": "full"}, export=["nemo"])
+                 method={"type": "full"}, export=["nemo"], texts=BN_TEXTS)
     cfg = read_config(rd)
     rep = Reporter(rd)
     assert asr.prepare(rd, cfg, rep) == 0
@@ -162,7 +164,7 @@ def test_nemo_checkpoints_resume_and_warm_start(run_dir, monkeypatch, tmp_path):
 
     monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
     hp = {"max_steps": 10, "save_steps": 5, "batch_size": 1, "grad_accum": 1, "learning_rate": 1e-5}
-    rd = run_dir("asr", NEMOTRON, hp, method={"type": "full"})
+    rd = run_dir("asr", NEMOTRON, hp, method={"type": "full"}, texts=BN_TEXTS)
     cfg = read_config(rd)
     rep = Reporter(rd)
     assert asr.prepare(rd, cfg, rep) == 0

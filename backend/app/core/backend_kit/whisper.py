@@ -13,7 +13,7 @@ from pathlib import Path
 from app.core.backend_kit.audio_refs import (  # noqa: F401 - re-exported for callers
     PROBE_THREADS, PROGRESS_EVERY, check_audio_refs, probe_duration, probed_rows, progress_ticker,
 )
-from app.core.prepare import BuildResult, PrepareError, PrepSpec, Skip, ensure_prepared
+from app.core.prepare import BuildResult, PrepSpec, Skip, empty_split_error, ensure_prepared
 from app.core.text import BN_NORMALIZE_VERSION, bn_normalize
 
 SAMPLE_RATE = 16000
@@ -110,7 +110,7 @@ def _write_split(items: list[dict], out_dir: Path, probe: Callable, tokenize: Ca
         for k in cols:
             cols[k].append(ex[k])
     if not cols["sample_id"]:
-        raise PrepareError(f"split {out_dir.name} is empty after prepare ({len(skips)} rows skipped)")
+        raise empty_split_error(out_dir.name, skips)
     from datasets import Dataset
 
     Dataset.from_dict(cols).save_to_disk(str(out_dir))

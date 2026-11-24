@@ -14,7 +14,7 @@ from typing import Literal
 from app.core.backend_kit.audio_refs import (  # noqa: F401
     PROGRESS_EVERY, SAMPLE_RATE, first_last_lines, probe_duration, probed_rows, progress_ticker,
 )
-from app.core.prepare import BuildResult, PrepareError, PrepSpec, Skip
+from app.core.prepare import BuildResult, PrepSpec, Skip, empty_split_error
 from app.core.text import BN_NORMALIZE_VERSION, bn_normalize
 
 MAX_SECONDS = 30
@@ -116,7 +116,7 @@ def build_ctc(vocab: dict[str, int], mode: Literal["new", "fixed"], rep=None,
                     f.write(json.dumps(ex, ensure_ascii=False) + "\n")
                     n += 1
             if n == 0:
-                raise PrepareError(f"split {split} is empty after prepare ({len(skipped)} rows skipped)")
+                raise empty_split_error(split, skipped)
             counts[split] = n
         return BuildResult(counts=counts, skipped=skipped, files=[f"{s}.jsonl" for s in rows] + ["vocab.json"])
 

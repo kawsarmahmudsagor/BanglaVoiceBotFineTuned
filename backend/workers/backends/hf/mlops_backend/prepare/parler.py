@@ -12,7 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from app.core.backend_kit.audio_refs import progress_ticker
-from app.core.prepare import BuildResult, PrepareError, PrepSpec, Skip
+from app.core.prepare import BuildResult, PrepSpec, Skip, empty_split_error
 from app.core.text import BN_NORMALIZE_VERSION, bn_normalize
 
 SAMPLE_RATE = 44100
@@ -208,7 +208,7 @@ def build_parler(feature_extractor, audio_encoder, prompt_tokenizer, description
             recs = iter_records(items, split, skipped, enc, loader, template, tok_prompt, tok_desc, tick)
             n = write_split(recs, out / split)
             if n == 0:
-                raise PrepareError(f"split {split} is empty after prepare ({len(skipped)} rows skipped)")
+                raise empty_split_error(split, skipped)
             counts[split] = n
         return BuildResult(counts=counts, skipped=skipped, files=list(rows))
 

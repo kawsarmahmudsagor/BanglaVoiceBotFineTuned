@@ -253,7 +253,7 @@ def test_build_raises_when_a_split_is_empty_after_prepare(tmp_path, monkeypatch)
 
     build = pp.build_parler(None, None, tok, tok, DEFAULT, encode=lambda audios: [], loader=loader)
     rows = {"train": [{"sample_id": "a", "audio_path": "x", "text": "আমি"}]}
-    with pytest.raises(PrepareError, match=r"^split train is empty after prepare \(1 rows skipped\)$"):
+    with pytest.raises(PrepareError, match=r"^split train is empty after prepare \(1 rows skipped: 1x undecodable audio: OSError\)$"):
         build(rows, tmp_path / "out")
 
 

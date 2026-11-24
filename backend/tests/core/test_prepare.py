@@ -221,3 +221,20 @@ def test_prepared_dir_differs_when_only_ratios_differ(cfg, audio_ds):
 def test_eval_only_ref_yields_all_rows(audio_ds):
     ref = audio_ds.model_copy(update={"split": None, "splits": ["train", "val", "test"]})
     assert {s: len(list(iter_rows(ref, s))) for s in ref.splits} == {"train": 4, "val": 4, "test": 4}
+
+
+def test_empty_split_error_names_top_reasons_for_that_split():
+    from app.core.prepare import Skip, empty_split_error
+
+    skipped = [Skip(sample_id="a", split="train", reason="too short"),
+               Skip(sample_id="b", split="train", reason="too short"),
+               Skip(sample_id="c", split="train", reason="empty text"),
+               Skip(sample_id="d", split="val", reason="other")]
+    msg = str(empty_split_error("train", skipped))
+    assert msg == "split train is empty after prepare (3 rows skipped: 2x too short; 1x empty text)"
+
+
+def test_empty_split_error_without_skips():
+    from app.core.prepare import empty_split_error
+
+    assert str(empty_split_error("val", [])) == "split val is empty after prepare (0 rows skipped)"

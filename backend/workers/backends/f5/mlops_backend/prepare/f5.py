@@ -14,7 +14,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path, PurePosixPath
 
 from app.core.backend_kit.audio_refs import probed_rows, progress_ticker
-from app.core.prepare import BuildResult, PrepareError, PrepSpec, Skip
+from app.core.prepare import BuildResult, PrepareError, PrepSpec, Skip, empty_split_error
 from app.core.text import BN_NORMALIZE_VERSION, bn_normalize
 from app.core.tts_refs import DEFAULT_SPEAKER, pick_reference
 
@@ -161,7 +161,7 @@ def build_f5(base_vocab: list[str], rep=None, probe: Callable | None = None,
                 else:
                     recs.append(rec)
             if not recs:
-                raise PrepareError(f"split {split} is empty after prepare ({len(skipped)} rows skipped)")
+                raise empty_split_error(split, skipped)
             kept[split] = recs
             counts[split] = len(recs)
         allrecs = [r for recs in kept.values() for r in recs]

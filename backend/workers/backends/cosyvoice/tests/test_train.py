@@ -435,17 +435,17 @@ def test_split_sentences_on_danda():
 # ---- heavy (GPU VM only) -----------------------------------------------------------------------------------------
 
 @pytest.mark.heavy
-def test_cosyvoice_20_steps_llm_and_synthesize(run_dir, tiny_tts_ds, monkeypatch, tmp_path):
+def test_cosyvoice_20_steps_llm_and_synthesize(run_dir, monkeypatch, tmp_path):
     from app.core.backend_kit import Reporter
     from app.core.contract import read_eval_results
 
     from mlops_backend import cosyvoice as p
 
     monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
-    _, rows = tiny_tts_ds(n=4, seconds=1.5)
+    # prepare reads run_dir's own dataset; clips under 1 s are skipped (MIN_SECONDS), so make them 1.5 s
     rd = run_dir("tts", MODEL, {"components": ["llm"], "max_steps": 20, "grad_accum": 1, "learning_rate": 1e-5,
                                 "warmup_steps": 0, "save_steps": 10, "keep_checkpoints": 2,
-                                "eval": {"max_samples": 2}}, export=["cosyvoice-dir"])
+                                "eval": {"max_samples": 2}}, export=["cosyvoice-dir"], seconds=1.5)
     cfg = read_config(rd)
     rep = Reporter(rd)
     assert p.prepare(rd, cfg, rep) == 0
