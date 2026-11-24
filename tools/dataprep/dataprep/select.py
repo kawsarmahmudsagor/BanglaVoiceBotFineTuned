@@ -23,7 +23,7 @@ class SelectError(RuntimeError):
 # column -> (step name, step version, params or None to skip the params check).
 # Steps from later tasks (dnsmos, brouhaha, speakers, cer_*) are assumed v1.
 _AUDIO = ("audio_stats", 1, {})
-_TEXT = ("text", 1, {})
+_TEXT = ("text", 2, {})
 COLUMN_STEPS: dict[str, tuple[str, int, dict | None]] = {
     "dur": _AUDIO, "clip_frac": _AUDIO, "silence_share": _AUDIO, "lufs": _AUDIO, "src_sr": _AUDIO,
     "has_latin": _TEXT, "has_digits": _TEXT, "n_chars": _TEXT, "text_clean": _TEXT,

@@ -36,7 +36,7 @@ def find_matches(sentences: list[tuple[int, str]], work_dirs: list[Path]) -> lis
             wanted.setdefault(key, []).append((n, s))
     matches = []
     for root in work_dirs:
-        df: pd.DataFrame = StepFile.read(WorkDir(root).step_path("text"), step="text", version=1)
+        df: pd.DataFrame = StepFile.read(WorkDir(root).step_path("text"), step="text", version=2)
         for rid, text in zip(df["id"], df["text_clean"].fillna("")):
             for n, s in wanted.get(bn_normalize(text, mode="asr"), []):
                 matches.append((n, s, Path(root), rid))

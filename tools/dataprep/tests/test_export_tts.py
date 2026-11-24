@@ -39,7 +39,7 @@ def make_wd(tmp_path, *, brouhaha=True, speakers=True) -> WorkDir:
         wd.step_path("text"),
         pd.DataFrame({"id": ids, "text_clean": texts, "has_latin": False, "has_digits": False,
                       "n_chars": [len(x) for x in texts], "empty_asr": False, "error": None}),
-        step="text", version=1, params={},
+        step="text", version=2, params={},
     )
     StepFile.write(
         wd.step_path("audio_stats"),

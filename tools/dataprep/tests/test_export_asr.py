@@ -37,7 +37,7 @@ def make_wd(tmp_path) -> WorkDir:
         wd.step_path("text"),
         pd.DataFrame({"id": ids, "text_clean": texts, "has_latin": False, "has_digits": False,
                       "n_chars": [len(x) for x in texts], "empty_asr": False, "error": None}),
-        step="text", version=1, params={},
+        step="text", version=2, params={},
     )
     StepFile.write(
         wd.step_path("audio_stats"),
@@ -75,7 +75,7 @@ def test_export_passes_validate_audio(tmp_path):
     assert cur["source"] == "bengaliai"
     assert cur["provenance"]["commercial_ok"] is False
     assert {"source", "license", "consent", "notes"} <= set(cur["provenance"])
-    assert cur["step_versions"]["text"] == 1
+    assert cur["step_versions"]["text"] == 2
     assert not list(out.rglob("*.tmp-*"))
 
 
@@ -123,7 +123,7 @@ def test_export_ignores_foreign_parquet_in_work_dir(tmp_path):
     pd.DataFrame({"x": [1, 2]}).to_parquet(wd.root / "notes.parquet")  # no dataprep metadata
     out = export(wd, PROFILE, "bn-asr", workers=1)
     cur = json.loads((out / "curation.json").read_text(encoding="utf-8"))
-    assert cur["step_versions"]["text"] == 1 and "notes" not in json.dumps(cur["step_versions"])
+    assert cur["step_versions"]["text"] == 2 and "notes" not in json.dumps(cur["step_versions"])
 
 
 def test_export_aborts_on_failed_transcode(tmp_path):

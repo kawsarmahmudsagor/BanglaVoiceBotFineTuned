@@ -32,7 +32,7 @@ def make_wd(tmp_path, overrides: dict[int, dict] | None = None, n: int = 10) -> 
             "id": df["id"], "text_clean": df["text"], "has_latin": df["has_latin"], "has_digits": False,
             "n_chars": df["text"].str.len(), "empty_asr": df["empty_asr"], "error": df["error"],
         }),
-        step="text", version=1, params={},
+        step="text", version=2, params={},
     )
     StepFile.write(
         wd.step_path("audio_stats"),

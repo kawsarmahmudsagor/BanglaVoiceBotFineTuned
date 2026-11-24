@@ -12,7 +12,7 @@ from ..workdir import WorkDir
 from ._runner import run_step
 
 STEP = "text"
-VERSION = 1
+VERSION = 2
 COLUMNS = ["id", "text_clean", "has_latin", "has_digits", "n_chars", "empty_asr", "error"]
 
 _normalizer = None

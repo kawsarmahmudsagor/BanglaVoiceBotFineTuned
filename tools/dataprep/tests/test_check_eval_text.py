@@ -15,7 +15,7 @@ def make_work(root, texts: dict[str, str]):
             "id": ids, "text_clean": [texts[i] for i in ids], "has_latin": False, "has_digits": False,
             "n_chars": 5, "empty_asr": False, "error": None,
         }),
-        step="text", version=1, params={},
+        step="text", version=2, params={},
     )
     return root
 

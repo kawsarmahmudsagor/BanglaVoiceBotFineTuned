@@ -88,7 +88,7 @@ def test_text_flags_empty_after_normalize(tmp_path):
     wd = WorkDir(tmp_path)
     _write_clips(wd, ["a", "b", "c"], ["।।", "আমি Google 5", "আমি ভাত"])
     assert main(["text", "--work", str(tmp_path), "--workers", "1"]) == 0
-    df = StepFile.read(wd.step_path("text"), step="text", version=1).set_index("id")
+    df = StepFile.read(wd.step_path("text"), step="text", version=2).set_index("id")
     assert list(df.columns) == ["text_clean", "has_latin", "has_digits", "n_chars", "empty_asr", "error"]
     assert bool(df.loc["a", "empty_asr"]) and df.loc["a", "n_chars"] == 0
     assert df.loc["b", "has_latin"] and df.loc["b", "has_digits"]

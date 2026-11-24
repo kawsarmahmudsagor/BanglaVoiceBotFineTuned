@@ -129,7 +129,7 @@ def run(
             print(f"transcribe: {note}")
         only_ids = set(eligible(wd, profile, spec, skip_columns=skip)["id"])
     labeller = get_labeller(spec, batch_size=batch_size)  # fail fast on a missing extra or model
-    text = StepFile.read(wd.step_path("text"), step="text", version=1, params={})
+    text = StepFile.read(wd.step_path("text"), step="text", version=2, params={})
     info = text.set_index("id")[["text_clean", "empty_asr", "error"]].to_dict("index")
     refs = {i: v["text_clean"] for i, v in info.items()}
 
