@@ -1,4 +1,5 @@
-"""CosyVoice family handlers (Fun-CosyVoice3): prepare here; train/eval/export arrive with Task 35.
+"""CosyVoice family handlers (Fun-CosyVoice3): prepare here; train/eval/export live in train.py / eval.py / export.py
+and are re-exported below.
 huggingface_hub is imported inside functions only."""
 from __future__ import annotations
 
@@ -45,3 +46,7 @@ def prepare_cosyvoice(rd: RunDir, cfg: RunConfig, rep, download=None) -> int:
 
 
 prepare = prepare_cosyvoice  # phase handler looked up by phases._dispatch
+
+from .eval import eval_cosyvoice as eval  # noqa: E402,A001,F401  (phase handler names looked up by phases._dispatch)
+from .export import export_cosyvoice as export  # noqa: E402,F401
+from .train import train_cosyvoice as train  # noqa: E402,F401
