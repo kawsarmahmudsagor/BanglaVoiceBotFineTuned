@@ -80,6 +80,14 @@
                 "default": 2
               }
             }
+          },
+          "export": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "f5-ckpt"
+              ]
+            }
           }
         }
       }

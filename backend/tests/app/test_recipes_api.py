@@ -137,3 +137,36 @@ async def test_clone(client, session, settings):
 async def test_404s(client):
     assert (await client.get("/api/recipes/nope")).status_code == 404
     assert (await client.get("/api/recipes/nope/versions/1")).status_code == 404
+
+
+def hf_asr(base_model, export, method="full", name="w2v"):
+    return {
+        "name": name, "task": "asr", "backend": "hf", "base_model": base_model,
+        "base_model_meta": {"license": "apache-2.0", "commercial_ok": True},
+        "datasets": {"train": "a1@v1"}, "method": {"type": method}, "hparams": {"max_steps": 10},
+        "export": export,
+    }
+
+
+@pytest.mark.parametrize("base_model,export,method,bad", [
+    ("facebook/wav2vec2-xls-r-300m", ["ct2"], "full", "ct2"),
+    ("facebook/wav2vec2-xls-r-300m", ["adapter-safetensors"], "full", "adapter-safetensors"),
+    ("openai/whisper-large-v3-turbo", ["adapter-safetensors"], "full", "adapter-safetensors"),
+    ("facebook/mms-1b-all", ["ct2"], "adapter", "ct2"),
+])
+async def test_export_format_must_fit_the_model_family(client, session, base_model, export, method, bad):
+    await seed(session, name="a1", task="asr")
+    r = await client.post("/api/recipes", json={"spec": hf_asr(base_model, export, method)})
+    assert r.status_code == 422
+    assert any(e.startswith("export.0: ") and f"'{bad}'" in e for e in r.json()["errors"]), r.json()
+
+
+@pytest.mark.parametrize("base_model,export,method", [
+    ("facebook/wav2vec2-xls-r-300m", ["safetensors"], "full"),
+    ("openai/whisper-large-v3-turbo", ["ct2", "safetensors"], "full"),
+    ("facebook/mms-1b-all", ["adapter-safetensors", "safetensors"], "adapter"),
+])
+async def test_export_format_fitting_the_family_is_accepted(client, session, base_model, export, method):
+    await seed(session, name="a1", task="asr")
+    r = await client.post("/api/recipes", json={"spec": hf_asr(base_model, export, method)})
+    assert r.status_code == 201, r.json()

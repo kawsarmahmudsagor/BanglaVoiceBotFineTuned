@@ -103,6 +103,16 @@
                 "type": "object"
               }
             }
+          },
+          "export": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "safetensors",
+                "ct2",
+                "adapter-safetensors"
+              ]
+            }
           }
         },
         "allOf": [
@@ -133,6 +143,84 @@
               "required": [
                 "base_model"
               ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "base_model": {
+                  "enum": [
+                    "openai/whisper-large-v3-turbo",
+                    "mozilla-ai/whisper-large-v3-turbo-bn"
+                  ]
+                }
+              },
+              "required": [
+                "base_model"
+              ]
+            },
+            "then": {
+              "properties": {
+                "export": {
+                  "items": {
+                    "enum": [
+                      "safetensors",
+                      "ct2"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "base_model": {
+                  "enum": [
+                    "facebook/wav2vec2-xls-r-300m"
+                  ]
+                }
+              },
+              "required": [
+                "base_model"
+              ]
+            },
+            "then": {
+              "properties": {
+                "export": {
+                  "items": {
+                    "enum": [
+                      "safetensors"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "base_model": {
+                  "enum": [
+                    "facebook/mms-1b-all"
+                  ]
+                }
+              },
+              "required": [
+                "base_model"
+              ]
+            },
+            "then": {
+              "properties": {
+                "export": {
+                  "items": {
+                    "enum": [
+                      "safetensors",
+                      "adapter-safetensors"
+                    ]
+                  }
+                }
+              }
             }
           }
         ]
@@ -235,6 +323,14 @@
                 "type": "string",
                 "default": "{speaker} speaks clearly in a studio-quality recording."
               }
+            }
+          },
+          "export": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "safetensors"
+              ]
             }
           }
         }

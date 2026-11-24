@@ -99,6 +99,14 @@
                 "type": "object"
               }
             }
+          },
+          "export": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "nemo"
+              ]
+            }
           }
         }
       }

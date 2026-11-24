@@ -120,7 +120,8 @@ def validate_recipe(spec: RecipeSpec, caps: dict[str, Capabilities]) -> list[str
     from jsonschema import Draft202012Validator  # lazy: optional extra "validate"
 
     validator = Draft202012Validator(task.schema_)
-    instance = {"base_model": spec.base_model, "method": spec.method, "hparams": spec.hparams}
+    instance = {"base_model": spec.base_model, "method": spec.method, "hparams": spec.hparams,
+                "export": [fmt.split(":", 1)[0] for fmt in spec.export]}  # schemas restrict formats per model family
     for err in sorted(validator.iter_errors(instance), key=lambda e: list(map(str, e.absolute_path))):
         path = ".".join(str(p) for p in err.absolute_path)
         errors.append(f"{path}: {err.message}")

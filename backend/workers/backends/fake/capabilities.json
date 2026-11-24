@@ -56,6 +56,14 @@
                 "type": "integer"
               }
             }
+          },
+          "export": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "dummy"
+              ]
+            }
           }
         }
       }
@@ -114,6 +122,14 @@
                 "type": "integer"
               }
             }
+          },
+          "export": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "dummy"
+              ]
+            }
           }
         }
       }
@@ -171,6 +187,14 @@
               "seed": {
                 "type": "integer"
               }
+            }
+          },
+          "export": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "dummy"
+              ]
             }
           }
         }
