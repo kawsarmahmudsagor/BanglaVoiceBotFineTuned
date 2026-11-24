@@ -16,7 +16,7 @@ import pandas as pd
 
 from .profiles import Profile, load_profile
 from .roundtrip_cosyvoice import _REPORT_CSS
-from .select import COLUMN_STEPS, SelectError, eligible
+from .select import COLUMN_STEPS, SelectError, eligible, resolve_skips
 from .workdir import StepFile, WorkDir
 
 DEFAULT_BANDS = [0, 2.5, 2.8, 3.0, 3.2, 3.5, 5]
@@ -68,10 +68,14 @@ def listen(
     column: str = "dnsmos_ovrl",
     per_band: int = 10,
     bands: list[float] = DEFAULT_BANDS,
+    labeller: str | None = None,
 ) -> Path:
-    if column not in COLUMN_STEPS or column in ("speaker", "text_clean"):
-        raise SelectError(f"cannot listen by '{column}'")
-    ok = eligible(wd, profile, skip_columns=frozenset({column}))[["id", "src_split"]]
+    if column not in SHOWN:
+        raise SelectError(f"cannot listen by '{column}'; choose one of: {', '.join(SHOWN)}")
+    skip, notes = resolve_skips(wd, profile, labeller, frozenset({column}), speaker_if_missing=True)
+    for note in notes:
+        print(f"listen: {note}")
+    ok = eligible(wd, profile, labeller, skip_columns=skip)[["id", "src_split"]]
     clips = StepFile.read(wd.clips_path, step="import", version=1)[["id", "src_path", "text_raw"]]
     df = ok.merge(clips, on="id").merge(_read_scores(wd, column), on="id", how="left")
     df = df[df[column].notna()].copy()
@@ -127,7 +131,7 @@ def listen(
 
 def _cmd(args: argparse.Namespace) -> int:
     try:
-        out = listen(WorkDir(args.work), load_profile(args.profile), column=args.column, per_band=args.per_band)
+        out = listen(WorkDir(args.work), load_profile(args.profile), column=args.column, per_band=args.per_band, labeller=args.labeller)
     except SelectError as e:
         print(f"listen: {e}")
         return 1
@@ -140,5 +144,6 @@ def add_parser(commands) -> None:
     p.add_argument("--work", type=Path, default=Path("var/dataprep/bengaliai"), help="work dir")
     p.add_argument("--profile", required=True, help="profile name or YAML path")
     p.add_argument("--column", default="dnsmos_ovrl", help="score column to band by")
+    p.add_argument("--labeller", default=None, help="CER labeller spec; without it the cer filter is skipped")
     p.add_argument("--per-band", type=int, default=10)
     p.set_defaults(func=_cmd)

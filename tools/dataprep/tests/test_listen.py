@@ -75,3 +75,17 @@ def test_listen_cli(tmp_path):
     prof.write_text("name: p\ntask: tts\n", encoding="utf-8")
     assert main(["listen", "--work", str(wd.root), "--profile", str(prof), "--per-band", "1"]) == 0
     assert (wd.root / "listen" / "p.html").is_file()
+
+
+def test_listen_shipped_tts_loose_without_speakers_or_labeller(tmp_path, capsys):
+    wd = _setup(tmp_path, n=12)
+    assert main(["listen", "--work", str(wd.root), "--profile", "tts-loose", "--per-band", "2"]) == 0
+    out = capsys.readouterr().out
+    assert "CER filter skipped" in out and "speaker floor skipped" in out
+    assert (wd.root / "listen" / "tts-loose.html").is_file()
+
+
+def test_listen_rejects_non_score_column(tmp_path, capsys):
+    wd = _setup(tmp_path, n=6)
+    assert main(["listen", "--work", str(wd.root), "--profile", "tts-loose", "--column", "dur"]) == 1
+    assert "cannot listen by 'dur'" in capsys.readouterr().out

@@ -127,3 +127,39 @@ def test_brouhaha_only_profile(tmp_path, monkeypatch):
     assert main(["brouhaha", "--work", str(wd.root), "--only-profile", str(prof)]) == 0
     df = pd.read_parquet(wd.step_path("brouhaha"))
     assert sorted(df["id"]) == ["r0", "r3", "r4"]  # r1, r2 fail the clip_frac filter; the snr filter is ignored
+
+
+def test_brouhaha_only_profile_shipped_tts_loose(tmp_path, monkeypatch, capsys):
+    # Only text + audio_stats exist (spec 5.2 step 2): no speakers, no cer, no dnsmos, no brouhaha.
+    wd = make_wd(tmp_path / "work", overrides={1: {"dur": 30.0}}, n=5)  # r1 fails tts-loose dur <= 15
+    monkeypatch.setattr(bh, "_scorer", lambda path: (0.01, _frames([(0, 100)])))
+    assert main(["brouhaha", "--work", str(wd.root), "--only-profile", "tts-loose"]) == 0
+    assert "CER filter skipped" in capsys.readouterr().out
+    df = pd.read_parquet(wd.step_path("brouhaha"))
+    assert sorted(df["id"]) == ["r0", "r2", "r3", "r4"]
+
+
+def test_brouhaha_fails_fast_when_scorer_cannot_load(tmp_path, monkeypatch, capsys):
+    wd = make_wd(tmp_path / "work", n=3)
+    monkeypatch.setattr(bh, "_scorer", None)
+
+    def boom():
+        raise RuntimeError("HF_TOKEN is not set")
+
+    monkeypatch.setattr(bh, "make_scorer", boom)
+    assert main(["brouhaha", "--work", str(wd.root)]) == 1
+    assert "HF_TOKEN is not set" in capsys.readouterr().out
+    assert not wd.step_path("brouhaha").exists()
+
+
+def test_dnsmos_fails_fast_when_scorer_cannot_load(tmp_path, monkeypatch, capsys):
+    wd = make_wd(tmp_path / "work", n=3)
+    monkeypatch.setattr(dm, "_scorer", None)
+
+    def boom():
+        raise ImportError("No module named 'torchmetrics'")
+
+    monkeypatch.setattr(dm, "make_scorer", boom)
+    assert main(["dnsmos", "--work", str(wd.root)]) == 1
+    assert "torchmetrics" in capsys.readouterr().out
+    assert not wd.step_path("dnsmos").exists()

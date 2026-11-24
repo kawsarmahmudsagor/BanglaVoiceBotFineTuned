@@ -38,12 +38,15 @@ def make_scorer() -> Scorer:
     return scorer
 
 
-def score_dnsmos(y16k: np.ndarray, *, scorer: Scorer | None = None) -> dict:
+def get_scorer() -> Scorer:
     global _scorer
-    if scorer is None:
-        if _scorer is None:
-            _scorer = make_scorer()
-        scorer = _scorer
+    if _scorer is None:
+        _scorer = make_scorer()
+    return _scorer
+
+
+def score_dnsmos(y16k: np.ndarray, *, scorer: Scorer | None = None) -> dict:
+    scorer = scorer or get_scorer()
     values = scorer(y16k)
     return {name: float(v) for name, v in zip(SCORES, values, strict=True)}
 
@@ -62,6 +65,7 @@ def _row(row: dict) -> dict:
 
 
 def run(wd: WorkDir, *, force: bool = False, retry_errors: bool = False) -> int:
+    get_scorer()  # fail fast on a missing extra instead of recording an error on every row
     # One process: the model lives on the GPU.
     return run_step(
         wd, step=STEP, version=VERSION, columns=COLUMNS, row_fn=_row, input_cols=["id", "src_path"],
@@ -70,7 +74,11 @@ def run(wd: WorkDir, *, force: bool = False, retry_errors: bool = False) -> int:
 
 
 def _cmd(args: argparse.Namespace) -> int:
-    run(WorkDir(args.work), force=args.force, retry_errors=args.retry_errors)
+    try:
+        run(WorkDir(args.work), force=args.force, retry_errors=args.retry_errors)
+    except (RuntimeError, ImportError) as e:
+        print(f"dnsmos: cannot load the scorer: {e}")
+        return 1
     return 0
 
 

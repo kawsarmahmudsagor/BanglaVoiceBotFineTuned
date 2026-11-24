@@ -9,6 +9,7 @@ supported-markers = [
 ]
 
 [manifest]
+overrides = [{ name = "onnxruntime", marker = "sys_platform == 'never'" }]
 build-constraints = [{ name = "setuptools", specifier = "<81" }]
 
 [[package]]
@@ -1095,20 +1096,6 @@ wheels = [
 ]
 
 [[package]]
-name = "onnxruntime"
-version = "1.32.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "flatbuffers" },
-    { name = "numpy" },
-    { name = "packaging" },
-    { name = "protobuf" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a3/81/55845186c20cba59f614991f4065dea148e48eeb9749893768c85ce64327/onnxruntime-1.32.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:99e1074c4b2197accd5073052a465361be17b89c093b8ffb6e6bd8f986c52df8", size = 27780211, upload-time = "2026-11-13T11:06:19.734Z" },
-]
-
-[[package]]
 name = "onnxruntime-gpu"
 version = "1.32.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1909,7 +1896,6 @@ wheels = [
 audio = [
     { name = "gammatone" },
     { name = "librosa" },
-    { name = "onnxruntime" },
     { name = "pesq" },
     { name = "pystoi" },
     { name = "requests" },

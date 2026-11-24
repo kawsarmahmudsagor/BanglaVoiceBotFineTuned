@@ -140,6 +140,34 @@ def _char_audit(df: pd.DataFrame) -> tuple[list[dict], list[dict]]:
     return chars, [c for c in chars if not _expected(c["char"])]
 
 
+def resolve_skips(
+    wd: WorkDir,
+    profile: Profile,
+    labeller: str | None,
+    skip_columns: frozenset[str],
+    *,
+    speaker_if_missing: bool = False,
+) -> tuple[frozenset[str], list[str]]:
+    """Extend `skip_columns` for filters whose inputs are not available yet; returns (skips, notes).
+
+    Filters on steps whose file does not exist yet are skipped; a `cer` filter is skipped when no labeller is given (flag or profile); the speaker floor is skipped
+    when `speaker_if_missing` and speakers.parquet does not exist.
+    """
+    skips, notes = set(skip_columns), []
+    for step in sorted({COLUMN_STEPS[f.column][0] for f in profile.filters if f.column in COLUMN_STEPS}):
+        cols = {f.column for f in profile.filters if f.column in COLUMN_STEPS and COLUMN_STEPS[f.column][0] == step}
+        if step not in ALWAYS_STEPS and not (cols <= skips) and not wd.step_path(step).exists():
+            skips |= cols
+            notes.append(f"filters on {', '.join(sorted(cols))} skipped: step '{step}' has not run yet")
+    if any(f.column == "cer" for f in profile.filters) and not (labeller or profile.cer_labeller):
+        skips.add("cer")
+        notes.append("CER filter skipped: no labeller (pass --labeller to apply it)")
+    if speaker_if_missing and profile.min_speaker_minutes is not None and not wd.step_path("speakers").exists():
+        skips.add("speaker")
+        notes.append("speaker floor skipped: speakers.parquet does not exist yet")
+    return frozenset(skips), notes
+
+
 def eligible(
     wd: WorkDir, profile: Profile, labeller: str | None = None, *, skip_columns: frozenset[str] = frozenset()
 ) -> pd.DataFrame:
@@ -162,7 +190,10 @@ def select(
     """
     labeller = labeller or profile.cer_labeller
     if skip_columns:
-        profile = profile.model_copy(update={"filters": [f for f in profile.filters if f.column not in skip_columns]})
+        update: dict = {"filters": [f for f in profile.filters if f.column not in skip_columns]}
+        if "speaker" in skip_columns:
+            update["min_speaker_minutes"] = None  # the floor needs speakers.parquet
+        profile = profile.model_copy(update=update)
     df, steps_loaded = _load(wd, profile, labeller)
     df["cps"] = df["n_chars"].astype("float64") / df["dur"].astype("float64")
 

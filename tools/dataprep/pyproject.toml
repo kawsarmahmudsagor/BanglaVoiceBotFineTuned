@@ -63,6 +63,9 @@ environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 # openai-whisper 20231117 (upstream CosyVoice pin) imports pkg_resources in setup.py,
 # which setuptools 81 removed.
 build-constraint-dependencies = ["setuptools<81"]
+# Some dependencies (e.g. torchmetrics[audio] extras) pull the CPU `onnxruntime` wheel, which shares its
+# import name with onnxruntime-gpu and would shadow it. The never-true marker removes it from resolution.
+override-dependencies = ["onnxruntime ; sys_platform == 'never'"]
 
 [tool.uv.sources]
 bangla-voice-backend = { path = "../../backend", editable = true }

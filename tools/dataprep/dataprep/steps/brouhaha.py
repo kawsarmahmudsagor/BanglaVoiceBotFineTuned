@@ -58,12 +58,15 @@ def max_pause(segments: list[list[float]]) -> float:
     return max((nxt[0] - cur[1] for cur, nxt in zip(segments, segments[1:])), default=0.0)
 
 
-def score_brouhaha(path: Path, *, scorer: Scorer | None = None) -> dict:
+def get_scorer() -> Scorer:
     global _scorer
-    if scorer is None:
-        if _scorer is None:
-            _scorer = make_scorer()
-        scorer = _scorer
+    if _scorer is None:
+        _scorer = make_scorer()
+    return _scorer
+
+
+def score_brouhaha(path: Path, *, scorer: Scorer | None = None) -> dict:
+    scorer = scorer or get_scorer()
     step, frames = scorer(Path(path))
     frames = np.asarray(frames, dtype="float64")
     segments = segments_from_vad(frames[:, 0], step)
@@ -82,14 +85,23 @@ def _row(row: dict) -> dict:
     return {"id": row["id"], **score_brouhaha(Path(row["src_path"]))}
 
 
-def run(wd: WorkDir, *, force: bool = False, retry_errors: bool = False, only_profile: str | None = None) -> int:
+def run(
+    wd: WorkDir, *, force: bool = False, retry_errors: bool = False, only_profile: str | None = None,
+    labeller: str | None = None,
+) -> int:
     only_ids = None
     if only_profile:
         from ..profiles import load_profile
-        from ..select import COLUMN_STEPS, eligible
+        from ..select import COLUMN_STEPS, eligible, resolve_skips
 
-        skip = frozenset(c for c, (step, _, _) in COLUMN_STEPS.items() if step == STEP)
-        only_ids = set(eligible(wd, load_profile(only_profile), skip_columns=skip)["id"])
+        profile = load_profile(only_profile)
+        # The speaker floor needs the later `speakers` step, so it is always skipped here (spec 5.2 step 2).
+        skip = frozenset(c for c, (step, _, _) in COLUMN_STEPS.items() if step == STEP) | {"speaker"}
+        skip, notes = resolve_skips(wd, profile, labeller, skip)
+        for note in notes:
+            print(f"brouhaha: {note}")
+        only_ids = set(eligible(wd, profile, labeller, skip_columns=skip)["id"])
+    get_scorer()  # fail fast on a missing extra or HF_TOKEN instead of recording an error on every row
     # One process: the model lives on the GPU.
     return run_step(
         wd, step=STEP, version=VERSION, columns=COLUMNS, row_fn=_row, input_cols=["id", "src_path"],
@@ -102,8 +114,11 @@ def _cmd(args: argparse.Namespace) -> int:
     from ..select import SelectError
 
     try:
-        run(WorkDir(args.work), force=args.force, retry_errors=args.retry_errors, only_profile=args.only_profile)
-    except SelectError as e:
+        run(
+            WorkDir(args.work), force=args.force, retry_errors=args.retry_errors,
+            only_profile=args.only_profile, labeller=args.labeller,
+        )
+    except (SelectError, RuntimeError, ImportError) as e:
         print(f"brouhaha: {e}")
         return 1
     return 0
@@ -118,4 +133,5 @@ def add_parser(commands) -> None:
         "--only-profile", default=None, metavar="NAME",
         help="score only clips passing this profile's non-brouhaha filters (spec 5.2 step 2)",
     )
+    p.add_argument("--labeller", default=None, help="CER labeller spec for --only-profile; without it the cer filter is skipped")
     p.set_defaults(func=_cmd)
