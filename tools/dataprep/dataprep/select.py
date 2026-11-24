@@ -55,6 +55,42 @@ def cer_step_name(labeller: str) -> str:
     return "cer_" + re.sub(r"[^A-Za-z0-9]", "-", labeller)
 
 
+_OVERRIDE_FIELDS = {Range: ("min", "max"), Percentile: ("lo", "hi")}
+
+
+def apply_overrides(profile: Profile, overrides: list[str]) -> Profile:
+    """Return a copy of `profile` with `column.min|max|lo|hi=value` bounds replaced (and `min_speaker_minutes=value`).
+
+    The bound must belong to an existing Range (min, max) or Percentile (lo, hi) filter on that column.
+    """
+    filters = [f.model_copy() for f in profile.filters]
+    floor = profile.min_speaker_minutes
+    for item in overrides:
+        key, sep, raw = item.partition("=")
+        try:
+            if not sep:
+                raise ValueError("expected column.bound=value")
+            value = float(raw)
+        except ValueError as e:
+            raise SelectError(f"bad --override {item!r}: {e}") from None
+        if key == "min_speaker_minutes":
+            floor = value
+            continue
+        column, dot, bound = key.rpartition(".")
+        if not dot:
+            raise SelectError(f"bad --override {item!r}: expected column.bound=value")
+        targets = [f for f in filters if f.column == column and bound in _OVERRIDE_FIELDS.get(type(f), ())]
+        if not targets:
+            have = sorted({f.column for f in filters if type(f) in _OVERRIDE_FIELDS})
+            raise SelectError(
+                f"--override {item!r}: profile '{profile.name}' has no range/percentile filter with bound '{bound}' on "
+                f"column '{column}' (overridable columns: {', '.join(have) or 'none'})"
+            )
+        for f in targets:
+            setattr(f, bound, value)
+    return profile.model_copy(update={"filters": filters, "min_speaker_minutes": floor})
+
+
 @dataclass
 class SelectResult:
     rows: pd.DataFrame
@@ -185,6 +221,7 @@ def select(
     *,
     skip_columns: frozenset[str] = frozenset(),
     write: bool = True,
+    overrides: list[str] | None = None,
 ) -> SelectResult:
     """Apply the profile; `labeller` (from --labeller) overrides `profile.cer_labeller`.
 
@@ -192,6 +229,8 @@ def select(
     `brouhaha --only-profile` and `listen`. `write=False` skips the selection and report files.
     """
     labeller = labeller or profile.cer_labeller
+    if overrides:
+        profile = apply_overrides(profile, overrides)
     if skip_columns:
         update: dict = {"filters": [f for f in profile.filters if f.column not in skip_columns]}
         if "speaker" in skip_columns:
@@ -257,6 +296,8 @@ def select(
         "unexpected_chars": unexpected,
         "overlap_dropped": overlap_dropped,
     }
+    if overrides:
+        report["overrides"] = list(overrides)
     rows = df[[c for c in df.columns if not c.startswith("_")]].reset_index(drop=True)
     if not write:
         return SelectResult(rows=rows, report=report)
@@ -280,7 +321,7 @@ def format_report(report: dict) -> str:
 
 def _cmd(args: argparse.Namespace) -> int:
     try:
-        res = select(WorkDir(args.work), load_profile(args.profile), labeller=args.labeller)
+        res = select(WorkDir(args.work), load_profile(args.profile), labeller=args.labeller, overrides=args.override)
     except SelectError as e:
         print(f"select: {e}")
         return 1
@@ -293,4 +334,9 @@ def add_parser(commands) -> None:
     p.add_argument("--work", type=Path, default=Path("var/dataprep/bengaliai"), help="work dir")
     p.add_argument("--profile", required=True, help="profile name or YAML path")
     p.add_argument("--labeller", default=None, help="CER labeller spec; overrides the profile's cer_labeller")
+    p.add_argument(
+        "--override", action="append", default=[], metavar="COLUMN.BOUND=VALUE",
+        help="replace a bound of the profile's range (column.min / column.max) or percentile (column.lo / column.hi) "
+             "filter, or set min_speaker_minutes=N; repeatable, recorded in the report (for smoke runs on tiny sets)",
+    )
     p.set_defaults(func=_cmd)

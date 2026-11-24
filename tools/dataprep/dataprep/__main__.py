@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import check_voice, export, listen, roundtrip_cosyvoice, select
+from . import check_eval_text, check_voice, export, listen, roundtrip_cosyvoice, select
 from .sources import bengaliai, voice
 from .steps import audio_stats, brouhaha, dnsmos, speakers, text, transcribe
 
@@ -23,6 +23,7 @@ def main(argv: list[str] | None = None) -> int:
     select.add_parser(commands)
     export.add_parser(commands)
     check_voice.add_parser(commands)
+    check_eval_text.add_parser(commands)
     imp = commands.add_parser("import", help="import a source corpus into the work dir")
     sources = imp.add_subparsers(dest="source", required=True)
     bengaliai.add_parser(sources)

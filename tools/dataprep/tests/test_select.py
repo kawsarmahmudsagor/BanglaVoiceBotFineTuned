@@ -232,3 +232,44 @@ def test_load_profile_by_path(tmp_path):
     y = tmp_path / "mine.yaml"
     y.write_text("name: mine\ntask: asr\nfilters:\n  - {kind: range, column: dur, min: 2}\n")
     assert load_profile(str(y)).filters[0].min == 2
+
+
+def test_override_relaxes_range_and_percentile_and_is_reported(tmp_path):
+    wd = make_wd(tmp_path, {0: {"dur": 0.2}, 1: {"dur": 40.0}})
+    p = prof(filters=[Range(column="dur", min=0.5, max=30), Percentile(column="cps", lo=10, hi=90)])
+    base = select(wd, p, write=False)
+    res = select(wd, p, write=False, overrides=["dur.min=0.1", "dur.max=60", "cps.lo=0", "cps.hi=100"])
+    assert len(res.rows) > len(base.rows) and {"r0", "r1"} <= set(res.rows["id"])
+    assert res.report["overrides"] == ["dur.min=0.1", "dur.max=60", "cps.lo=0", "cps.hi=100"]
+    assert p.filters[0].min == 0.5  # the loaded profile is not mutated
+
+
+def test_override_unknown_column_or_bound_errors(tmp_path):
+    wd = make_wd(tmp_path)
+    p = prof(filters=[Range(column="dur", min=0.5, max=30)])
+    for bad in ["snr_db.min=1", "dur.lo=1", "dur.min=abc", "dur=3", "dur.min"]:
+        with pytest.raises(SelectError):
+            select(wd, p, write=False, overrides=[bad])
+
+
+def test_override_min_speaker_minutes(tmp_path):
+    wd = make_wd(tmp_path)
+    StepFile.write(
+        wd.step_path("speakers"),
+        pd.DataFrame({"id": [f"r{i}" for i in range(10)], "speaker": "s0", "error": None}),
+        step="speakers", version=1, params={},
+    )
+    p = prof(min_speaker_minutes=60)
+    with pytest.raises(SelectError):
+        select(wd, p, write=False)
+    assert len(select(wd, p, write=False, overrides=["min_speaker_minutes=0"]).rows) == 10
+
+
+def test_cli_override_flag(tmp_path):
+    from dataprep.__main__ import main
+
+    make_wd(tmp_path, {0: {"dur": 0.2}})
+    assert main(["select", "--work", str(tmp_path), "--profile", "asr-v1", "--override", "dur.min=0.1", "--override", "cps.lo=0"]) == 0
+    rep = json.loads((tmp_path / "selection" / "asr-v1.report.json").read_text(encoding="utf-8"))
+    assert rep["overrides"] == ["dur.min=0.1", "cps.lo=0"]
+    assert main(["select", "--work", str(tmp_path), "--profile", "asr-v1", "--override", "nope.min=1"]) == 1
