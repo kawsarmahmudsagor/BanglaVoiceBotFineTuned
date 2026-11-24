@@ -567,3 +567,15 @@ def test_check_finds_snapshot_under_hf_home_hub(monkeypatch, tmp_path):
     assert check._model_dir() == snap
     monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "elsewhere"))
     assert check._model_dir() is None
+
+
+def test_check_defaults_to_home_cache_without_hf_env(monkeypatch, tmp_path):
+    from mlops_backend import check
+
+    snap = tmp_path / ".cache" / "huggingface" / "hub" / check._REPO_DIR / "snapshots" / "abc"
+    snap.mkdir(parents=True)
+    (snap / "cosyvoice3.yaml").write_text("x")
+    monkeypatch.delenv("HF_HUB_CACHE", raising=False)
+    monkeypatch.delenv("HF_HOME", raising=False)
+    monkeypatch.setattr(check.Path, "home", classmethod(lambda cls: tmp_path))
+    assert check._model_dir() == snap

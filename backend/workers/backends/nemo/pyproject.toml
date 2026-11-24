@@ -6,6 +6,7 @@ dependencies = [
   "bangla-voice-backend[prepare,audio]",
   "torch==2.7.1",
   "nemo_toolkit[asr]",
+  "numba-cuda[cu12]",  # NeMo RNNT loss kernels; stock numba.cuda fails with "Signature mismatch"
   "lightning",
   "huggingface_hub",
 ]
