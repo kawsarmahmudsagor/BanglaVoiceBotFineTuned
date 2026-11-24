@@ -1,0 +1,6 @@
+074ca6dc9e80a2f424f1f74b48bdd7d3fea531cc
+# https://github.com/FunAudioLLM/CosyVoice (clone with --recurse-submodules), main HEAD on 2026-11-24
+# Contains examples/libritts/cosyvoice3 (last touched by 2145b585f0ddf059f29791c09abe04b3b9a3ae99, 2026-02-11)
+# HF repo: FunAudioLLM/Fun-CosyVoice3-0.5B-2512 (not gated, Apache-2.0)
+# Checkpoint files: llm.pt, flow.pt, hift.pt, speech_tokenizer_v3.onnx, campplus.onnx, cosyvoice3.yaml
+# Other files: llm.rl.pt, speech_tokenizer_v3.batch.onnx, flow.decoder.estimator.fp32.onnx, CosyVoice-BlankEN/ (Qwen2 tokenizer + blank LLM config)

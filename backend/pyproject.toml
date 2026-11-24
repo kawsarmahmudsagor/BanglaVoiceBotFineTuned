@@ -43,7 +43,7 @@ package = true
 members = ["workers/backends/fake"]
 # Real backends live in workers/backends/<name>, have their own venv (synced by scripts/setup_venvs.sh),
 # and must be listed in `exclude` (e.g. "workers/backends/<name>") so uv never treats them as members.
-exclude = ["workers/backends/unsloth", "workers/backends/hf", "workers/backends/nemo", "workers/backends/f5"]
+exclude = ["workers/backends/unsloth", "workers/backends/hf", "workers/backends/nemo", "workers/backends/f5", "workers/backends/cosyvoice"]
 
 [tool.uv.sources]
 mlops-backend-fake = { workspace = true }

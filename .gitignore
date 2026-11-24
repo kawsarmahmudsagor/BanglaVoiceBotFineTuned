@@ -12,3 +12,5 @@ mlruns/
 # frontend pages named models/runs/data are source, not artifacts
 !frontend/src/**
 var/
+
+.upstream/

@@ -23,8 +23,29 @@ for pyproject in backend/workers/backends/*/pyproject.toml; do
     continue
   fi
 
+  if [ "$name" = "cosyvoice" ]; then
+    # CosyVoice is not a pip package: clone upstream at the pinned commit (line 1 of UPSTREAM_COMMIT).
+    commit=$(head -n 1 "$dir/UPSTREAM_COMMIT" | tr -d '[:space:]')
+    up="$dir/.upstream"
+    if [ "$(git -C "$up" rev-parse HEAD 2>/dev/null || true)" != "$commit" ]; then
+      echo "== cosyvoice upstream @ ${commit}"
+      [ -d "$up/.git" ] || { rm -rf "$up"; git clone --recurse-submodules https://github.com/FunAudioLLM/CosyVoice "$up"; }
+      git -C "$up" fetch --quiet origin "$commit" 2>/dev/null || git -C "$up" fetch --quiet origin
+      git -C "$up" checkout --quiet "$commit"
+      git -C "$up" submodule update --init --recursive
+    fi
+  fi
+
   echo "== uv sync --project ${dir}"
   uv sync --project "$dir"
+
+  if [ "$name" = "cosyvoice" ]; then
+    # Put upstream + Matcha-TTS on sys.path through a .pth file in the backend venv.
+    site=$(cd "$dir" && uv run --no-sync python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
+    up_abs="$(cd "$dir/.upstream" && pwd)"
+    printf '%s\n%s\n' "$up_abs" "$up_abs/third_party/Matcha-TTS" > "$site/cosyvoice_upstream.pth"
+    echo "   wrote $site/cosyvoice_upstream.pth"
+  fi
   echo "   python: $(cd "$dir" && uv run --no-sync python -c 'import sys; print(sys.executable)')"
 done
 

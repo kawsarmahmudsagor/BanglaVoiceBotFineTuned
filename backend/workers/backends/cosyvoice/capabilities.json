@@ -1,0 +1,108 @@
+{
+  "name": "cosyvoice",
+  "label": "CosyVoice 3 (experimental for Bangla)",
+  "tasks": {
+    "tts": {
+      "methods": [
+        "full"
+      ],
+      "export_formats": [
+        "cosyvoice-dir"
+      ],
+      "serve_formats": [],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "base_model": {
+            "type": "string",
+            "enum": [
+              "FunAudioLLM/Fun-CosyVoice3-0.5B-2512"
+            ]
+          },
+          "method": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "enum": [
+                  "full"
+                ]
+              }
+            }
+          },
+          "hparams": {
+            "type": "object",
+            "properties": {
+              "components": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "llm",
+                    "flow",
+                    "hifigan"
+                  ]
+                },
+                "minItems": 1,
+                "uniqueItems": true,
+                "default": [
+                  "llm",
+                  "flow"
+                ]
+              },
+              "learning_rate": {
+                "type": "number",
+                "minimum": 1e-07,
+                "maximum": 0.01,
+                "default": 1e-05
+              },
+              "epochs": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 1000,
+                "default": 10
+              },
+              "max_frames_in_batch": {
+                "type": "integer",
+                "minimum": 200,
+                "default": 2000
+              },
+              "grad_accum": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64,
+                "default": 2
+              },
+              "warmup_steps": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 2500
+              },
+              "save_steps": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "max_steps": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "seed": {
+                "type": "integer"
+              },
+              "eval": {
+                "type": "object"
+              },
+              "prepare": {
+                "type": "object"
+              },
+              "keep_checkpoints": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 2
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
