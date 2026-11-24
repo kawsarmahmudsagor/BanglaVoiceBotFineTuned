@@ -1,5 +1,5 @@
 import type {
-  Backend, CancelResult, CatalogEntry, CatalogList, CreateRunBody, DatasetDetail, DatasetListItem, Dataset, IngestRequest,
+  Backend, CancelResult, CatalogEntry, CatalogList, CreateRunBody, DatasetDetail, DatasetListItem, Dataset, IngestRequest, ImportDir, LocalIngestRequest,
   EvalSamplesPage, CheckpointItem, InitSources, IngestStatus, ModelVersion, PreparedRef, RecipeBody, RecipeDetail, RecipeListItem, RecipeVersionDetail,
   ResumeResult, RunDetail, RunListItem, RunLogs, RunMetrics, SamplesPage, SamplesQuery, SavedRecipe,
   SystemInfo, Task, ValidateResult, VersionDetail, VersionSummary,
@@ -85,6 +85,9 @@ export const getSamples = (name: string, n: number, q: SamplesQuery = {}) =>
     `/api/datasets/${enc(name)}/versions/${n}/samples${qs({ offset: q.offset, limit: q.limit, split: q.split, warning: q.warning })}`,
   );
 export const startIngest = (body: IngestRequest) => apiPost<{ ingest_id: number }>("/api/datasets/ingest", body);
+export const ingestLocal = (body: LocalIngestRequest) =>
+  apiPost<{ ingest_id: number }>("/api/datasets/ingest-local", body);
+export const importDirs = () => apiGet<{ items: ImportDir[] }>("/api/datasets/import-dirs");
 export const getIngest = (id: number) => apiGet<IngestStatus>(`/api/ingests/${id}`);
 export const editTranscript = (name: string, n: number, sampleId: string, text: string) =>
   apiPost<VersionSummary>(`/api/datasets/${enc(name)}/versions/${n}/edits`, { sample_id: sampleId, text });

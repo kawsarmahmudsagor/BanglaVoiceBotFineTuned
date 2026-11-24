@@ -1,114 +1,85 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import * as tus from "tus-js-client";
-import { ErrorNotice } from "@/components/notice";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { ReportView } from "@/components/report-view";
-import { API_URL, ApiError, getIngest, startIngest } from "@/lib/api";
+import {
+  EMPTY_PROVENANCE, FailedReport, IngestErrorNotice, IngestingNote, NameFields, ProvenanceFields,
+  field, label, provenanceReady, useIngestRun, type UploadStatus,
+} from "@/components/ingest-shared";
+import { ServerPathForm } from "@/components/server-path-form";
+import { API_URL, startIngest } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
 import { isValidSlug } from "@/lib/slug";
-import { describeUploadError, ingestOutcome, uploadIdFromUrl } from "@/lib/upload";
-import type { IngestStatus, Task } from "@/lib/types";
+import { describeUploadError, uploadIdFromUrl } from "@/lib/upload";
+import type { Provenance, Task } from "@/lib/types";
 
-const POLL_MS = 2000;
+export type { UploadStatus };
+
 const ACCEPT: Record<Task, string> = { "llm-sft": ".jsonl", asr: ".zip", tts: ".zip" };
 const TASKS: Task[] = ["llm-sft", "asr", "tts"];
 
-const field = "space-y-1 text-sm";
-const label = "block text-[13px] text-muted-foreground";
-
-export interface UploadStatus {
-  busy: boolean;
-  phase: "idle" | "uploading" | "ingesting" | "done";
-  progress: number | null;
-}
+type Mode = "upload" | "server";
+const MODES: [Mode, string][] = [["upload", "Upload file"], ["server", "From server path"]];
 
 export function UploadForm({ defaultTask, onStatus }: { defaultTask?: Task; onStatus?: (s: UploadStatus) => void } = {}) {
-  const router = useRouter();
+  const [mode, setMode] = useState<Mode>("upload");
+  const [busy, setBusy] = useState(false);
+  const report = (s: UploadStatus) => {
+    setBusy(s.busy);
+    onStatus?.(s);
+  };
+  return (
+    <div className="max-w-2xl space-y-4">
+      <div role="group" aria-label="Ingest source" className="inline-flex rounded-md border border-border p-0.5">
+        {MODES.map(([m, text]) => (
+          <button
+            key={m}
+            type="button"
+            aria-pressed={mode === m}
+            disabled={busy}
+            onClick={() => setMode(m)}
+            className={`h-8 rounded px-3 text-sm ${mode === m ? "bg-raised font-semibold text-foreground" : "text-muted-foreground"}`}
+          >
+            {text}
+          </button>
+        ))}
+      </div>
+      {mode === "upload" ? (
+        <UploadFileForm defaultTask={defaultTask} onStatus={report} />
+      ) : (
+        <ServerPathForm defaultTask={defaultTask} onStatus={report} />
+      )}
+    </div>
+  );
+}
+
+function UploadFileForm({ defaultTask, onStatus }: { defaultTask?: Task; onStatus?: (s: UploadStatus) => void }) {
   const params = useSearchParams();
   const initialTask = defaultTask ?? params.get("task");
   const [task, setTask] = useState<Task>(TASKS.includes(initialTask as Task) ? (initialTask as Task) : "llm-sft");
   const [name, setName] = useState(params.get("name") ?? "");
   const [evalOnly, setEvalOnly] = useState(false);
-  const [source, setSource] = useState("");
-  const [license, setLicense] = useState("");
-  const [consent, setConsent] = useState("");
-  const [commercialOk, setCommercialOk] = useState(false);
-  const [notes, setNotes] = useState("");
+  const [prov, setProv] = useState<Provenance>(EMPTY_PROVENANCE);
   const [file, setFile] = useState<File | null>(null);
-  const [progress, setProgress] = useState<number | null>(null);
-  const [phase, setPhase] = useState<"idle" | "uploading" | "ingesting">("idle");
-  const [error, setError] = useState<string | null>(null);
-  const [ingest, setIngest] = useState<IngestStatus | null>(null);
+  const run = useIngestRun(onStatus);
+  const { phase, setPhase, progress, setProgress, error, setError, ingest, setIngest, busy, alive } = run;
   const upload = useRef<tus.Upload | null>(null);
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const alive = useRef(true);
-  const report = useRef(onStatus);
-  report.current = onStatus;
 
   useEffect(() => {
-    alive.current = true;
     return () => {
-      alive.current = false;
-      if (timer.current) clearInterval(timer.current);
       void upload.current?.abort();
     };
   }, []);
 
-  const nameError = name !== "" && !isValidSlug(name) ? "Use lowercase letters, digits and single hyphens (e.g. bn-chat-v1)." : null;
-  const ready =
-    file !== null && isValidSlug(name) && source.trim() !== "" && license.trim() !== "" && consent.trim() !== "";
-
-  function poll(id: number) {
-    const tick = async () => {
-      try {
-        const st = await getIngest(id);
-        if (!alive.current) return;
-        setIngest(st);
-        setError(null);
-        const outcome = ingestOutcome(st);
-        if (outcome === "continue") return;
-        if (timer.current) clearInterval(timer.current);
-        if (outcome === "done" && st.version) {
-          report.current?.({ busy: false, phase: "done", progress: 100 });
-          router.push(`/datasets/${encodeURIComponent(st.dataset)}/v/${st.version.number}`);
-        } else if (outcome === "failed") {
-          setPhase("idle");
-          setError(st.error ?? "Ingest failed");
-        } else {
-          setPhase("idle");
-          setError("Ingest finished but reported no version; check the dataset page.");
-        }
-      } catch (e) {
-        if (alive.current) setError(e instanceof Error ? e.message : String(e));
-      }
-    };
-    void tick();
-    timer.current = setInterval(() => void tick(), POLL_MS);
-  }
+  const ready = file !== null && isValidSlug(name) && provenanceReady(prov);
 
   async function finishUpload(url: string) {
     if (!alive.current) return;
     const uploadId = uploadIdFromUrl(url);
-    setPhase("ingesting");
-    try {
-      const { ingest_id } = await startIngest({
-        upload_id: uploadId,
-        name,
-        task,
-        eval_only: evalOnly,
-        provenance: { source, license, consent, commercial_ok: commercialOk, notes },
-      });
-      if (alive.current) poll(ingest_id);
-    } catch (e) {
-      if (!alive.current) return;
-      setPhase("idle");
-      setError(e instanceof ApiError ? `${e.status}: ${e.detail}` : e instanceof Error ? e.message : String(e));
-    }
+    await run.begin(() => startIngest({ upload_id: uploadId, name, task, eval_only: evalOnly, provenance: prov }));
   }
 
   function submit(ev: React.FormEvent) {
@@ -137,15 +108,9 @@ export function UploadForm({ defaultTask, onStatus }: { defaultTask?: Task; onSt
     });
   }
 
-  const busy = phase !== "idle";
-
-  useEffect(() => {
-    report.current?.({ busy, phase, progress });
-  }, [busy, phase, progress]);
-
   return (
-    <form onSubmit={submit} className="max-w-2xl space-y-4">
-      {error && <ErrorNotice className="whitespace-pre-wrap">{error}</ErrorNotice>}
+    <form onSubmit={submit} className="space-y-4">
+      <IngestErrorNotice error={error} />
 
       <div className={field}>
         <label htmlFor="task" className={label}>Task</label>
@@ -180,40 +145,8 @@ export function UploadForm({ defaultTask, onStatus }: { defaultTask?: Task; onSt
         />
       </div>
 
-      <div className={field}>
-        <label htmlFor="name" className={label}>Dataset name</label>
-        <Input id="name" value={name} disabled={busy} onChange={(e) => setName(e.target.value)} aria-invalid={!!nameError} />
-        {nameError && <p className="text-[13px] text-status-failed">{nameError}</p>}
-      </div>
-
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" className="size-4 accent-[var(--saffron)]" checked={evalOnly} disabled={busy} onChange={(e) => setEvalOnly(e.target.checked)} />
-        Eval only (never used for training)
-      </label>
-
-      <fieldset className="space-y-3 rounded-md border border-border p-3">
-        <legend className="px-1 text-sm font-semibold">Provenance</legend>
-        <div className={field}>
-          <label htmlFor="source" className={label}>Source</label>
-          <Input id="source" value={source} disabled={busy} onChange={(e) => setSource(e.target.value)} />
-        </div>
-        <div className={field}>
-          <label htmlFor="license" className={label}>License</label>
-          <Input id="license" value={license} disabled={busy} onChange={(e) => setLicense(e.target.value)} />
-        </div>
-        <div className={field}>
-          <label htmlFor="consent" className={label}>Consent</label>
-          <Input id="consent" value={consent} disabled={busy} onChange={(e) => setConsent(e.target.value)} />
-        </div>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" className="size-4 accent-[var(--saffron)]" checked={commercialOk} disabled={busy} onChange={(e) => setCommercialOk(e.target.checked)} />
-          Commercial use allowed
-        </label>
-        <div className={field}>
-          <label htmlFor="notes" className={label}>Notes (optional)</label>
-          <Input id="notes" value={notes} disabled={busy} onChange={(e) => setNotes(e.target.value)} />
-        </div>
-      </fieldset>
+      <NameFields name={name} setName={setName} evalOnly={evalOnly} setEvalOnly={setEvalOnly} disabled={busy} />
+      <ProvenanceFields value={prov} onChange={setProv} disabled={busy} />
 
       {phase === "uploading" && progress !== null && (
         <div className="space-y-1 text-sm">
@@ -221,22 +154,13 @@ export function UploadForm({ defaultTask, onStatus }: { defaultTask?: Task; onSt
           <div className="text-muted-foreground">Uploading <span className="font-mono">{progress.toFixed(0)}%</span>. You can close this panel; the upload continues.</div>
         </div>
       )}
-      {phase === "ingesting" && (
-        <div className="text-sm text-muted-foreground">
-          Validating and ingesting{ingest ? ` (${ingest.state})` : ""}...
-        </div>
-      )}
+      <IngestingNote phase={phase} ingest={ingest} />
 
       <Button type="submit" size="lg" className="px-4" disabled={!ready || busy}>
         Upload and ingest
       </Button>
 
-      {ingest?.state === "failed" && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-semibold">Validation report</h2>
-          <ReportView report={ingest.report} />
-        </section>
-      )}
+      <FailedReport ingest={ingest} />
     </form>
   );
 }

@@ -115,6 +115,18 @@ export interface IngestRequest {
   eval_only?: boolean;
   provenance: Provenance;
 }
+export interface LocalIngestRequest {
+  path: string;
+  name: string;
+  task: Task;
+  eval_only?: boolean;
+  provenance: Provenance;
+}
+export interface ImportDir {
+  path: string;
+  task_hint: Task | null;
+  has_curation: boolean;
+}
 export type IngestState = "pending" | "running" | "done" | "failed";
 export interface IngestStatus {
   id: number;
