@@ -54,6 +54,14 @@
                 "minimum": 1,
                 "maximum": 64
               },
+              "warmup_steps": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "save_steps": {
+                "type": "integer",
+                "minimum": 1
+              },
               "max_steps": {
                 "type": "integer",
                 "minimum": 1

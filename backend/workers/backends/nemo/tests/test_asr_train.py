@@ -1,4 +1,5 @@
 import json
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -65,13 +66,39 @@ def test_no_val_manifest(tmp_path):
 def test_merged_optim_keeps_scheduler():
     base = {"name": "adamw", "lr": 1e-3, "betas": [0.9, 0.98], "sched": {"name": "CosineAnnealing", "warmup_ratio": 0.1,
                                                                       "min_lr": 1e-6}}
-    out = asr.merged_optim(base, {"learning_rate": 5e-5, "warmup_steps": 7})
+    out = asr.merged_optim(base, {"learning_rate": 5e-5, "warmup_steps": 7}, 1000)
     assert out["lr"] == 5e-5 and out["betas"] == [0.9, 0.98]
     assert out["sched"]["name"] == "CosineAnnealing" and out["sched"]["warmup_steps"] == 7
     assert "warmup_ratio" not in out["sched"]
     assert base["lr"] == 1e-3 and "warmup_ratio" in base["sched"]  # input untouched
-    same = asr.merged_optim(base, {})
-    assert same == base
+    assert asr.merged_optim(base, {}, 1000) == base  # ratio 0.1 * 1000 = 100 = cap: unchanged
+
+
+def test_merged_optim_clamps_warmup_without_recipe_value():
+    sched = {"name": "CosineAnnealing", "warmup_steps": 10000, "min_lr": 1e-6}
+    out = asr.merged_optim({"lr": 1e-3, "sched": sched}, {}, 20)
+    assert out["sched"]["warmup_steps"] == 2
+    ratio = asr.merged_optim({"sched": {"warmup_ratio": 0.5}}, {}, 20)
+    assert ratio["sched"] == {"warmup_steps": 2}
+    small = asr.merged_optim({"sched": {"warmup_steps": 1}}, {}, 20)
+    assert small["sched"]["warmup_steps"] == 1
+
+
+def test_merged_optim_without_sched():
+    assert asr.merged_optim({"lr": 1.0}, {"learning_rate": 2e-5, "warmup_steps": 3}, 10) == {"lr": 2e-5}
+
+
+def test_merged_optim_on_real_dictconfig():
+    omegaconf = pytest.importorskip("omegaconf")
+    cfg = omegaconf.OmegaConf.create({"optim": {"lr": 1e-3, "sched": {"warmup_ratio": 0.5}}})
+    out = asr.merged_optim(omegaconf.OmegaConf.to_container(cfg.optim, resolve=True), {"learning_rate": 1e-5}, 20)
+    assert out["lr"] == 1e-5 and out["sched"]["warmup_steps"] == 2
+
+
+def test_save_interval():
+    assert asr.save_interval({"save_steps": 5}, 10) == 5
+    assert asr.save_interval({}, 100) == 50
+    assert asr.save_interval({}, 10000) == 1000
 
 
 def test_hyp_texts():
@@ -125,3 +152,42 @@ def test_nemo_20_steps(run_dir, monkeypatch, tmp_path, model):
     assert asr.export(rd, cfg, rep) == 0
     assert (rd.export_dir / "nemo" / "model.nemo").exists()
     assert rd.export_manifest_path.exists()
+
+
+@pytest.mark.heavy
+def test_nemo_checkpoints_resume_and_warm_start(run_dir, monkeypatch, tmp_path):
+    """GPU VM only: real Lightning checkpoints (save_steps=5), resume to step 15, warm start from lightning-ckpt."""
+    from app.core.backend_kit import Reporter, latest_checkpoint, read_init_meta
+    from app.core.contract import InitRef, RunDir, write_config
+
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
+    hp = {"max_steps": 10, "save_steps": 5, "batch_size": 1, "grad_accum": 1, "learning_rate": 1e-5}
+    rd = run_dir("asr", NEMOTRON, hp, method={"type": "full"})
+    cfg = read_config(rd)
+    rep = Reporter(rd)
+    assert asr.prepare(rd, cfg, rep) == 0
+    assert asr.train(rd, cfg, rep) == 0
+    for n in (5, 10):
+        d = rd.checkpoints_dir / f"step-{n}"
+        assert (d / "model.ckpt").is_file() and (d / ".complete").exists()
+        assert read_init_meta(d)["format"] == "lightning-ckpt"
+    assert latest_checkpoint(rd).name == "step-10"
+
+    cfg2 = cfg.model_copy(update={"resume": True, "hparams": {**hp, "max_steps": 15}})
+    assert asr.train(rd, cfg2, rep) == 0  # continues from step-10, not from scratch
+    assert read_init_meta(rd.checkpoints_dir / "final")["step"] == 15
+
+    # warm start: a second run initialised (read-only, hard-linked in real runs) from step-10's lightning ckpt
+    rd2 = RunDir(tmp_path / "run2")
+    rd2.ensure()
+    rd2.init_dir.mkdir(parents=True, exist_ok=True)
+    src = rd.checkpoints_dir / "step-10"
+    for f in ("model.ckpt", "init_meta.json"):
+        shutil.copy2(src / f, rd2.init_dir / f)
+    cfg3 = cfg.model_copy(update={"run_id": "r2", "resume": False,
+                                  "init_from": InitRef(path=str(rd2.init_dir), source_run="r1", checkpoint="step-10", method="full", format="lightning-ckpt"),
+                                  "hparams": {**hp, "max_steps": 5}})
+    write_config(rd2, cfg3)
+    shutil.copy2(rd.prepared_refs_path, rd2.prepared_refs_path)
+    assert asr.train(rd2, cfg3, rep) == 0
+    assert (rd2.checkpoints_dir / "final" / "model.nemo").exists()

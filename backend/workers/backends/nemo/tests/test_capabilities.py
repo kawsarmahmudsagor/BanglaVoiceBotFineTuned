@@ -27,7 +27,7 @@ def test_methods_exports_and_hparams():
     assert ASR["methods"] == ["full"]
     assert ASR["export_formats"] == ["nemo"]
     hp = ASR["schema"]["properties"]["hparams"]["properties"]
-    assert set(hp) == {"learning_rate", "epochs", "batch_size", "grad_accum", "max_steps", "seed", "eval", "prepare"}
+    assert set(hp) == {"learning_rate", "epochs", "batch_size", "grad_accum", "max_steps", "warmup_steps", "save_steps", "seed", "eval", "prepare"}
 
 
 def _cfg(model):

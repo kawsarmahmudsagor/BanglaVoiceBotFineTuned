@@ -144,22 +144,45 @@ def apply_data_config(model, prepared_dir: Path, *, batch_size: int) -> bool:
     checkpoint. Returns whether a validation set was set up."""
     d = Path(prepared_dir)
     model.setup_training_data(data_config(d / "train.jsonl", batch_size=batch_size, shuffle=True))
-    val = d / "val.jsonl"
-    has_val = val.is_file() and val.stat().st_size > 0
+    has_val = has_val_manifest(d)
     if has_val:
-        model.setup_validation_data(data_config(val, batch_size=batch_size, shuffle=False))
+        model.setup_validation_data(data_config(d / "val.jsonl", batch_size=batch_size, shuffle=False))
     return has_val
 
 
-def merged_optim(optim: dict, hp: dict) -> dict:
-    """The model's own optim config with only lr / warmup overridden when the recipe gives them."""
+def merged_optim(optim: dict, hp: dict, total: int) -> dict:
+    """The model's own optim config with only lr / warmup overridden. Without a recipe warmup_steps the
+    scheduler's own warmup (steps, or ratio * total) is clamped to max(1, total // 10) so short runs still decay."""
     out = copy.deepcopy(optim)
     if hp.get("learning_rate") is not None:
         out["lr"] = float(hp["learning_rate"])
-    if hp.get("warmup_steps") is not None and isinstance(out.get("sched"), dict):
-        out["sched"]["warmup_steps"] = int(hp["warmup_steps"])
-        out["sched"].pop("warmup_ratio", None)
+    sched = out.get("sched")
+    if not isinstance(sched, dict):
+        return out
+    if hp.get("warmup_steps") is not None:
+        sched["warmup_steps"] = int(hp["warmup_steps"])
+        sched.pop("warmup_ratio", None)
+        return out
+    existing = sched.get("warmup_steps")
+    if existing is None and sched.get("warmup_ratio") is not None:
+        existing = float(sched["warmup_ratio"]) * total
+    cap = max(1, total // 10)
+    if existing is not None and existing > cap:
+        sched["warmup_steps"] = cap
+        sched.pop("warmup_ratio", None)
     return out
+
+
+def save_interval(hp: dict, total: int) -> int:
+    """Optimizer steps between checkpoints: hparams.save_steps, else max(50, total // 10)."""
+    if hp.get("save_steps") is not None:
+        return max(1, int(hp["save_steps"]))
+    return max(50, total // 10)
+
+
+def has_val_manifest(prepared_dir: Path) -> bool:
+    val = Path(prepared_dir) / "val.jsonl"
+    return val.is_file() and val.stat().st_size > 0
 
 
 def hyp_texts(out) -> list[str]:
@@ -214,7 +237,8 @@ def train(rd: RunDir, cfg: RunConfig, rep) -> int:
     batch = int(hp.get("batch_size", 2))
     accum = int(hp.get("grad_accum", 4))
     total = total_steps(cfg, rd)  # optimizer steps; max_steps overrides epochs
-    save_steps = max(50, total // 10)
+    save_steps = save_interval(hp, total)
+    has_val = has_val_manifest(prepared)
     batches_per_epoch = max(1, math.ceil(int(ref.get("counts", {}).get("train", 0)) / batch))
 
     class _InstallStop(Callback):  # Lightning installs its own SIGTERM handler at fit start; ours must win
@@ -228,22 +252,27 @@ def train(rd: RunDir, cfg: RunConfig, rep) -> int:
         callbacks=[_InstallStop(), ContractLightningCallback(rep, stop, NanGuard(), total),
                    ContractCheckpoint(rd, cfg.base_model, every_n_train_steps=save_steps)],
         check_val_every_n_epoch=None, val_check_interval=min(save_steps * accum, batches_per_epoch),
-        num_sanity_val_steps=0, enable_progress_bar=False, log_every_n_steps=1)
+        num_sanity_val_steps=0, enable_progress_bar=False,
+        log_every_n_steps=1,  # keeps train_loss in callback_metrics at every optimizer step (the contract callback reads it)
+        limit_val_batches=1.0 if has_val else 0)
     model.set_trainer(trainer)
-    if not apply_data_config(model, prepared, batch_size=batch):
-        trainer.limit_val_batches = 0
+    apply_data_config(model, prepared, batch_size=batch)
     # Keep the checkpoint's optimizer/scheduler config; Lightning builds it via model.setup_optimization().
-    optim = OmegaConf.to_container(model.cfg.optim, resolve=True)
-    with open_dict(model.cfg):
-        model.cfg.optim = DictConfig(merged_optim(optim, hp))
+    if model.cfg.get("optim") is None:
+        print("nemo: model config has no optim section; leaving optimizer settings to NeMo defaults", file=sys.stderr)
+    else:
+        optim = OmegaConf.to_container(model.cfg.optim, resolve=True)
+        with open_dict(model.cfg):
+            model.cfg.optim = DictConfig(merged_optim(optim, hp, total))
 
     last = latest_checkpoint(rd) if cfg.resume else None
     ckpt_path = str(last / "model.ckpt") if last is not None and (last / "model.ckpt").is_file() else None
     trainer.fit(model, ckpt_path=ckpt_path)
-    if stop.requested:
+    step = int(trainer.global_step)
+    if stop.requested and step < total:
         return 143  # ContractLightningCallback already saved a complete checkpoint; resume continues from it
     if trainer.is_global_zero:
-        _write_final(model, rd, cfg, int(trainer.global_step))
+        _write_final(model, rd, cfg, step)  # also when stop arrived at the natural end
     return 0
 
 
@@ -259,7 +288,7 @@ def make_transcriber(model, batch_size: int):
 def _eval_model(model, cfg: RunConfig, rd: RunDir, rep, rows, prefix: str, max_samples) -> dict[str, float]:
     model.eval()
     model.cuda()
-    bs = int(cfg.hparams.get("batch_size", 2))
+    bs = int((cfg.hparams.get("eval") or {}).get("batch_size", 16))
     return run_asr_eval(rd, rep, rows, make_transcriber(model, bs), prefix=prefix, batch_size=bs,
                         max_samples=max_samples)
 
