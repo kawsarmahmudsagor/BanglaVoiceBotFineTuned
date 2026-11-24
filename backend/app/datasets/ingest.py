@@ -208,6 +208,13 @@ def ingest_dir(src: Path, task: str, dest_root: Path, disk_min_gb: float = 0, wo
     staging.mkdir(parents=True)
     try:
         report, rows = validate_audio(src, task, workers=workers)
+        if report.ok:
+            real_src = src.resolve()
+            for r in rows:
+                if not _locate(src, r["file"]).resolve().is_relative_to(real_src):
+                    report.errors.append(Issue(
+                        "unsafe_path", f"'{r['file']}' is a symlink that resolves outside the dataset directory"))
+                    break
 
         def disk_check(rs: list[dict]) -> Issue | None:
             # Hard links on the same filesystem cost nothing; otherwise every file is copied.
@@ -244,21 +251,26 @@ def resolve_import_path(raw: str, import_root: Path) -> Path:
     and FileNotFoundError when it is inside the root but missing. A missing path outside the root is an
     ImportPathError, so existence outside the root is never disclosed.
     """
+    denied = ImportPathError("path is not allowed")  # one generic message: never echo the path or errno
     root = Path(import_root).resolve()
-    p = Path(raw)
-    cand = p if p.is_absolute() else root / p
+    missing = False
     try:
-        resolved = cand.resolve(strict=True)
-    except (FileNotFoundError, NotADirectoryError):
-        # lexically normalised check so a missing path outside the root still reads as an escape
-        lexical = Path(os.path.normpath(cand))
-        if not lexical.is_relative_to(root):
-            raise ImportPathError("path is outside the import root") from None
-        raise FileNotFoundError(raw) from None
-    except (OSError, RuntimeError) as e:
-        raise ImportPathError(f"cannot resolve path: {e}") from e
-    if not resolved.is_relative_to(root):
-        raise ImportPathError("path is outside the import root")
-    if not resolved.is_dir():
-        raise ImportPathError("path is not a directory")
+        p = Path(raw)
+        cand = p if p.is_absolute() else root / p
+        try:
+            resolved = cand.resolve(strict=True)
+        except (FileNotFoundError, NotADirectoryError):
+            # lexically normalised check so a missing path outside the root still reads as an escape
+            if not Path(os.path.normpath(cand)).is_relative_to(root):
+                raise denied from None
+            missing = True
+        else:
+            if not resolved.is_relative_to(root) or not resolved.is_dir():
+                raise denied
+    except ImportPathError:
+        raise
+    except (OSError, ValueError, RuntimeError):  # NUL bytes, loops, permissions, invalid names
+        raise denied from None
+    if missing:
+        raise FileNotFoundError("directory not found")
     return resolved

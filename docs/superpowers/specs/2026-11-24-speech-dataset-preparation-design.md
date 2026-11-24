@@ -345,7 +345,7 @@ The curated ASR dataset is 60–140 GB. Uploading it to the same machine it alre
 `POST /datasets/ingest-local` with `{path, task, name, provenance}`. It runs the same ingest job as an upload, with two differences:
 
 - **Source:** a directory, not a zip. The directory must resolve (after following symlinks) to a location inside `settings.import_root`, default `var/import/`. Any other path is rejected with `403`. `..` segments and symlinks that leave the root are rejected.
-- **File transfer:** files are hard-linked into the version directory when the source and `data/` are on one filesystem, otherwise copied. The source directory is never modified or deleted.
+- **File transfer:** files are hard-linked into the version directory when the source and `data/` are on one filesystem, otherwise copied. The source's contents are never modified, moved or deleted. Hard-linked source files share the version's read-only mode (0444) after ingest, by design: a read-only source protects the version, because a tool that rewrote an import file in place would silently corrupt it. Tools must replace files (write a tmp file, then `os.replace`), never write them in place. A file symlink inside the source that resolves outside it fails the ingest.
 
 Everything else is unchanged: `validate_audio`, provenance fields, the version hash, the split rules (training-backends §15) and the disk check.
 

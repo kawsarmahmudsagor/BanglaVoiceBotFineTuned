@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import json
 from pathlib import Path
@@ -162,7 +163,10 @@ async def create_local_ingest(
 
 
 def _has_metadata(d: Path) -> bool:
-    plain, per_split, _ = metadata_files(d)
+    try:
+        plain, per_split, _ = metadata_files(d)
+    except OSError:
+        return False
     return plain is not None or bool(per_split)
 
 
@@ -175,17 +179,16 @@ async def list_import_dirs(request: Request) -> dict:
         if not base.is_dir():
             return []
         out = []
-        dirs = [base]
-        for _ in range(2):
-            dirs += [c for d in dirs[-0:] for c in []]  # placeholder, replaced below
         found: list[Path] = []
         level = [base]
         for _depth in range(2):
             nxt = []
             for d in level:
-                for c in sorted(d.iterdir()):
-                    if c.is_dir() and not c.is_symlink():
-                        nxt.append(c)
+                try:
+                    children = sorted(d.iterdir())
+                except OSError:  # unreadable directory: skip it
+                    continue
+                nxt += [c for c in children if c.is_dir() and not c.is_symlink()]
             found += nxt
             level = nxt
         for d in found:
@@ -202,7 +205,6 @@ async def list_import_dirs(request: Request) -> dict:
             out.append({"path": d.relative_to(base).as_posix(), "task_hint": hint, "has_curation": cur.is_file()})
         return out
 
-    import asyncio
     return {"items": await asyncio.to_thread(scan)}
 
 

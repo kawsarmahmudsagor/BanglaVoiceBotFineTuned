@@ -129,7 +129,12 @@ async def test_ingest_local_hardlinks_same_fs(client, session_factory, settings,
             assert f.read_bytes() == (d / f.name).read_bytes()
     after = snapshot(d)
     assert set(after) == set(before)
-    assert {k: v[1] for k, v in after.items()} == {k: v[1] for k, v in before.items()}  # content untouched
+    assert {k: v[1] for k, v in after.items()} == {k: v[1] for k, v in before.items()}  # content unchanged
+    if sys.platform != "win32":
+        # hard-linked source files share the version's read-only mode, by design
+        for name in ("a.wav", "b.wav"):
+            assert stat.S_IMODE(after[name][0]) == 0o444
+        assert stat.S_IMODE(after["metadata.csv"][0]) == stat.S_IMODE(before["metadata.csv"][0])
     assert sorted(p.name for p in d.iterdir()) == ["a.wav", "b.wav", "metadata.csv"]
 
 
@@ -204,3 +209,48 @@ def test_resolve_import_path_unit(tmp_path):
     assert resolve_import_path("d", root) == (root / "d").resolve()
     with pytest.raises(ImportPathError):
         resolve_import_path("..", root)
+
+
+async def test_ingest_local_nul_byte_path_is_403(client, import_root):
+    r = await client.post("/api/datasets/ingest-local", json=body("ds\x001"))
+    assert r.status_code == 403
+    assert "ds" not in r.json()["detail"]
+
+
+def test_resolve_generic_message(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    for raw in ("../secret", str(tmp_path / "nope"), "a\x00b"):
+        with pytest.raises(ImportPathError) as e:
+            resolve_import_path(raw, root)
+        assert str(e.value) == "path is not allowed"
+
+
+async def test_import_dirs_skips_unreadable(client, import_root, monkeypatch):
+    make_dataset(import_root, "a")
+    (import_root / "locked").mkdir()
+    real = Path.iterdir
+
+    def iterdir(self):
+        if self.name == "locked":
+            raise PermissionError(13, "denied")
+        return real(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    r = await client.get("/api/datasets/import-dirs")
+    assert r.status_code == 200
+    assert [i["path"] for i in r.json()["items"]] == ["a"]
+
+
+def test_ingest_dir_rejects_file_symlink_escape(tmp_path):
+    d = make_dataset(tmp_path, "src")
+    outside = tmp_path / "outside.wav"
+    outside.write_bytes(Audio.sine(2.0, freq=500))
+    (d / "b.wav").unlink()
+    try:
+        os.symlink(outside, d / "b.wav")
+    except (OSError, NotImplementedError):
+        pytest.skip("cannot create symlinks here")
+    r = ingest_dir(d, "asr", tmp_path / "out")
+    assert not r.report.ok and r.version_hash is None
+    assert any(e.code == "unsafe_path" and "b.wav" in e.message for e in r.report.errors)
