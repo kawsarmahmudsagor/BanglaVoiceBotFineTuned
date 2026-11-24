@@ -1,0 +1,198 @@
+{
+  "name": "hf",
+  "label": "Hugging Face Transformers (Whisper, CTC/MMS, Parler TTS)",
+  "tasks": {
+    "asr": {
+      "methods": [
+        "full",
+        "adapter"
+      ],
+      "export_formats": [
+        "safetensors",
+        "ct2",
+        "adapter-safetensors"
+      ],
+      "serve_formats": [],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "base_model": {
+            "type": "string",
+            "enum": [
+              "openai/whisper-large-v3-turbo",
+              "mozilla-ai/whisper-large-v3-turbo-bn",
+              "facebook/wav2vec2-xls-r-300m",
+              "facebook/mms-1b-all"
+            ]
+          },
+          "method": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "enum": [
+                  "full",
+                  "adapter"
+                ]
+              }
+            }
+          },
+          "hparams": {
+            "type": "object",
+            "properties": {
+              "learning_rate": {
+                "type": "number",
+                "minimum": 1e-06,
+                "maximum": 0.01
+              },
+              "epochs": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 50
+              },
+              "batch_size": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              "grad_accum": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              "warmup_steps": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "max_steps": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "seed": {
+                "type": "integer"
+              },
+              "gradient_checkpointing": {
+                "type": "boolean"
+              },
+              "eval": {
+                "type": "object"
+              },
+              "prepare": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "method": {
+                  "properties": {
+                    "type": {
+                      "const": "adapter"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                }
+              },
+              "required": [
+                "method"
+              ]
+            },
+            "then": {
+              "properties": {
+                "base_model": {
+                  "const": "facebook/mms-1b-all"
+                }
+              },
+              "required": [
+                "base_model"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "tts": {
+      "methods": [
+        "full"
+      ],
+      "export_formats": [
+        "safetensors"
+      ],
+      "serve_formats": [],
+      "schema": {
+        "type": "object",
+        "properties": {
+          "base_model": {
+            "type": "string",
+            "enum": [
+              "ai4bharat/indic-parler-tts"
+            ]
+          },
+          "method": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "enum": [
+                  "full"
+                ]
+              }
+            }
+          },
+          "hparams": {
+            "type": "object",
+            "properties": {
+              "learning_rate": {
+                "type": "number",
+                "minimum": 1e-06,
+                "maximum": 0.01
+              },
+              "epochs": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 50
+              },
+              "batch_size": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              "grad_accum": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              "warmup_steps": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "max_steps": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "seed": {
+                "type": "integer"
+              },
+              "gradient_checkpointing": {
+                "type": "boolean"
+              },
+              "eval": {
+                "type": "object"
+              },
+              "prepare": {
+                "type": "object"
+              },
+              "description_template": {
+                "type": "string",
+                "default": "{speaker} speaks clearly in a studio-quality recording."
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
