@@ -28,7 +28,22 @@ def _bn_fix(text: str) -> str:
 
         _normalizer = Normalizer()
     # The library returns None for a run it judges unrepairable (e.g. a lone vowel sign); that run is kept as is.
-    return _BN_RUN.sub(lambda m: _normalizer(m[0])["normalized"] or m[0], text)
+    def fix(piece: str) -> str:
+        return (_normalizer(piece)["normalized"] or piece) if piece else piece
+
+    return _BN_RUN.sub(lambda m: _fix_masked(m[0], fix), text)
+
+
+# A ZWJ/ZWNJ next to a hasanta, between two Bengali characters: it selects a conjunct form (র‍্য, র্‍য, ক্‌ষ), and
+# app.core.text._strip_zero_width keeps it there (a joiner between two Bengali characters). bnunicodenormalizer
+# strips such joiners (and the hasanta with them in ক্‌ষ), so these hasanta+joiner pairs are masked out of its
+# input and restored. The library also drops any placeholder character, so the mask splits the run instead.
+_HASANTA_JOINER = re.compile("(্[‌‍](?=[ঀ-৿])|(?<=[ঀ-৿])[‌‍]্)")
+
+
+def _fix_masked(run: str, fix) -> str:
+    parts = _HASANTA_JOINER.split(run)  # odd indices are the masked hasanta+joiner pairs
+    return "".join(p if i % 2 else fix(p) for i, p in enumerate(parts))
 
 
 def clean(text: str) -> str:

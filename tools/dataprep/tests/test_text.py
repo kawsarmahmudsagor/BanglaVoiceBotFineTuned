@@ -36,6 +36,16 @@ TABLE += REPAIR_TABLE
 # ra + ZWJ + hasanta + ya (ra-phala) is a conjunct whose joiner must survive.
 CONJUNCT_ZWJ = "র‍্য"
 TABLE.append((f"আ{CONJUNCT_ZWJ}", f"আ{CONJUNCT_ZWJ}"))
+# Joiners next to a hasanta (U+09CD) between Bengali letters are kept (spec 7.1 step 3), as bn_normalize keeps
+# them: ra-phala (র ZWJ ্ য), ZWJ after the hasanta (র ্ ZWJ য), and the explicit-hasanta ক ্ ZWNJ ষ.
+HASANTA_JOINERS = [
+    "র‍্যাব",  # র‍্যাব
+    "আমি র‍্যাব দেখেছি",
+    "র্‍য",
+    "ক্‌ষ",
+    "লক্‌ষ্য ঠিক",
+]
+TABLE += [(t, t) for t in HASANTA_JOINERS]
 SAFE_INPUTS = [t for t, _ in TABLE if t not in {r for r, _ in REPAIR_TABLE}]
 
 
