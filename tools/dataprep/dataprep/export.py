@@ -269,6 +269,7 @@ def export(
 
     curation = {
         "source": wd.root.name,
+        "task": profile.task,  # top-level: the platform's import-dirs listing reads it as the task hint
         "profile": {"name": profile.name, **profile.model_dump(mode="json", exclude={"name"})},
         "step_versions": _step_versions(wd),
         "report": report,

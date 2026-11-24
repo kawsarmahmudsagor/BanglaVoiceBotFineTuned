@@ -70,7 +70,8 @@ def test_export_passes_validate_audio(tmp_path):
     data, sr = sf.read(out / "audio" / "c0.flac")
     assert sr == 16000 and data.ndim == 1
     cur = json.loads((out / "curation.json").read_text(encoding="utf-8"))
-    assert set(cur) == {"source", "profile", "step_versions", "report", "tool_commit", "provenance"}
+    assert set(cur) == {"source", "task", "profile", "step_versions", "report", "tool_commit", "provenance"}
+    assert cur["task"] == "asr" and cur["profile"]["task"] == "asr"
     assert cur["source"] == "bengaliai"
     assert cur["provenance"]["commercial_ok"] is False
     assert {"source", "license", "consent", "notes"} <= set(cur["provenance"])

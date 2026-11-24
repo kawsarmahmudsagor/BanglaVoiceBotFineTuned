@@ -198,7 +198,10 @@ async def list_import_dirs(request: Request) -> dict:
             cur = d / "curation.json"
             if cur.is_file():
                 try:
-                    t = json.loads(cur.read_text(encoding="utf-8")).get("task")
+                    data = json.loads(cur.read_text(encoding="utf-8"))
+                    t = data.get("task")
+                    if t is None and isinstance(data.get("profile"), dict):  # older tools/dataprep exports
+                        t = data["profile"].get("task")
                     hint = t if t in ("asr", "tts") else None
                 except (OSError, ValueError, AttributeError):
                     hint = None

@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import shutil
 import stat
@@ -163,13 +164,22 @@ async def test_ingest_local_copy_fallback(client, session_factory, settings, imp
 async def test_import_dirs_lists_dataset_dirs(client, import_root):
     make_dataset(import_root, "a")
     make_dataset(import_root, "grp/b")
-    (import_root / "grp" / "b" / "curation.json").write_text('{"task": "tts"}')
+    # The real tools/dataprep curation.json shape: top-level task plus the full profile object.
+    (import_root / "grp" / "b" / "curation.json").write_text(json.dumps({
+        "source": "bengaliai", "task": "tts",
+        "profile": {"name": "tts-loose", "task": "tts", "filters": {}},
+        "step_versions": {"text": 1}, "report": {}, "tool_commit": None,
+        "provenance": {"source": "s", "license": "l", "consent": "c", "commercial_ok": False, "notes": ""},
+    }))
+    make_dataset(import_root, "grp/c")  # older export: the task only under profile.task
+    (import_root / "grp" / "c" / "curation.json").write_text(json.dumps({"profile": {"name": "p", "task": "asr"}}))
     make_dataset(import_root, "x/y/z")  # three levels deep: not listed
     (import_root / "empty").mkdir()
     items = (await client.get("/api/datasets/import-dirs")).json()["items"]
     assert items == [
         {"path": "a", "task_hint": None, "has_curation": False},
         {"path": "grp/b", "task_hint": "tts", "has_curation": True},
+        {"path": "grp/c", "task_hint": "asr", "has_curation": True},
     ]
 
 
