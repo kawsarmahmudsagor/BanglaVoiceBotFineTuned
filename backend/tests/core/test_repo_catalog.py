@@ -23,6 +23,7 @@ IN_SCOPE = {
     "bangla-conformer": "nemo",
     "indicf5": "f5",
     "cosyvoice3": "cosyvoice",
+    "qwen3-asr-0-6b-bn": "qwen-asr",
 }
 
 

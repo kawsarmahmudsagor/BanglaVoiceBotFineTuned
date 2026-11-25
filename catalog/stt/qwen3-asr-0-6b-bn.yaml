@@ -1,0 +1,81 @@
+id: qwen3-asr-0-6b-bn
+task: asr
+name: Qwen3-ASR 0.6B Bengali
+hf_repo: SayedShaun/Qwen3-ASR-0.6B-Bengali
+params: 0.6B
+role: primary
+license:
+  id: apache-2.0
+  commercial_ok: true
+  url: https://huggingface.co/SayedShaun/Qwen3-ASR-0.6B-Bengali
+  notes: >-
+    Apache-2.0, like its base Qwen/Qwen3-ASR-0.6B. The card lists its training corpora (IndicVoices, OpenSLR-53,
+    Vaani, Kathbath, Common Voice, Shrutilipi, FLEURS, OpenSLR-37, Ben-10); check their terms before relying on
+    the weights commercially. Bengali.AI data used for our benchmark stays commercial_ok false until its license is checked.
+bangla:
+  status: finetuned
+  evidence: >-
+    A merged LoRA fine-tune of Qwen3-ASR-0.6B on about 1,174 h of Bengali. Zero-shot on our VM (2026-11-25,
+    bn_normalize asr, greedy, bf16, assistant prefix "language Bengali<asr_text>"): Bengali.AI valid 1k WER 6.45% /
+    CER 1.35%, the best of the 8 models benchmarked; FLEURS bn test WER 7.77% / CER 2.07%. The FLEURS score is
+    likely inflated: the card lists 3,921 FLEURS bn_in clips, more than the train and dev splits hold (3,408) and
+    about train + test (3,926), so the test split was very likely in its training data.
+  url: https://huggingface.co/SayedShaun/Qwen3-ASR-0.6B-Bengali
+runtime:
+  engine: custom
+  streaming: false
+description: |
+  Qwen3-ASR (an audio encoder feeding a Qwen3 0.6B decoder) fine-tuned on Bengali. It takes 16 kHz mono audio and is
+  prompted in the model card's chat format: a user turn with the audio, then an assistant turn prefilled with
+  `language Bengali<asr_text>`, after which it writes the transcript. It loads with transformers 5
+  (`Qwen3ASRForConditionalGeneration` + `AutoProcessor`). There is no RealtimeSTT engine for it yet (`custom`);
+  vLLM serving is a later step.
+dataset:
+  format: asr
+  required_fields: [file, text]
+  optional_fields: [region, channel, noise, speaker]
+  example: "clips/0001.wav,আমার অর্ডারটা কবে পৌঁছাবে জানাবেন?"
+  recommended:
+    hours: "10-100"
+    sample_rate: "16000"
+    clip_seconds: "1-30"
+    speakers: "100+ for speaker variety"
+  notes: |
+    Upload as a zip with `metadata.csv` (columns `file,text`) and the audio files. Transcripts in Bangla script,
+    Unicode NFC, with numbers written the way they are spoken if the model should output words. Clips over 30 s and
+    transcripts over `max_label_tokens` (448) tokens are skipped at prepare. Prepare writes 16 kHz mono WAV copies of
+    the clips, so plan disk for them.
+finetune:
+  methods: [full]
+  frameworks: [transformers]
+  targets:
+    - "Full fine-tune with the HF Trainer, bf16 autocast over fp32 master weights, gradient checkpointing."
+    - "Loss only on the transcript and EOS: the system/user/audio turn and the `language Bengali<asr_text>` prefix are masked."
+    - "With little data, set freeze_audio_encoder to train only the LLM decoder and the audio projector."
+  hyperparams:
+    learning_rate: 2.0e-5
+    epochs: 3
+    batch_size: 8
+    warmup_ratio: 0.02
+  metrics: [wer, cer]
+  pitfalls:
+    - "Needs transformers 5 (Qwen3ASRForConditionalGeneration); the backend has its own venv because the hf backend is held at transformers 4.46.1."
+    - "Training and inference must use the same prompt prefix; the eval splits the output on `<asr_text>`."
+    - "A full fine-tune keeps fp32 weights plus AdamW state for about 0.9B parameters: budget about 16 GB of GPU memory at batch 8 with gradient checkpointing."
+    - "The comparison base Qwen/Qwen3-ASR-0.6B does not list Bengali; the backend offers its transformers-format repo Qwen/Qwen3-ASR-0.6B-hf."
+recipe_template:
+  backend: qwen-asr
+  method: {type: full}
+  hparams:
+    learning_rate: 2.0e-5
+    epochs: 3
+    batch_size: 8
+  export: [safetensors]
+sources:
+  - title: Qwen3-ASR-0.6B-Bengali model card
+    url: https://huggingface.co/SayedShaun/Qwen3-ASR-0.6B-Bengali
+  - title: Qwen3-ASR-0.6B model card
+    url: https://huggingface.co/Qwen/Qwen3-ASR-0.6B
+  - title: Qwen3-ASR in transformers
+    url: https://huggingface.co/docs/transformers/model_doc/qwen3_asr
+verified: 2026-11-25
