@@ -157,8 +157,8 @@ def test_split_transcript_and_max_new_tokens():
 
 # ---------------------------------------------------------------- real processor (local HF cache, no weights)
 
-@pytest.fixture(scope="module")
-def real_processor():
+@pytest.fixture
+def real_processor():  # function scope: no test sees another test's tokenizer settings
     pytest.importorskip("transformers")
     from transformers import AutoProcessor
 
@@ -197,6 +197,10 @@ def test_real_collator_labels(real_processor):
         assert tok.decode(ids[:cut + 1]).endswith(PREFIX)
         assert all(t == IGNORE for t in labels[:cut + 1])
         assert kept == ids[cut + 1:cut + 1 + len(kept)]  # the unmasked span starts right after the prefix
+    # right padding for training: real tokens first in every row, the shorter clip padded at the end
+    mask = b["attention_mask"].tolist()
+    assert [m[0] for m in mask] == [1, 1]
+    assert mask[0][-1] == 0 and mask[1][-1] == 1
 
 
 def test_real_generation_inputs_match_chat_template_path(real_processor, tmp_path):
@@ -207,9 +211,18 @@ def test_real_generation_inputs_match_chat_template_path(real_processor, tmp_pat
     audio = (0.1 * np.sin(np.arange(16000 * 2) / 16000 * 2 * np.pi * 300)).astype("float32")
     wav = tmp_path / "a.wav"
     sf.write(str(wav), audio, 16000)
-    real_processor.tokenizer.padding_side = "left"
     ref = real_processor.apply_chat_template([conversation(str(wav))], tokenize=True, return_dict=True,
                                              padding=True, continue_final_message=True)
     ours = generation_inputs(real_processor, prompt_text(real_processor), [audio])
     assert ours["input_ids"].tolist() == ref["input_ids"].tolist()
     assert ours["input_features"].shape == ref["input_features"].shape
+
+
+def test_real_generation_inputs_left_padded(real_processor):
+    """Eval batches are left padded by the call itself, whatever the tokenizer's own padding_side is."""
+    side = real_processor.tokenizer.padding_side
+    audios = [np.zeros(16000, "float32"), np.zeros(48000, "float32")]  # the shorter clip first
+    b = generation_inputs(real_processor, prompt_text(real_processor), audios)
+    assert b["attention_mask"][:, 0].tolist() == [0, 1]
+    assert b["attention_mask"][:, -1].tolist() == [1, 1]
+    assert real_processor.tokenizer.padding_side == side  # not changed behind the collator's back
