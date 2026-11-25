@@ -57,6 +57,11 @@ def test_backend_python_env_override(settings):
     assert backend_python("fake", settings) == Path(sys.executable)
 
 
+def test_backend_python_env_override_hyphenated_name(settings, monkeypatch):
+    monkeypatch.setenv("BACKEND_PYTHON_QWEN_ASR", "/x/python")
+    assert backend_python("qwen-asr", settings) == Path("/x/python")
+
+
 def test_backend_python_excluded_backend_is_not_a_member(tmp_path, monkeypatch):
     monkeypatch.delenv("BACKEND_PYTHON_FAKE", raising=False)
     s = _repo(tmp_path, members=["workers/backends/*"])

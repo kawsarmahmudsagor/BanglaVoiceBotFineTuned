@@ -41,7 +41,8 @@ def _is_root_workspace_member(name: str, workspace_root: Path) -> bool:
 
 
 def backend_python(name: str, settings: Settings) -> Path:
-    env = os.environ.get(f"BACKEND_PYTHON_{name.upper()}")
+    # a shell cannot export a name with "-": backend qwen-asr reads BACKEND_PYTHON_QWEN_ASR
+    env = os.environ.get(f"BACKEND_PYTHON_{name.upper().replace('-', '_')}")
     if env:
         return Path(env)
     sub = "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
