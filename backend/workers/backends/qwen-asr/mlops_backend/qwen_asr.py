@@ -13,6 +13,7 @@ from app.core.backend_kit import (
     NanGuard, StopFlag, eval_opts, export_all, init_source, latest_checkpoint, mark_complete, max_skip_share,
     write_init_meta,
 )
+from app.core.backend_kit.audio_refs import probe_duration
 from app.core.backend_kit.runutil import (
     cap_val, dir_artifact, eval_ds, eval_rows, free_gpu, stopped_early, total_steps, train_ref, trainer_args,
 )
@@ -21,7 +22,7 @@ from app.core.evaluation import baseline_metrics, merge_results, run_asr_eval
 from app.core.prepare import ensure_prepared
 
 from .prepare.qwen_asr import (
-    MAX_LABEL_TOKENS, build_qwen_asr, check_prepared, qwen_asr_spec, read_rows, tokenizer_hash,
+    MAX_LABEL_TOKENS, MAX_SECONDS, build_qwen_asr, check_prepared, qwen_asr_spec, read_rows, tokenizer_hash,
 )
 from .prompt import (
     SAMPLE_RATE, QwenAsrCollator, generation_inputs, max_new_tokens, prompt_text, split_transcript,
@@ -126,6 +127,10 @@ class RowsDataset:
     def select(self, indices) -> "RowsDataset":
         return RowsDataset([self.rows[i] for i in indices])
 
+    def lengths(self) -> list[int]:
+        """Clip durations in centiseconds, for length-grouped batches (audio tokens scale with duration)."""
+        return [int(float(r["duration"]) * 100) for r in self.rows]
+
 
 def load_train_val(rd: RunDir) -> tuple[RowsDataset, RowsDataset]:
     prepared = Path(train_ref(rd)["path"])
@@ -154,10 +159,42 @@ def qwen_trainer_args(cfg: RunConfig, rd: RunDir) -> dict:
     return args
 
 
-def train(rd: RunDir, cfg: RunConfig, rep) -> int:
-    from transformers import Trainer, TrainingArguments
+def trainer_cls():
+    """HF Trainer whose train sampler groups clips of similar duration (LengthGroupedSampler), so a batch is not
+    padded to its one long clip. The stock group_by_length only reads lengths from a datasets.Dataset column."""
+    from transformers import Trainer
+    from transformers.trainer_pt_utils import LengthGroupedSampler
+
+    class DurationGroupedTrainer(Trainer):
+        def _get_train_sampler(self, train_dataset=None):
+            ds = train_dataset if train_dataset is not None else self.train_dataset
+            if not hasattr(ds, "lengths"):
+                return super()._get_train_sampler(train_dataset)
+            return LengthGroupedSampler(self.args.train_batch_size * self.args.gradient_accumulation_steps,
+                                        lengths=ds.lengths())
+
+    return DurationGroupedTrainer
+
+
+def make_trainer(cfg: RunConfig, rd: RunDir, rep, model, processor, train_ds, val_ds, stop, total: int, *,
+                 extra_args: dict | None = None, contract: bool = True):
+    """The Trainer for a run. `extra_args` override TrainingArguments (tests); `contract=False` leaves out the
+    contract callback (tests without a Reporter)."""
+    from transformers import TrainingArguments
 
     from app.core.backend_kit.hf import MetaContractCallback
+
+    callbacks = ([MetaContractCallback(rep, stop, NanGuard(), total, lambda d, step: write_ckpt_meta(d, cfg, step))]
+                 if contract else [])
+    return trainer_cls()(
+        model=model, args=TrainingArguments(**{**qwen_trainer_args(cfg, rd), **(extra_args or {})}),
+        train_dataset=train_ds, eval_dataset=val_ds, data_collator=QwenAsrCollator(processor),
+        callbacks=callbacks, processing_class=processor,
+    )
+
+
+def train(rd: RunDir, cfg: RunConfig, rep) -> int:
+    import torch
 
     stop = StopFlag().install()
     hp = with_defaults(cfg).hparams
@@ -174,14 +211,12 @@ def train(rd: RunDir, cfg: RunConfig, rep) -> int:
     val_ds = cap_val(val_ds, cfg)  # eval every save_steps: a seeded subset, not the whole val split
     total = total_steps(with_defaults(cfg), rd)
 
-    trainer = Trainer(
-        model=model, args=TrainingArguments(**qwen_trainer_args(cfg, rd)),
-        train_dataset=train_ds, eval_dataset=val_ds, data_collator=QwenAsrCollator(processor),
-        callbacks=[MetaContractCallback(rep, stop, NanGuard(), total, lambda d, step: write_ckpt_meta(d, cfg, step))],
-        processing_class=processor,
-    )
+    trainer = make_trainer(cfg, rd, rep, model, processor, train_ds, val_ds, stop, total)
     last = latest_checkpoint(rd) if cfg.resume else None
     trainer.train(resume_from_checkpoint=str(last) if last else None)
+    print(f"gradient checkpointing: {bool(getattr(model, 'is_gradient_checkpointing', False))}")
+    if torch.cuda.is_available():
+        print(f"peak GPU memory allocated: {torch.cuda.max_memory_allocated() / 2**30:.2f} GiB")
     if stopped_early(stop, trainer):
         return 143  # the callback already saved a complete checkpoint; resume continues from it
 
@@ -213,7 +248,7 @@ def make_transcriber(model, processor, loader: Callable = _loader) -> Callable[[
 
         audios = [loader(p) for p in paths]
         inputs = generation_inputs(processor, prompt, audios, model.device, model.dtype)
-        longest = max(len(a) for a in audios) / SAMPLE_RATE
+        longest = min(max(len(a) for a in audios) / SAMPLE_RATE, MAX_SECONDS)  # bounded like training clips
         with torch.inference_mode():
             out = model.generate(**inputs, max_new_tokens=max_new_tokens(longest), do_sample=False)
         texts = processor.batch_decode(out[:, inputs["input_ids"].shape[1]:], skip_special_tokens=True)
@@ -240,13 +275,32 @@ def _run_eval(src: str, rd: RunDir, rep, rows, prefix: str, max_samples) -> dict
         free_gpu()
 
 
+def split_long(rows: list[dict], probe: Callable | None = probe_duration) -> tuple[list[dict], int]:
+    """(rows of at most MAX_SECONDS, number skipped): the training skip rule applied to eval rows. The manifest's
+    duration_s is used when set, else the file is probed; a row that cannot be probed is kept (eval reports it)."""
+    kept, skipped = [], 0
+    for r in rows:
+        secs = r.get("duration_s")
+        if not secs and probe is not None:
+            try:
+                secs = probe(r["audio_path"])
+            except Exception:  # noqa: BLE001
+                secs = None
+        if secs and float(secs) > MAX_SECONDS:
+            skipped += 1
+            continue
+        kept.append(r)
+    return kept, skipped
+
+
 def eval(rd: RunDir, cfg: RunConfig, rep) -> int:  # noqa: A001 - phase handler name looked up by phases._dispatch
     from app.core.backend_kit.whisper import asr_baseline_key
 
     final = _require_final(rd)
     do_baseline, max_samples = eval_opts(cfg)
-    rows = eval_rows(cfg)
+    rows, skipped_long = split_long(eval_rows(cfg))
     tuned = _run_eval(str(final), rd, rep, rows, "", max_samples)
+    tuned["skipped_long"] = float(skipped_long)
 
     base: dict[str, float] = {}
     if do_baseline:

@@ -130,17 +130,142 @@ def test_tiny_model_transcriber_shape(real_processor):
     assert len(out) == 2 and all(isinstance(t, str) for t in out)
 
 
+def test_tiny_batched_generate_matches_single(real_processor):
+    """Left-padded batched greedy generation gives the same tokens as one clip at a time (padding and
+    position ids are handled), for clips of different lengths."""
+    import torch
+
+    from mlops_backend.prompt import generation_inputs, prompt_text
+
+    torch.manual_seed(0)
+    model = tiny_model().eval()
+    rng = np.random.default_rng(1)
+    audios = [(0.1 * rng.standard_normal(int(16000 * s))).astype("float32") for s in (0.7, 2.3, 1.4)]
+    prompt = prompt_text(real_processor)
+
+    def gen(batch):
+        inputs = generation_inputs(real_processor, prompt, batch)
+        with torch.inference_mode():
+            out = model.generate(**inputs, max_new_tokens=6, do_sample=False)
+        return out[:, inputs["input_ids"].shape[1]:].tolist()
+
+    assert gen(audios) == [gen([a])[0] for a in audios]
+
+
+class _Probe:
+    """Records, at each training step, whether the model is gradient-checkpointed."""
+
+    def __init__(self):
+        from transformers import TrainerCallback
+
+        seen = self.seen = []
+
+        class P(TrainerCallback):
+            def on_step_begin(self, args, state, control, model=None, **kw):
+                seen.append(bool(getattr(model, "is_gradient_checkpointing", False)))
+
+        self.callback = P()
+
+
+def _wav_rows(root, durations):
+    from app.core.backend_kit.audio import write_wav
+
+    rows = []
+    for i, d in enumerate(durations):
+        path = root / f"c{i}.wav"
+        t = np.arange(int(16000 * d)) / 16000
+        write_wav(path, (0.1 * np.sin(2 * np.pi * 220 * t)).astype("float32"), 16000)
+        rows.append({"audio_path": str(path), "text": BN[i % 4], "duration": d, "sample_id": f"c{i}"})
+    return rows
+
+
+@pytest.mark.parametrize("ckpt", [True, False])
+def test_tiny_trainer_checkpointing_follows_hparam(real_processor, run_dir, tmp_path, ckpt):
+    """With gradient_checkpointing true the model is really checkpointed while training; with false it is not."""
+    import torch
+
+    from app.core.backend_kit import StopFlag
+
+    torch.manual_seed(0)
+    rd = run_dir("asr", MODEL, {"max_steps": 2, "batch_size": 2, "gradient_checkpointing": ckpt})
+    ds = q.RowsDataset(_wav_rows(tmp_path, [0.5, 1.0, 1.5, 2.0]))
+    trainer = q.make_trainer(read_config(rd), rd, None, tiny_model(), real_processor, ds, ds.select([0, 1]),
+                             StopFlag(), 2, extra_args={"use_cpu": True, "dataloader_num_workers": 0,
+                                                        "save_strategy": "no", "eval_strategy": "no"},
+                             contract=False)
+    probe = _Probe()
+    trainer.add_callback(probe.callback)
+    trainer.train()
+    assert probe.seen and set(probe.seen) == {ckpt}
+
+
+def test_train_sampler_groups_by_duration(real_processor, run_dir):
+    from transformers.trainer_pt_utils import LengthGroupedSampler
+
+    from app.core.backend_kit import StopFlag
+
+    durs = [0.5, 9.0, 1.0, 8.5, 0.7, 9.5, 1.2, 8.0]
+    rd = run_dir("asr", MODEL, {"max_steps": 2, "batch_size": 2})
+    ds = q.RowsDataset([{"audio_path": "x", "text": "t", "duration": d, "sample_id": str(i)}
+                        for i, d in enumerate(durs)])
+    assert ds.lengths() == [int(d * 100) for d in durs]
+    trainer = q.make_trainer(read_config(rd), rd, None, tiny_model(), real_processor, ds, ds, StopFlag(), 2,
+                             extra_args={"use_cpu": True}, contract=False)
+    sampler = trainer._get_train_sampler()
+    assert isinstance(sampler, LengthGroupedSampler)
+    assert sampler.lengths == ds.lengths()
+
+
+def test_split_long_rows():
+    kept, n = q.split_long([{"duration_s": 30.0}, {"duration_s": 30.01}, {"duration_s": 2}], probe=None)
+    assert n == 1 and [r["duration_s"] for r in kept] == [30.0, 2]
+
+
+def test_eval_skips_and_counts_long_clips(run_dir, tmp_path, monkeypatch):
+    """Eval rows over MAX_SECONDS are skipped like in training and counted in the results."""
+    from app.core.contract import read_eval_results
+
+    rd = run_dir("asr", MODEL, {"eval": {"baseline": False}})
+    final = rd.checkpoints_dir / "final"
+    final.mkdir(parents=True)
+    (final / ".complete").write_text("")
+    (tmp_path / "s").mkdir()
+    (tmp_path / "l").mkdir()
+    short = _wav_rows(tmp_path / "s", [1.0])[0]["audio_path"]
+    long_ = _wav_rows(tmp_path / "l", [31.0])[0]["audio_path"]
+    rows = [{"sample_id": "a", "audio_path": short, "text": "x", "duration_s": 5.0},
+            {"sample_id": "b", "audio_path": short, "text": "x", "duration_s": 31.0},
+            {"sample_id": "c", "audio_path": short, "text": "x", "duration_s": None},  # probed: 1 s
+            {"sample_id": "d", "audio_path": long_, "text": "x", "duration_s": None}]  # probed: 31 s
+    seen = []
+    monkeypatch.setattr(q, "eval_rows", lambda c: rows)
+    monkeypatch.setattr(q, "_run_eval", lambda src, rd, rep, rws, prefix, ms: seen.append(rws) or {"wer": 0.0})
+    assert q.eval(rd, read_config(rd), None) == 0
+    assert [r["sample_id"] for r in seen[0]] == ["a", "c"]
+    assert read_eval_results(rd).metrics["skipped_long"] == 2
+
+
 # ---------------------------------------------------------------- heavy (GPU VM)
 
 @pytest.mark.heavy
-def test_qwen_asr_20_steps(run_dir):
-    """GPU VM only: prepare, 20 steps of full fine-tuning, eval with baseline, safetensors export that reloads
-    and transcribes one clip."""
+def test_qwen_asr_20_steps(run_dir, monkeypatch):
+    """GPU VM only: prepare, 20 steps of full fine-tuning with gradient checkpointing on, eval with baseline,
+    safetensors export that reloads and transcribes; batched == single-clip transcripts. Prints peak memory."""
+    import torch
     from transformers import AutoProcessor, Qwen3ASRForConditionalGeneration
 
     from app.core.backend_kit import Reporter
     from app.core.contract import read_eval_results, read_prepared_refs
 
+    probe = _Probe()
+    make = q.make_trainer
+
+    def make_with_probe(*a, **kw):
+        trainer = make(*a, **kw)
+        trainer.add_callback(probe.callback)
+        return trainer
+
+    monkeypatch.setattr(q, "make_trainer", make_with_probe)
     rd = run_dir("asr", MODEL, {"max_steps": 20, "batch_size": 2, "grad_accum": 1, "learning_rate": 1e-5,
                                 "eval": {"max_samples": 4}}, texts=BN, seconds=1.5,
                  method={"type": "full"}, backend="qwen-asr", export=["safetensors"])
@@ -148,22 +273,25 @@ def test_qwen_asr_20_steps(run_dir):
     rep = Reporter(rd)
     assert q.prepare(rd, cfg, rep) == 0
     assert read_prepared_refs(rd)[0]["role"] == "train"
+    torch.cuda.reset_peak_memory_stats()
     assert q.train(rd, cfg, rep) == 0
+    print(f"train peak torch.cuda.max_memory_allocated: {torch.cuda.max_memory_allocated() / 2**30:.2f} GiB")
+    assert probe.seen and set(probe.seen) == {True}  # gradient checkpointing really on
     final = rd.checkpoints_dir / "final"
     assert (final / ".complete").exists()
     assert json.loads((final / "init_meta.json").read_text())["format"] == "hf-full"
     assert q.eval(rd, cfg, rep) == 0
     res = read_eval_results(rd).metrics
-    assert {"wer", "cer", "rtf", "base/wer", "base/cer"} <= set(res)
+    assert {"wer", "cer", "rtf", "base/wer", "base/cer", "skipped_long"} <= set(res)
     assert q.export(rd, cfg, rep) == 0
     out = rd.export_dir / "safetensors"
     assert list(out.glob("*.safetensors")) and rd.export_manifest_path.exists()
 
-    import torch
-
     model = Qwen3ASRForConditionalGeneration.from_pretrained(str(out), dtype=torch.bfloat16).to("cuda").eval()
     processor = AutoProcessor.from_pretrained(str(out))
     clip = next(iter(read_prepared_refs(rd)))["path"]
-    wav = sorted((Path(clip) / "audio" / "train").glob("*.wav"))[0]
-    texts = q.make_transcriber(model, processor)([str(wav)])
-    assert len(texts) == 1 and isinstance(texts[0], str)
+    wavs = sorted((Path(clip) / "audio" / "train").glob("*.wav"))
+    tr = q.make_transcriber(model, processor)
+    texts = tr([str(w) for w in wavs])
+    assert len(texts) == len(wavs) and all(isinstance(t, str) for t in texts)
+    assert texts == [tr([str(w)])[0] for w in wavs]  # batched (left padded) == one clip at a time
