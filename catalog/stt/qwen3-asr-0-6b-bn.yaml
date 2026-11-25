@@ -61,7 +61,7 @@ finetune:
   pitfalls:
     - "Needs transformers 5 (Qwen3ASRForConditionalGeneration); the backend has its own venv because the hf backend is held at transformers 4.46.1."
     - "Training and inference must use the same prompt prefix; the eval splits the output on `<asr_text>`."
-    - "A full fine-tune keeps fp32 weights plus AdamW state for about 0.9B parameters: budget about 16 GB of GPU memory at batch 8 with gradient checkpointing."
+    - "A full fine-tune keeps fp32 weights, gradients and AdamW state for 0.78B parameters (about 12.5 GB) plus activations: budget 16 GB or more of free GPU memory."
     - "The comparison base Qwen/Qwen3-ASR-0.6B does not list Bengali; the backend offers its transformers-format repo Qwen/Qwen3-ASR-0.6B-hf."
 recipe_template:
   backend: qwen-asr

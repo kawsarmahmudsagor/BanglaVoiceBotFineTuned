@@ -148,8 +148,9 @@ def qwen_trainer_args(cfg: RunConfig, rd: RunDir) -> dict:
     args["label_names"] = ["labels"]
     args["prediction_loss_only"] = True
     args["dataloader_num_workers"] = dataloader_workers()
-    args["gradient_checkpointing"] = bool(hp["gradient_checkpointing"])
-    args["gradient_checkpointing_kwargs"] = {"use_reentrant": False}
+    # transformers 5.24 renamed gradient_checkpointing(_kwargs) to activation_checkpointing(_kwargs)
+    args["activation_checkpointing"] = bool(hp["gradient_checkpointing"])
+    args["activation_checkpointing_kwargs"] = {"use_reentrant": False}
     return args
 
 

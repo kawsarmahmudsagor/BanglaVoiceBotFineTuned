@@ -46,7 +46,7 @@ def test_trainer_args_defaults_and_overrides(run_dir):
     assert args["learning_rate"] == 2e-5
     assert args["per_device_train_batch_size"] == 8 and args["gradient_accumulation_steps"] == 1
     assert args["warmup_steps"] == 0.02 and isinstance(args["warmup_steps"], float)  # ratio (transformers 5)
-    assert args["bf16"] is True and args["gradient_checkpointing"] is True
+    assert args["bf16"] is True and args["activation_checkpointing"] is True
     assert args["max_steps"] == 100 and args["label_names"] == ["labels"]
     assert args["remove_unused_columns"] is False
 
@@ -56,7 +56,7 @@ def test_trainer_args_defaults_and_overrides(run_dir):
     assert args["save_steps"] == args["eval_steps"] == 25
     assert args["learning_rate"] == 1e-4 and args["per_device_train_batch_size"] == 2
     assert args["gradient_accumulation_steps"] == 4 and args["warmup_steps"] == 0.1
-    assert args["gradient_checkpointing"] is False
+    assert args["activation_checkpointing"] is False
 
 
 def test_with_defaults_keeps_recipe_values(run_dir):
@@ -89,7 +89,8 @@ def tiny_model():
     a.downsample_hidden_size, a.output_dim = 8, 32
     t.hidden_size, t.intermediate_size, t.num_hidden_layers = 32, 64, 1
     t.num_attention_heads, t.num_key_value_heads, t.head_dim = 2, 1, 16
-    return Qwen3ASRForConditionalGeneration(cfg)
+    t.layer_types = (t.layer_types or [])[:1] or None  # must match num_hidden_layers when the config is reloaded
+    return Qwen3ASRForConditionalGeneration(cfg).float()  # from_config keeps the sub-configs' bf16 dtype
 
 
 def test_tiny_model_loss_and_freeze(real_processor):
