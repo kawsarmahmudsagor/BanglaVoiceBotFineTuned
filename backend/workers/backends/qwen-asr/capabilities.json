@@ -52,8 +52,9 @@
               "batch_size": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 32,
-                "default": 8
+                "maximum": 16,
+                "default": 8,
+                "description": "per-device batch; logits over the 151,936-token vocabulary dominate memory, so use grad_accum for larger effective batches"
               },
               "grad_accum": {
                 "type": "integer",
@@ -74,8 +75,9 @@
               "max_label_tokens": {
                 "type": "integer",
                 "minimum": 16,
-                "maximum": 2048,
-                "default": 448
+                "maximum": 916,
+                "default": 448,
+                "description": "transcript tokens + EOS; at most eval's max_new_tokens for a 30 s clip (30/s + 16 = 916)"
               },
               "gradient_checkpointing": {
                 "type": "boolean",

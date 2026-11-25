@@ -38,19 +38,36 @@ def test_methods_exports_and_hparams():
                        "keep_checkpoints", "seed", "eval", "prepare"}
     lr = hp["learning_rate"]
     assert (lr["default"], lr["minimum"], lr["maximum"]) == (2e-5, 1e-6, 1e-3)
-    assert hp["batch_size"]["default"] == 8 and hp["batch_size"]["maximum"] == 32
+    assert hp["batch_size"]["default"] == 8 and hp["batch_size"]["maximum"] == 16
     assert hp["warmup_ratio"]["default"] == 0.02
     assert hp["max_label_tokens"]["default"] == 448
     assert hp["gradient_checkpointing"]["default"] is True
     assert hp["freeze_audio_encoder"]["default"] is False
 
 
+def test_batch_size_fits_a_32gb_card():
+    """Logits over the 151,936-token vocabulary dominate memory: batch 32 cannot fit; grad_accum scales instead."""
+    bs = ASR["schema"]["properties"]["hparams"]["properties"]["batch_size"]
+    assert bs["maximum"] == 16 and bs["default"] == 8
+    assert "grad_accum" in bs["description"]
+
+
+def test_max_label_tokens_within_eval_generation_budget():
+    """A transcript allowed in training must fit eval's max_new_tokens for the longest (30 s) clip."""
+    from mlops_backend.prepare.qwen_asr import MAX_SECONDS
+    from mlops_backend.prompt import max_new_tokens
+
+    mlt = ASR["schema"]["properties"]["hparams"]["properties"]["max_label_tokens"]
+    assert mlt["maximum"] == max_new_tokens(MAX_SECONDS) == 916
+
+
 def test_schema_accepts_and_rejects():
     v = Draft202012Validator(ASR["schema"])
-    ok = {"base_model": MODEL, "method": {"type": "full"}, "hparams": {"batch_size": 32, "learning_rate": 1e-3},
+    ok = {"base_model": MODEL, "method": {"type": "full"}, "hparams": {"batch_size": 16, "learning_rate": 1e-3},
           "export": ["safetensors"]}
     assert not list(v.iter_errors(ok))
-    for bad in ({"hparams": {"batch_size": 33}}, {"hparams": {"learning_rate": 1e-2}},
+    for bad in ({"hparams": {"batch_size": 17}}, {"hparams": {"max_label_tokens": 917}},
+                {"hparams": {"learning_rate": 1e-2}},
                 {"method": {"type": "lora"}}, {"export": ["ct2"]}, {"base_model": "Qwen/Qwen3-ASR-0.6B"}):
         assert list(v.iter_errors({**ok, **bad})), bad
 
