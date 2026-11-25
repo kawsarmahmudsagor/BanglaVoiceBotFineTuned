@@ -18,7 +18,7 @@ Run `scripts/dev.sh` inside `tmux` (or as a systemd user unit) so the worker sur
 
 `deploy/postgres/init.sql` (which creates the `mlflow` database) only runs on a fresh Postgres volume. On an existing volume, create it by hand: `docker compose exec postgres psql -U mlops -d mlops -c 'CREATE DATABASE mlflow;'`.
 
-MLflow runs as your VM user (`UID`/`GID`, default 1000). Services listen on the VM's loopback only: web on 3000, API on 8000, MLflow on 5000, Postgres on 5432.
+MLflow runs as your VM user (`UID`/`GID`, default 1000). Services listen on the VM's loopback only: web on 3000, API on 8000, MLflow on 5000, Postgres on 5432 (set `POSTGRES_PORT` in `.env`, and the same port in `DATABASE_URL`, if 5432 is taken).
 
 ## Reaching it from your PC
 

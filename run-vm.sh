@@ -75,6 +75,10 @@ check_env() {
     *":${POSTGRES_PASSWORD}@"*) ;;
     *) die "DATABASE_URL in .env does not contain POSTGRES_PASSWORD; keep them in sync" ;;
   esac
+  case "$DATABASE_URL" in
+    *"@localhost:${POSTGRES_PORT:-5432}/"*|*"@127.0.0.1:${POSTGRES_PORT:-5432}/"*) ;;
+    *) die "DATABASE_URL in .env must use localhost:${POSTGRES_PORT:-5432} (POSTGRES_PORT, default 5432)" ;;
+  esac
   [ "$(cd "$REPO_ROOT" 2>/dev/null && pwd -P)" = "$(pwd -P)" ] \
     || die "REPO_ROOT in .env ($REPO_ROOT) must be this checkout ($ROOT)"
   [ -n "${HF_TOKEN:-}" ] || say "warning: HF_TOKEN is empty; gated models (IndicF5, Parler, IndicConformer, Gemma) will fail"
@@ -86,6 +90,22 @@ check_env() {
     die "DATA_ROOT ($DATA_ROOT) is missing or not writable. Run: sudo mkdir -p $DATA_ROOT && sudo chown $(id -u):$(id -g) $DATA_ROOT"
   fi
   mkdir -p "$DATA_ROOT/logs"
+}
+
+check_ports() {
+  # a port held by something other than this compose stack makes `docker compose up` fail mid-way
+  local running port name
+  running="$(docker compose ps --services --status running 2>/dev/null || true)"
+  for pair in "postgres:${POSTGRES_PORT:-5432}" "mlflow:5000" "api:8000" "web:3000"; do
+    name="${pair%%:*}"; port="${pair##*:}"
+    grep -qx "$name" <<<"$running" && continue
+    if ss -Hltn "sport = :$port" 2>/dev/null | grep -q .; then
+      if [ "$name" = postgres ]; then
+        die "port $port is already in use on this VM (see: sudo ss -ltnp 'sport = :$port'). Set POSTGRES_PORT to a free port in .env (e.g. 5433) and use the same port in DATABASE_URL"
+      fi
+      die "port $port ($name) is already in use on this VM (see: sudo ss -ltnp 'sport = :$port'); free it first"
+    fi
+  done
 }
 
 ensure_mlflow_db() {
@@ -131,6 +151,7 @@ cmd_start() {
     bash scripts/setup_venvs.sh
   fi
 
+  check_ports
   say "Starting Postgres..."
   docker compose up -d --wait postgres
   ensure_mlflow_db
