@@ -11,7 +11,10 @@ license:
   notes: Gated on Hugging Face (agree to share contact details). A 600M multilingual version (22 languages, MIT) is ai4bharat/indic-conformer-600m-multilingual.
 bangla:
   status: native
-  evidence: AI4Bharat's Bengali-only Conformer, trained on Bengali speech; the card's language is Bengali.
+  evidence: >-
+    AI4Bharat's Conformer, trained on Bengali speech; the card's language is Bengali. Zero-shot on our VM
+    (2026-11-25, bn_normalize asr, RNN-T greedy): Bengali.AI valid 1k WER 11.48% / CER 2.20%; FLEURS bn test
+    WER 14.91% / CER 4.11%. That FLEURS score is the best of the models whose result is not contaminated.
   url: https://huggingface.co/ai4bharat/indicconformer_stt_bn_hybrid_ctc_rnnt_large
 runtime:
   engine: custom
@@ -38,7 +41,7 @@ finetune:
   methods: [full]
   frameworks: [nemo]
   targets:
-    - "Fine-tune with AI4Bharat's NeMo fork (`https://github.com/AI4Bharat/NeMo`, branch `nemo-v2`), as the card requires."
+    - "The .nemo file was saved by AI4Bharat's NeMo fork with 22 language heads. The nemo backend converts it to a Bangla-only model for stock NeMo 3.0 on load (mlops_backend/multilingual.py). No fork is needed."
     - "Keep the existing Bengali tokenizer; train both the CTC and RNN-T heads (hybrid loss)."
     - "Train the whole model at first; with under 10 h of data, freeze the lower half of the encoder."
   hyperparams:
@@ -48,7 +51,7 @@ finetune:
     ctc_loss_weight: 0.3
   metrics: [wer, cer]
   pitfalls:
-    - "Upstream NeMo may not load the checkpoint; use the AI4Bharat fork the card names."
+    - "Stock NeMo cannot load the raw checkpoint (KeyError 'dir'). Always load it through the backend's conversion. Its RNN-T embedding must use local token ids (rows 0-255); offset rows decode as repeated tokens."
     - "The card's sample code names a different repo id (`..._hybrid_rnnt_large`); use the repo id above."
 recipe_template:
   backend: nemo
@@ -62,4 +65,4 @@ sources:
     url: https://huggingface.co/ai4bharat/indicconformer_stt_bn_hybrid_ctc_rnnt_large
   - title: IndicConformer 600M multilingual model card
     url: https://huggingface.co/ai4bharat/indic-conformer-600m-multilingual
-verified: 2026-11-23
+verified: 2026-11-25

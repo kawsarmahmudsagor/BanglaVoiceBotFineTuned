@@ -5,7 +5,9 @@ The `ai4bharat/indicconformer_stt_*` checkpoints were saved by AI4Bharat's NeMo 
 "multisoftmax". Stock NeMo cannot build that config. Since every language shares the encoder, we keep the encoder,
 take the target language's tokenizer, and cut the heads down to that language:
 
-- decoder.prediction.embed.weight (N*V + 1, H): rows [i*V, (i+1)*V) of language i, plus the final blank row
+- decoder.prediction.embed.weight (N*V + 1, H): rows [0, V) plus the final blank row, for EVERY language. The fork
+  feeds the prediction net each language's local token ids (0..V-1), not offset ids. Taking rows [i*V, (i+1)*V)
+  instead decodes Bangla RNN-T as repeated tokens (176% WER vs 15% on 30 Bengali.AI clips, checked 2026-11-25).
 - joint.joint_net.2.<lang>.* (V + 1, H): the language's own head becomes joint.joint_net.2.*
 - CTC: a per-language layer (`.<lang>.` in the key) is renamed the same way; a shared (N*V + 1)-row layer is sliced
 
@@ -108,7 +110,7 @@ def monolingual_state_dict(sd: dict, langs: list[str], lang: str) -> dict:
     out = {}
     for key, w in sd.items():
         if key == "decoder.prediction.embed.weight":
-            out[key] = _slice_rows(w, idx, vocab)
+            out[key] = _slice_rows(w, 0, vocab)  # local token ids: rows [0, V) for every language (see docstring)
             continue
         if not key.startswith(HEAD_PREFIXES):
             out[key] = w

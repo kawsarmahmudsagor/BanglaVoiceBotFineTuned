@@ -73,7 +73,9 @@ def test_state_dict_slices_embedding_and_picks_language_heads():
         "ctc_decoder.decoder_layers.0.bias": np.arange(total + 1, dtype=np.float32),
     }
     out = monolingual_state_dict(sd, LANGS, "bn")
-    want_emb = np.concatenate([emb[V:2 * V], emb[-1:]])
+    # The fork feeds each language's LOCAL token ids (0..V-1) to the shared prediction net, so the embedding keeps
+    # rows [0, V) for every language, not the language's offset rows. Offset rows gave 176% WER on VM clips.
+    want_emb = np.concatenate([emb[:V], emb[-1:]])
     assert np.array_equal(out["decoder.prediction.embed.weight"], want_emb)
     assert np.array_equal(out["joint.joint_net.2.weight"], np.full((V + 1, H), 1))
     assert np.array_equal(out["joint.joint_net.2.bias"], np.full((V + 1,), 1))
