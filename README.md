@@ -91,7 +91,7 @@ The Catalog page lists base models you can fine-tune, in three sections: LLM, ST
 
 ## Training backends
 
-Real training runs in five backends under `backend/workers/backends/`, each with its own uv environment:
+Real training runs in six backends under `backend/workers/backends/`, each with its own uv environment:
 
 | Backend | Tasks and models |
 |---|---|
@@ -100,6 +100,7 @@ Real training runs in five backends under `backend/workers/backends/`, each with
 | `nemo` | ASR (IndicConformer, BanglaConformer) |
 | `f5` | TTS (IndicF5) |
 | `cosyvoice` | TTS (CosyVoice 3, experimental for Bangla) |
+| `qwen-asr` | ASR (Qwen3-ASR 0.6B Bengali; transformers 5, full fine-tune) |
 
 Setup on the VM:
 
@@ -122,7 +123,7 @@ It prints `PASS <backend>/<model>` and `PASS <backend>/<model> warm-start`, or `
 
 ### Dataset format to prepared format
 
-Upload formats are validated at ingest (`file,text` for ASR; `file,text,speaker` for TTS; chat JSONL for LLM). At run start each backend converts the dataset version into a prepared cache under `$DATA_ROOT/data/prepared/<dataset_hash>/<spec_hash>/`, shared by runs with the same conversion spec. Audio converters keep references to the uploaded files instead of copying audio, to stay within the disk budget.
+Upload formats are validated at ingest (`file,text` for ASR; `file,text,speaker` for TTS; chat JSONL for LLM). At run start each backend converts the dataset version into a prepared cache under `$DATA_ROOT/data/prepared/<dataset_hash>/<spec_hash>/`, shared by runs with the same conversion spec. Audio converters keep references to the uploaded files instead of copying audio, to stay within the disk budget; the exception is `qwen-asr`, which writes 16 kHz mono WAV copies (spec §17.3).
 
 | Family | Backend | Input fields | Prepared output |
 |---|---|---|---|
@@ -133,6 +134,7 @@ Upload formats are validated at ingest (`file,text` for ASR; `file,text,speaker`
 | `nemo-manifest` | nemo | `file`, `text` | `<split>.jsonl` manifests (`audio_filepath`, `duration`, `text`) pointing at the source files; only formats soundfile cannot read are transcoded to 16 kHz FLAC |
 | `f5` | f5 | `file`, `text`, `speaker` | `<split>/raw.arrow` (audio path, text, duration), `duration.json`, `vocab.txt` (base vocabulary plus new characters appended) and one reference clip per speaker |
 | `cosyvoice` | cosyvoice | `file`, `text`, `speaker` | Kaldi lists, speaker embeddings, speech tokens, and parquet shards that embed the source audio bytes; one reference clip per speaker |
+| `qwen-asr` | qwen-asr | `file`, `text` | 16 kHz mono WAV copies of the clips plus `<split>.jsonl` (`audio` relative to the cache, `text`, `duration`); clips over 30 s or transcripts over `max_label_tokens` (448) tokens are skipped |
 
 Text goes through `bn_normalize` first. Rows that cannot be converted are skipped and listed on the run page; a run fails if more than 5% are skipped (`hparams.prepare.max_skip_share`).
 

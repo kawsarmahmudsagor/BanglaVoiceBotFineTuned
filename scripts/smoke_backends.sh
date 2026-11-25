@@ -2,7 +2,7 @@
 # End-to-end smoke test of the training backends through the API: ingest a tiny dataset, train 20 steps, evaluate,
 # export, then warm-start a second run from the first. Run it on the VM with the stack and worker up (scripts/dev.sh).
 #
-#   bash scripts/smoke_backends.sh [backend...]     default: unsloth hf nemo f5 cosyvoice
+#   bash scripts/smoke_backends.sh [backend...]     default: unsloth hf nemo f5 cosyvoice qwen-asr
 #
 # Env: API (default http://localhost:8000/api), SKIP_BACKENDS (space-separated, for a backend skipped at its VM
 # gate), RUN_TIMEOUT (seconds per run, default 3600), INGEST_TIMEOUT (default 600).
@@ -20,7 +20,7 @@ PY=python3
 command -v "$PY" >/dev/null 2>&1 || PY=python
 command -v "$PY" >/dev/null 2>&1 || { echo "python3 or python is required" >&2; exit 2; }
 
-if [ "$#" -gt 0 ]; then BACKENDS=("$@"); else BACKENDS=(unsloth hf nemo f5 cosyvoice); fi
+if [ "$#" -gt 0 ]; then BACKENDS=("$@"); else BACKENDS=(unsloth hf nemo f5 cosyvoice qwen-asr); fi
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -43,6 +43,7 @@ spec_for() {
     nemo)      echo 'ai4bharat/indicconformer_stt_bn_hybrid_ctc_rnnt_large|asr|full|mit|true|["nemo"]|{}' ;;
     f5)        echo 'ai4bharat/IndicF5|tts|full|mit|true|["f5-ckpt"]|{"batch_size_frames":3200}' ;;
     cosyvoice) echo 'FunAudioLLM/Fun-CosyVoice3-0.5B-2512|tts|full|apache-2.0|true|["cosyvoice-dir"]|{"components":["llm","flow"]}' ;;
+    qwen-asr)  echo 'SayedShaun/Qwen3-ASR-0.6B-Bengali|asr|full|apache-2.0|true|["safetensors"]|{"batch_size":2}' ;;
     *) return 1 ;;
   esac
 }
