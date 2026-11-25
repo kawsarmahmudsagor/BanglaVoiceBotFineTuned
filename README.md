@@ -134,7 +134,7 @@ Upload formats are validated at ingest (`file,text` for ASR; `file,text,speaker`
 | `nemo-manifest` | nemo | `file`, `text` | `<split>.jsonl` manifests (`audio_filepath`, `duration`, `text`) pointing at the source files; only formats soundfile cannot read are transcoded to 16 kHz FLAC |
 | `f5` | f5 | `file`, `text`, `speaker` | `<split>/raw.arrow` (audio path, text, duration), `duration.json`, `vocab.txt` (base vocabulary plus new characters appended) and one reference clip per speaker |
 | `cosyvoice` | cosyvoice | `file`, `text`, `speaker` | Kaldi lists, speaker embeddings, speech tokens, and parquet shards that embed the source audio bytes; one reference clip per speaker |
-| `qwen-asr` | qwen-asr | `file`, `text` | 16 kHz mono WAV copies of the clips plus `<split>.jsonl` (`audio` relative to the cache, `text`, `duration`); clips over 30 s or transcripts over `max_label_tokens` (448) tokens are skipped |
+| `qwen-asr` | qwen-asr | `file`, `text` | 16 kHz mono WAV copies of the clips plus `<split>.jsonl` (`audio` relative to the cache, `text`, `duration`); clips over 30 s or transcripts over `max_label_tokens` (448) tokens are skipped. The cache key includes the base model, so switching between the two base models re-prepares the WAV copies |
 
 Text goes through `bn_normalize` first. Rows that cannot be converted are skipped and listed on the run page; a run fails if more than 5% are skipped (`hparams.prepare.max_skip_share`).
 
