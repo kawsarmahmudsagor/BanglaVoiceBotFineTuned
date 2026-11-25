@@ -594,3 +594,87 @@ Steps 3 and 4 need the GPU and are the slow part. They are cached like every pre
 - Init format `cosyvoice-pt`: load `llm.pt`, `flow.pt` and `hift.pt` from the init path in place of the base weights.
 - Per-component checkpoint dirs (`<component>-epoch-<n>[-step-<s>]`, `<component>-final`) carry format `cosyvoice-component`. `resolve_init` rejects that format ("init_from: checkpoint '<name>' is a single CosyVoice component; use 'final'"), and `/api/init-sources` and the Checkpoints panel do not list them. In general those two only list `final` and checkpoints that `resolve_checkpoint(run, step)` finds again.
 - Allowed pair: `full` → `full` (§14.2 row "full (nemo, f5, hf)" gains `cosyvoice`).
+
+## 17. Qwen3-ASR backend
+
+Added 2026-11-25 at the user's request. Before this, a zero-shot benchmark on the VM was run (`~/stt-bench`, 2026-11-25). It used `bn_normalize(mode="asr")`, greedy decoding, Bengali.AI valid 1k and FLEURS bn test. `SayedShaun/Qwen3-ASR-0.6B-Bengali` scored 6.45 % WER and 1.35 % CER on Bengali.AI, the best of 8 models. Its FLEURS score (7.77 % WER) is likely inflated, because its card lists more FLEURS clips than the train and dev splits hold.
+
+### 17.1 Models and status
+
+- Base models (schema enum):
+  - `SayedShaun/Qwen3-ASR-0.6B-Bengali`: Apache-2.0, `commercial_ok: true`. It is a merged LoRA fine-tune of Qwen3-ASR-0.6B on about 1,174 h of Bengali.
+  - `Qwen/Qwen3-ASR-0.6B-hf`: Apache-2.0. Bengali is not in its language list. It is kept for comparison only. It is the transformers-format repo. The original `Qwen/Qwen3-ASR-0.6B` chat template drops a prefilled assistant turn, so `continue_final_message=True` fails with it (checked on the VM, 2026-11-25).
+- Catalog entry `qwen3-asr-0-6b-bn`, task `asr`, backend `qwen-asr`, method `full`.
+- Bengali.AI data stays `commercial_ok: false` until its license is checked (same rule as everywhere).
+
+### 17.2 Dependencies
+
+- The backend needs its own venv: the `hf` backend is held at transformers 4.46.1 by parler-tts. Qwen3-ASR needs a transformers release with `Qwen3ASRForConditionalGeneration`.
+- The pins are:
+  - `transformers==5.24.1`, which worked on the VM;
+  - `accelerate`;
+  - `torch==2.7.1` and `torchaudio==2.7.1` from cu128;
+  - `librosa` and `soundfile`.
+- The `qwen-asr` pip package is not used. The model, processor and chat template come from transformers.
+- flash-attn is not required; use sdpa.
+
+### 17.3 Prepare (`qwen-asr` family)
+
+- Input fields: `file`, `text`. Output: 16 kHz mono WAV files and one JSONL per split with `{sample_id, audio, text, duration}`.
+- `audio` is relative to the prepared directory, because the directory is built under a temporary name and then renamed.
+- Only the train dataset is prepared. Eval reads the source audio directly, as the `hf` and `ctc` paths do.
+- The WAV copies cost about 115 GB per 1,000 h of audio. Changing to references to the source audio is a known follow-up.
+- The text is `bn_normalize(mode="asr")` of the dataset text, the same as the other ASR converters (§4.4).
+- Skip rules:
+  - Audio over 30 s is skipped (reason recorded).
+  - Text whose target token count is over `hparams.max_label_tokens` (default 448) is skipped.
+- `PrepSpec.params` holds the base model, the processor's tokenizer hash, the prompt prefix and the normalizer version.
+
+### 17.4 Prompt format
+
+- Training and inference both use the model card's chat format:
+  - a user turn holding the audio;
+  - an assistant turn that starts with the prefix `language Bengali<asr_text>`;
+  - then the transcript and EOS.
+- The prefix is a constant in one module, recorded in `PrepSpec.params`.
+- Inference passes the prefix with `continue_final_message=True`. It splits the decoded text on `<asr_text>` and keeps the part after it.
+- Labels are -100 for every prompt and prefix token. Loss is on the transcript tokens and EOS only. The processor's left padding is used for generation and right padding for training.
+
+### 17.5 Train
+
+- Method `full`, using the HF `Trainer` with `ContractCallback` (§6), bf16, and gradient checkpointing (hparam `gradient_checkpointing`, default true).
+- Hparams:
+  - `learning_rate`: default 2e-5, bounds 1e-6 to 1e-3;
+  - `epochs`: default 3;
+  - `max_steps`;
+  - `batch_size`: default 8, at most 32;
+  - `grad_accum`: default 1;
+  - `warmup_ratio`: default 0.02;
+  - `save_steps`;
+  - `max_label_tokens`;
+  - `freeze_audio_encoder`: default false. When true, only the LLM decoder and the audio projector train.
+- The collator loads audio, builds the chat inputs with the processor and masks labels (§17.4).
+- Validation runs every save interval on the seeded subset (§8.4). It reports `eval_loss`.
+- Resume works from the HF Trainer checkpoint dir. `checkpoints/final/` holds a `save_pretrained` model plus processor, with `init_meta.json` format `hf-full`.
+
+### 17.6 Eval and export
+
+- Eval:
+  - greedy `generate` with the §17.4 prefix, batched;
+  - `max_new_tokens` = 30 per second of audio + 16;
+  - `wer`, `cer` and `rtf` through the shared `run_asr_eval`;
+  - a baseline (§8.3) on the untouched base model.
+- Export `safetensors`: the `final/` directory, loadable with `Qwen3ASRForConditionalGeneration.from_pretrained` + `AutoProcessor`. `serve_formats` stays empty. vLLM serving is a later step.
+
+### 17.7 Warm start
+
+Init format `hf-full`: `from_pretrained(init_path)` in place of the base model. Allowed pair `full` → `full`.
+
+### 17.8 Tests
+
+- CPU:
+  - the converter: skips, JSONL shape, normalization;
+  - the label-masking collator, using a tiny fake processor;
+  - the capabilities schema;
+  - the catalog recipe validating against the schema.
+- Heavy, on the VM: 20 steps on the tiny fixture dataset, then eval with baseline, then the `safetensors` export reloads and transcribes one clip.
