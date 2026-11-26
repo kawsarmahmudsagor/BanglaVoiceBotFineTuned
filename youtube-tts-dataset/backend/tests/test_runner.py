@@ -1,3 +1,4 @@
+import sqlite3
 import threading
 from pathlib import Path
 
@@ -386,3 +387,69 @@ def test_retry_llm_keeps_review_edits_and_approvals(env):
     assert (clips["v1_0001"]["status"], clips["v1_0001"]["text_final"]) == ("flagged", "fixed words")
     assert (clips["v1_0002"]["status"], clips["v1_0002"]["text_final"]) == ("approved", "v1 text 2")
     assert clips["v1_0003"]["text_final"] == "v1 text 3।" and clips["v1_0003"]["no_punct"] == 0
+
+
+class FlakyStore(Store):
+    """Raises sqlite3.OperationalError once from a chosen store call made by a runner thread."""
+
+    def __init__(self, path):
+        super().__init__(path)
+        self.fail_failed_update = 0   # update_video(status="failed") calls left to fail
+        self.fail_stage_done = 0      # stage_done calls (scheduling reads) from ytds-* threads left to fail
+
+    def update_video(self, dataset_id, video_id, **fields):
+        if fields.get("status") == "failed" and self.fail_failed_update:
+            self.fail_failed_update -= 1
+            raise sqlite3.OperationalError("database or disk is full")
+        return super().update_video(dataset_id, video_id, **fields)
+
+    def stage_done(self, dataset_id, video_id, stage):
+        if self.fail_stage_done and threading.current_thread().name.startswith("ytds-"):
+            self.fail_stage_done -= 1
+            raise sqlite3.OperationalError("database is locked")
+        return super().stage_done(dataset_id, video_id, stage)
+
+
+def _flaky_runner(tmp_path, fakes):
+    store = FlakyStore(tmp_path / "flaky.sqlite")
+    bus = FakeBus()
+    r = JobRunner(store, bus, FakeGpu(), llm=object(), settings=Settings(data_dir=tmp_path / "var"),
+                  stages=fakes.stage_fns())
+    return store, bus, r
+
+
+@pytest.mark.parametrize("stage", ["separate", "segment"])  # GPU thread, pool thread
+def test_store_error_while_failing_a_video_keeps_worker_alive(tmp_path, stage):
+    fakes = Fakes(fail={(stage, "v1"): RuntimeError("stage boom")})
+    store, bus, runner = _flaky_runner(tmp_path, fakes)
+    store.fail_failed_update = 1
+    ds = _dataset(store, "v1", "v2", "v3")
+    try:
+        _run(runner, ds)
+        assert all(t.is_alive() for t in runner._threads)
+        v1 = _video(store, ds, "v1")
+        assert v1["status"] == "failed" and v1["error"] == "stage boom"
+        assert all(_video(store, ds, v)["status"] == "done" for v in ("v2", "v3"))
+        assert bus.of("log")
+    finally:
+        runner.stop()
+
+
+def test_store_error_in_scheduling_keeps_workers_alive(tmp_path):
+    fakes = Fakes()
+    store, bus, runner = _flaky_runner(tmp_path, fakes)
+    ds = _dataset(store, "v1", "v2")
+    orig = fakes.download
+
+    def download(video_id, url, out_dir, on_progress):
+        store.fail_stage_done = 3  # the next scheduling reads in runner threads fail
+        return orig(video_id, url, out_dir, on_progress)
+
+    runner.stages.download = download
+    try:
+        _run(runner, ds)
+        assert all(t.is_alive() for t in runner._threads)
+        assert all(_video(store, ds, v)["status"] == "done" for v in ("v1", "v2"))
+        assert bus.of("log")
+    finally:
+        runner.stop()

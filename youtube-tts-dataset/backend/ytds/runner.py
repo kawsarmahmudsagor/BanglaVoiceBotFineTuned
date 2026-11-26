@@ -12,6 +12,7 @@ A stage is marked done only after its outputs are persisted, so a restart reruns
 """
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 import time
@@ -25,10 +26,14 @@ from .pipeline import STAGES
 GPU_STAGES = ("separate", "quality", "transcribe", "fallback")
 FINALIZE = "finalize"
 PUNCT_RETRY = "punctuate_retry"
+LLM_RETRY = "fallback_retry"
+RECOVER_S = 0.2  # pause after an unexpected worker error, before trying again
 POOL_WORKERS = 2
 MIN_CLEAN_S = 30.0
 WARN_SHORT = "<30 s clean audio"
 WARN_POOR_STT = "poor STT"
+
+log = logging.getLogger(__name__)
 
 _ACTIVE = ("queued", "running")
 _QUALITY_FIELDS = ("dnsmos", "speaker_sim", "drop_reason", "status")
@@ -88,7 +93,7 @@ class JobRunner:
         self._stop = threading.Event()
         self._tasks: queue.Queue = queue.Queue()
         self._active: set[str] = set()          # dataset ids being scheduled
-        self._inflight: set[tuple] = set()      # (dataset_id, video_id) or (dataset_id, video_id, PUNCT_RETRY)
+        self._inflight: set[tuple] = set()      # (dataset_id, video_id[, PUNCT_RETRY | LLM_RETRY])
         self._llm_retry: list[str] = []         # dataset ids waiting for the GPU thread
         self._llm_busy = 0
         self._t0: dict[tuple, float] = {}
@@ -130,6 +135,11 @@ class JobRunner:
             self.store.mark_stage(dataset_id, video_id, step, False)
         self.store.update_video(dataset_id, video_id, status="queued", error=None)
         self.enqueue(dataset_id)
+
+    def busy(self, dataset_id: str, video_id: str) -> bool:
+        """True while the video is queued for, or running, a stage or an LLM retry in this runner."""
+        with self._lock:
+            return any(k[:2] == (dataset_id, video_id) for k in self._inflight)
 
     def skip(self, dataset_id: str, video_id: str) -> None:
         self.store.update_video(dataset_id, video_id, status="skipped")
@@ -186,37 +196,56 @@ class JobRunner:
                 ds, vid, step = self._tasks.get(timeout=0.2)
             except queue.Empty:
                 continue
-            if step == PUNCT_RETRY:
-                self._run_punct_retry(ds, vid)
-            elif step == FINALIZE:
-                self._run_step(ds, vid, step, self._finalize)
-            else:
-                self._run_step(ds, vid, step, getattr(self, f"_stage_{step}"))
+            try:
+                if step == PUNCT_RETRY:
+                    self._run_punct_retry(ds, vid)
+                elif step == FINALIZE:
+                    self._run_step(ds, vid, step, self._finalize)
+                else:
+                    self._run_step(ds, vid, step, getattr(self, f"_stage_{step}"))
+            except Exception as e:  # top-level guard: a worker thread must never die
+                self._worker_error("pool", e, ds, vid)
+                with self._lock:
+                    self._inflight.discard((ds, vid, PUNCT_RETRY) if step == PUNCT_RETRY else (ds, vid))
+                if step != PUNCT_RETRY:
+                    self._fail(ds, vid, step, e)
+                self._recover()
 
     def _gpu_loop(self) -> None:
         while not self._stop.is_set():
-            with self._cv:
-                retry_ds = self._llm_retry.pop(0) if self._llm_retry else None
-                if retry_ds is not None:
-                    self._llm_busy += 1
-                batch = None if retry_ds is not None else self._gpu_batch()
-                if retry_ds is None and batch is None:
-                    self._cv.wait(0.5)
-                    continue
-            if batch is None:
-                try:
-                    self._run_llm_retry(retry_ds)
-                finally:
-                    with self._lock:
-                        self._llm_busy -= 1
-                continue
-            stage, vids = batch
-            for i, (ds, vid) in enumerate(vids):
+            try:
+                self._gpu_tick()
+            except Exception as e:  # top-level guard: the GPU thread must never die
+                self._worker_error("gpu", e)
+                self._recover()
+
+    def _gpu_tick(self) -> None:
+        with self._cv:
+            retry_ds = self._llm_retry.pop(0) if self._llm_retry else None
+            if retry_ds is not None:
+                self._llm_busy += 1
+            batch = None if retry_ds is not None else self._gpu_batch()
+            if retry_ds is None and batch is None:
+                self._cv.wait(0.5)
+                return
+        if retry_ds is not None:
+            try:
+                self._run_llm_retry(retry_ds)
+            finally:
+                with self._lock:
+                    self._llm_busy -= 1
+            return
+        stage, vids = batch
+        started = 0
+        try:
+            for ds, vid in vids:
                 if self._stop.is_set():
-                    with self._lock:
-                        self._inflight.difference_update(vids[i:])
                     break
+                started += 1
                 self._run_step(ds, vid, stage, getattr(self, f"_stage_{stage}"))
+        finally:
+            with self._lock:  # videos of the batch that never started (stop or an unexpected error)
+                self._inflight.difference_update(vids[started:])
 
     def _gpu_batch(self) -> tuple[str, list[tuple[str, str]]] | None:
         """First GPU stage in STAGES order with ready videos, and all of them. Caller holds the lock."""
@@ -237,17 +266,46 @@ class JobRunner:
                 self._t0[(ds, vid, step)] = time.monotonic()
             fn(ds, vid)
             if step != FINALIZE:
+                if self._status(ds, vid) is None:
+                    return  # video deleted meanwhile: do not leave an orphan stage mark
                 self.store.mark_stage(ds, vid, step, True)
                 self._publish(type="stage_done", dataset_id=ds, video_id=vid, stage=step)
         except Exception as e:
-            if self._status(ds, vid) != "skipped":
-                self.store.update_video(ds, vid, status="failed", error=str(e))
-            self._publish(type="stage_failed", dataset_id=ds, video_id=vid, stage=step, error=str(e))
+            self._fail(ds, vid, step, e)
         finally:
             self._t0.pop((ds, vid, step), None)
             with self._lock:
                 self._inflight.discard((ds, vid))
+            self._safe_kick()
+
+    def _fail(self, ds: str, vid: str, step: str, err: Exception) -> None:
+        """Mark the video failed (unless skipped or deleted) and publish stage_failed. A store error here is
+        retried once and then logged; it never propagates."""
+        for attempt in range(2):
+            try:
+                if self._status(ds, vid) not in ("skipped", None):
+                    self.store.update_video(ds, vid, status="failed", error=str(err))
+                break
+            except Exception as e:
+                self._worker_error("mark failed", e, ds, vid)
+                if attempt == 0:
+                    time.sleep(RECOVER_S)
+        self._publish(type="stage_failed", dataset_id=ds, video_id=vid, stage=step, error=str(err))
+
+    def _worker_error(self, where: str, err: Exception, ds: str | None = None, vid: str | None = None) -> None:
+        log.error("ytds %s worker error (dataset=%s video=%s)", where, ds, vid, exc_info=err)
+        self._publish(type="log", dataset_id=ds, video_id=vid, message=f"internal error in {where}: {err!r}")
+
+    def _safe_kick(self) -> None:
+        try:
             self._kick()
+        except Exception as e:
+            self._worker_error("scheduler", e)
+
+    def _recover(self) -> None:
+        """After an unexpected error: pause briefly, then reschedule so no ready video is left unqueued."""
+        time.sleep(RECOVER_S)
+        self._safe_kick()
 
     # --- helpers
     def _status(self, ds: str, vid: str) -> str | None:
@@ -353,18 +411,25 @@ class JobRunner:
 
     # --- LLM retry
     def _run_llm_retry(self, ds: str) -> None:
+        """Errors are logged per video and leave its status alone: its stages already finished."""
         for v in self.store.list_videos(ds):
             vid = v["id"]
-            if self.store.stage_done(ds, vid, "fallback"):
-                try:
-                    self._stage_fallback(ds, vid)
-                except Exception as e:
-                    self._publish(type="log", dataset_id=ds, video_id=vid, stage="fallback",
-                                  message=f"LLM retry failed: {e}")
-            if self.store.stage_done(ds, vid, "punctuate"):
-                with self._lock:
-                    self._inflight.add((ds, vid, PUNCT_RETRY))
-                self._tasks.put((ds, vid, PUNCT_RETRY))
+            try:
+                if self.store.stage_done(ds, vid, "fallback"):
+                    with self._lock:
+                        self._inflight.add((ds, vid, LLM_RETRY))
+                    try:
+                        self._stage_fallback(ds, vid)
+                    finally:
+                        with self._lock:
+                            self._inflight.discard((ds, vid, LLM_RETRY))
+                if self.store.stage_done(ds, vid, "punctuate"):
+                    with self._lock:
+                        self._inflight.add((ds, vid, PUNCT_RETRY))
+                    self._tasks.put((ds, vid, PUNCT_RETRY))
+            except Exception as e:
+                self._publish(type="log", dataset_id=ds, video_id=vid, stage="fallback",
+                              message=f"LLM retry failed: {e}")
 
     def _run_punct_retry(self, ds: str, vid: str) -> None:
         try:
