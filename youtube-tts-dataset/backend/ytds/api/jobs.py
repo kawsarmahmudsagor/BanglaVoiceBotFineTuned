@@ -152,8 +152,10 @@ def skip_video(dataset_id: str, video_id: str, request: Request) -> dict:
 def delete_video(dataset_id: str, video_id: str, request: Request) -> dict:
     v = _video_or_404(request, dataset_id, video_id)
     _not_exporting(request, dataset_id)
-    if v["status"] == "running":
-        raise HTTPException(409, "video is running; skip it first")
+    # Skip only flips the status; a stage already queued or running keeps going and still writes its outputs,
+    # so the runner's in-flight set (not the status) decides whether the files and rows are free to delete.
+    if v["status"] == "running" or request.app.state.runner.busy(dataset_id, video_id):
+        raise HTTPException(409, "video is still processing; wait for it to finish or fail")
     request.app.state.store.delete_video(dataset_id, video_id)
     shutil.rmtree(video_dir(request.app.state.settings.data_dir, dataset_id, video_id), ignore_errors=True)
     return {"ok": True}

@@ -18,6 +18,10 @@ SR = 16000
 class FakeRunner:
     def __init__(self):
         self.calls, self.llm = [], None
+        self.in_flight: set[tuple[str, str]] = set()
+
+    def busy(self, dataset_id, video_id):
+        return (dataset_id, video_id) in self.in_flight
 
     def start(self):
         self.calls.append(("start",))
@@ -373,3 +377,18 @@ def test_settings_lists_stage_models(env):
     assert set(models) == {"separate", "vad", "dnsmos", "speaker", "model_a", "model_b", "translate", "llm"}
     assert models["separate"] == "htdemucs" and models["llm"] == "m3"
     assert models["model_a"] == "SayedShaun/Qwen3-ASR-0.6B-Bengali"
+
+
+@pytest.mark.parametrize("status", ["queued", "running", "skipped", "failed"])
+def test_delete_refused_while_video_in_flight(env, status):
+    client, store, _, runner, _ = env
+    ds = _dataset_with_clips(store, [{"start_s": 0, "end_s": 3}])
+    store.update_video(ds, "vid1", status=status)
+    runner.in_flight.add((ds, "vid1"))  # a stage is still queued or running, even after Skip
+    r = client.delete(f"/api/datasets/{ds}/videos/vid1")
+    assert r.status_code == 409
+    assert r.json()["detail"] == "video is still processing; wait for it to finish or fail"
+    assert [v["id"] for v in store.list_videos(ds)] == ["vid1"]
+
+    runner.in_flight.clear()  # the stage stopped
+    assert client.delete(f"/api/datasets/{ds}/videos/vid1").status_code == (409 if status == "running" else 200)

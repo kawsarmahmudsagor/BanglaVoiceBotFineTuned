@@ -453,3 +453,29 @@ def test_store_error_in_scheduling_keeps_workers_alive(tmp_path):
         assert bus.of("log")
     finally:
         runner.stop()
+
+
+def test_busy_until_running_stage_ends_even_after_skip(env):
+    store, bus, settings, make = env
+    fakes = Fakes()
+    ds = _dataset(store, "v1")
+    entered, release = threading.Event(), threading.Event()
+    orig = fakes.segment
+
+    def segment(vocals_wav, th):
+        entered.set()
+        assert release.wait(IDLE_S)
+        return orig(vocals_wav, th)
+
+    fakes.segment = segment
+    runner = make(fakes)
+    assert runner.busy(ds, "v1") is False
+    runner.start()
+    runner.enqueue(ds)
+    assert entered.wait(IDLE_S)
+    runner.skip(ds, "v1")
+    assert runner.busy(ds, "v1") is True  # Skip does not stop the running stage
+    release.set()
+    assert runner.wait_idle(IDLE_S)
+    assert runner.busy(ds, "v1") is False
+    assert _video(store, ds, "v1")["status"] == "skipped"
