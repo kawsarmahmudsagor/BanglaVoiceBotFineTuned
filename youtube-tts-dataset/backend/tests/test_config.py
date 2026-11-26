@@ -37,8 +37,8 @@ def test_defaults(tmp_path):
     assert s.data_dir == SUB_ROOT / "var"
     assert s.export_dir == REPO_ROOT / "var" / "import"
     t = Thresholds()
-    assert t.cer_auto == 0.05
-    assert t.cer_fallback == 0.30
+    assert t.min_bn_ratio == 0.5
+    assert (t.min_chars_per_s, t.max_chars_per_s, t.max_word_repeat) == (3.0, 30.0, 6)
     assert t.dnsmos_min == 3.0
     assert t.speaker_sim_min == 0.60
     assert (t.clip_min_s, t.clip_max_s, t.merge_gap_s, t.demucs_segment_s) == (2.0, 15.0, 0.30, 7.0)

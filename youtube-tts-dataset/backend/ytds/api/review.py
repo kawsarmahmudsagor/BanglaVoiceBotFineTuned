@@ -27,7 +27,8 @@ class ClipPatch(BaseModel):
 
 
 def review_reason(clip: dict) -> Reason:
-    """Why a clip needs (or needed) review: LLM down, translated text, or A/B disagreement."""
+    """Why a clip needs (or needed) review: LLM down, translated text, or flagged (A/B disagreement in
+    datasets transcribed before model B was removed)."""
     if clip["status"] == "pending_llm":
         return "pending_llm"
     if clip["text_source"] == "translated":

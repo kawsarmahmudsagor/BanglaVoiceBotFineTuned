@@ -1,47 +1,35 @@
 from ytds.config import Thresholds
-from ytds.pipeline.routing import cer, route
+from ytds.pipeline.routing import bn_ratio, longest_repeat, route
 
-SENTENCE = "আমার সোনার বাংলা আমি তোমায় ভালোবাসি"
-REF20 = "কখগঘঙচছজঝঞটঠডঢণতথদধন"  # 20 code points, no combining marks
-
-
-def _swap(n: int) -> str:
-    """REF20 with its first n characters replaced by one that never occurs in it (n substitutions)."""
-    return "য" * n + REF20[n:]
+TH = Thresholds()
+SENTENCE = "আমার সোনার বাংলা আমি তোমায় ভালোবাসি"  # 30 Bangla characters without spaces
 
 
-def test_cer_identical_is_zero():
-    assert cer(SENTENCE, SENTENCE) == 0.0
+def test_normal_bangla_is_auto():
+    assert route(SENTENCE, 3.0, TH) == "auto"
 
 
-def test_cer_both_empty_is_zero():
-    assert cer("", "") == 0.0
-    assert cer(" । ", "") == 0.0
+def test_empty_or_punctuation_only_is_fallback():
+    assert route("", 3.0, TH) == "fallback"
+    assert route(" । ", 3.0, TH) == "fallback"
 
 
-def test_cer_ignores_spaces_and_punctuation():
-    assert cer(SENTENCE, SENTENCE.replace(" ", "") + "।") == 0.0
+def test_mostly_latin_is_fallback_but_loanwords_pass():
+    assert route("this is all english text here", 3.0, TH) == "fallback"
+    assert route("iPhone 15 এর দাম কত টাকা", 2.0, TH) == "auto"
 
 
-def test_cer_empty_ref_divides_by_one():
-    assert cer("", "কখ") == 2.0
+def test_bn_ratio_ignores_digits_and_punctuation():
+    assert bn_ratio("আমি ১৫, ১৬।") == 1.0
+    assert bn_ratio("123 ...") == 0.0
 
 
-def test_route_boundaries():
-    th = Thresholds()
-    assert len(REF20) == 20
-    assert route(REF20, _swap(1), th) == ("auto", 0.05)  # 1 / 20, exactly cer_auto
-    assert route(REF20, _swap(2), th) == ("flagged", 0.1)
-    assert route(REF20, _swap(6), th) == ("flagged", 0.3)  # 6 / 20, exactly cer_fallback
-    assert route(REF20, _swap(7), th) == ("fallback", 0.35)
+def test_speaking_rate_bounds():
+    assert route(SENTENCE, 15.0, TH) == "fallback"   # 2 chars/s: too few words for the audio
+    assert route(SENTENCE, 0.5, TH) == "fallback"    # 60 chars/s: more text than anyone can say
 
 
-def test_route_empty_a_is_fallback():
-    assert route("", "কিছু একটা", Thresholds()) == ("fallback", 1.0)
-    assert route(" । ", "", Thresholds()) == ("fallback", 1.0)
-
-
-def test_route_latin_and_digits_no_crash():
-    status, c = route("iPhone 15 এর দাম", "আইফোন ১৫ এর দাম", Thresholds())
-    assert status in ("auto", "flagged", "fallback")
-    assert c > 0.0
+def test_repeat_loop_is_fallback():
+    assert longest_repeat("ছোট ছোট ছোট ছোট জীবন") == 4
+    assert route("ছোট ছোট ছোট ছোট জীবনের ব্যাটল", 2.0, TH) == "auto"
+    assert route("না " * 8 + "আমি", 2.0, TH) == "fallback"

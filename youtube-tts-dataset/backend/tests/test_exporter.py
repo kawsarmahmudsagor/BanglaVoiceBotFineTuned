@@ -92,7 +92,7 @@ def test_curation_has_provenance_and_commercial_false(env):
     _, _, out = _run(env)
     cur = json.loads((out / "curation.json").read_text(encoding="utf-8"))
     assert cur["commercial_use"] is False and cur["tool"] == "youtube-tts-dataset"
-    assert cur["git_commit"] and cur["exported_at"] and cur["thresholds"]["cer_auto"] == 0.05
+    assert cur["git_commit"] and cur["exported_at"] and cur["thresholds"]["min_bn_ratio"] == 0.5
     assert cur["counts"]["total_clips"] == 2 and cur["counts"]["no_punct"] == 1
     assert cur["counts"]["text_source"] == {"stt": 1, "translated": 1}
     v = cur["videos"][0]

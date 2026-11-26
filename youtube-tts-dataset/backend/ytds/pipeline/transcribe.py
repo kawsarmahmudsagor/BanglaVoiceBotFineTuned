@@ -1,4 +1,4 @@
-"""Transcribe stage: model A (Qwen3-ASR Bengali) and model B (Whisper turbo-bn, CT2) adapters, run stage-major.
+"""Transcribe stage: model A (Qwen3-ASR Bengali), batched on the GPU.
 
 Model loaders are plain functions; the GPU worker's loaders are registered by the app (Task 11, ruling R2).
 """
@@ -10,18 +10,13 @@ from typing import Callable
 
 import numpy as np
 
-from ..config import Thresholds, load_settings
+from ..config import Thresholds
 from .audio16k import SR, load_16k
 from .routing import route
 
 Transcriber = Callable[[list[np.ndarray]], list[str]]
 
 MODEL_A = "SayedShaun/Qwen3-ASR-0.6B-Bengali"
-MODEL_B = "mozilla-ai/whisper-large-v3-turbo-bn"
-MODEL_B_COMPUTE = "int8_float16"
-# Whisper's decoder holds at most 448 tokens and Bangla costs about 2 tokens per character, so a 15 s
-# clip (about 450 tokens) gets cut off mid-word. Model B decodes clips in windows of at most this length.
-MODEL_B_WINDOW_S = 6.0
 BATCH = 8
 
 # --- Ported from backend/workers/backends/qwen-asr/mlops_backend/prompt.py and prepare/qwen_asr.py
@@ -76,18 +71,6 @@ def strip_glosses(text: str) -> str:
     return re.sub(r"\s+", " ", _GLOSS.sub("", text)).strip()
 
 
-def split_windows(audio: np.ndarray, max_s: float = MODEL_B_WINDOW_S, frame_s: float = 0.02) -> list[np.ndarray]:
-    """Split `audio` into pieces of at most `max_s` seconds, each cut at the quietest 20 ms frame in the
-    middle 40 % of the piece being split (so cuts fall in pauses between words where there are any)."""
-    if len(audio) <= max_s * SR:
-        return [audio]
-    frame = max(1, int(frame_s * SR))
-    lo, hi = int(len(audio) * 0.3) // frame, int(len(audio) * 0.7) // frame
-    energy = [float(np.mean(np.square(audio[i * frame:(i + 1) * frame]))) for i in range(lo, hi)]
-    cut = (lo + int(np.argmin(energy))) * frame + frame // 2
-    return split_windows(audio[:cut], max_s, frame_s) + split_windows(audio[cut:], max_s, frame_s)
-
-
 def in_batches(model: Transcriber, audios: list[np.ndarray],
                on_batch: Callable[[int], None] | None = None) -> list[str]:
     """Run `model` over `audios` BATCH clips at a time; `on_batch(done)` after each batch."""
@@ -120,50 +103,10 @@ def load_model_a() -> Transcriber:
     return lambda audios: in_batches(batch, audios)
 
 
-def ct2_dir(ckpt: str = MODEL_B, compute_type: str = MODEL_B_COMPUTE) -> Path:
-    """CT2 conversion of `ckpt`, made once and cached under var/models/ (adapted from
-    whisper-stt-playground/stt_ui.py resolve_ct2; converted in-process, Windows has no converter script path)."""
-    out = load_settings().data_dir / "models" / f"{ckpt.strip('/').replace('/', '--')}-{compute_type}"
-    if (out / "model.bin").exists():
-        return out
-    from ctranslate2.converters import TransformersConverter
-
-    tmp = out.with_name(out.name + ".tmp")
-    tmp.parent.mkdir(parents=True, exist_ok=True)
-    TransformersConverter(ckpt, copy_files=["preprocessor_config.json"]).convert(
-        str(tmp), quantization=compute_type, force=True
-    )
-    if not (tmp / "tokenizer.json").exists():  # some repos ship only vocab.json/merges.txt
-        from transformers import WhisperTokenizerFast
-
-        WhisperTokenizerFast.from_pretrained(ckpt).backend_tokenizer.save(str(tmp / "tokenizer.json"))
-    tmp.rename(out)
-    return out
-
-
-def load_model_b() -> Transcriber:
-    from faster_whisper import WhisperModel
-
-    model = WhisperModel(str(ct2_dir()), device="cuda", compute_type=MODEL_B_COMPUTE)
-
-    def transcribe(audios: list[np.ndarray]) -> list[str]:
-        texts = []
-        for a in audios:
-            parts = []
-            for w in split_windows(a):
-                segments, _ = model.transcribe(w, language="bn", beam_size=1, without_timestamps=True,
-                                               condition_on_previous_text=False)
-                parts.append("".join(s.text for s in segments).strip())
-            texts.append(" ".join(p for p in parts if p))
-        return texts
-
-    return transcribe
-
-
 def transcribe_clips(clips: list[dict], vocals_wav: Path, gpu, on_progress: Callable[[int, int], None],
                      th: Thresholds | None = None) -> None:
-    """All live clips through model A, then all through model B; sets text_a, text_b, cer, status, text_source.
-    A "fallback" route is stored as status pending_llm. Progress total is 2 x live clips."""
+    """All live clips through model A; sets text_a, status, text_source (text_b and cer stay empty).
+    A "fallback" route is stored as status pending_llm. Progress total is the number of live clips."""
     th = th or Thresholds()
     live = [c for c in clips if c.get("status") != "dropped"]
     if not live:
@@ -171,10 +114,8 @@ def transcribe_clips(clips: list[dict], vocals_wav: Path, gpu, on_progress: Call
     y = load_16k(vocals_wav)
     audios = [y[int(c["start_s"] * SR):int(c["end_s"] * SR)] for c in live]
     n = len(live)
-    total = 2 * n
-    texts_a = in_batches(gpu.use("model_a"), audios, lambda d: on_progress(d, total))
-    texts_b = in_batches(gpu.use("model_b"), audios, lambda d: on_progress(n + d, total))
-    for c, a, b in zip(live, texts_a, texts_b):
-        status, c_err = route(a, b, th)
-        c.update(text_a=a, text_b=b, cer=c_err, text_source="stt",
+    texts_a = in_batches(gpu.use("model_a"), audios, lambda d: on_progress(d, n))
+    for c, a in zip(live, texts_a):
+        status = route(a, c["end_s"] - c["start_s"], th)
+        c.update(text_a=a, text_b=None, cer=None, text_source="stt",
                  status="pending_llm" if status == "fallback" else status)

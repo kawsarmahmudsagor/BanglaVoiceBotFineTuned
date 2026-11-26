@@ -175,8 +175,10 @@ export interface ExportState {
 }
 
 export interface Thresholds {
-  cer_auto: number;
-  cer_fallback: number;
+  min_bn_ratio: number;
+  min_chars_per_s: number;
+  max_chars_per_s: number;
+  max_word_repeat: number;
   dnsmos_min: number;
   speaker_sim_min: number;
   clip_min_s: number;
@@ -191,7 +193,6 @@ export interface StageModels {
   dnsmos: string;
   speaker: string;
   model_a: string;
-  model_b: string;
   translate: string;
   llm: string;
 }

@@ -5,10 +5,14 @@ import type { AppSettings, DatasetSummary, StageModels, Thresholds } from "../ty
 type Draft = Record<keyof Thresholds, string>;
 
 const FIELDS: { key: keyof Thresholds; label: string; unit?: string; step: string; hint: string }[] = [
-  { key: "cer_auto", label: "Accept below CER", step: "0.01",
-    hint: "When model A and B differ less than this, the clip is kept without review." },
-  { key: "cer_fallback", label: "Translate above CER", step: "0.01",
-    hint: "Above this the clip is transcribed in English and translated by the LLM. In between it is flagged." },
+  { key: "min_bn_ratio", label: "Minimum Bangla script share", step: "0.05",
+    hint: "Transcripts with less Bangla script than this are transcribed in English and translated by the LLM." },
+  { key: "min_chars_per_s", label: "Slowest speaking rate", unit: "chars/s", step: "0.5",
+    hint: "Fewer characters per second than this means words were missed, so the clip is translated instead." },
+  { key: "max_chars_per_s", label: "Fastest speaking rate", unit: "chars/s", step: "0.5",
+    hint: "More than this means the model made text up, so the clip is translated instead." },
+  { key: "max_word_repeat", label: "Repeated word limit", step: "1",
+    hint: "One word repeated this many times in a row is treated as a transcription loop." },
   { key: "dnsmos_min", label: "Minimum DNSMOS", step: "0.1", hint: "Overall quality score, 1 to 5." },
   { key: "speaker_sim_min", label: "Minimum speaker similarity", step: "0.01",
     hint: "Clips less like the main speaker than this are dropped." },
@@ -24,8 +28,7 @@ const MODEL_LABEL: Record<keyof StageModels, string> = {
   vad: "Speech detection",
   dnsmos: "Audio quality",
   speaker: "Speaker check",
-  model_a: "Transcription, model A",
-  model_b: "Transcription, model B",
+  model_a: "Transcription",
   translate: "English transcription",
   llm: "Punctuation and translation",
 };
@@ -40,8 +43,8 @@ export function validateThresholds(d: Draft): Partial<Record<keyof Thresholds, s
   for (const { key } of FIELDS) {
     if (d[key].trim() === "" || !Number.isFinite(n(key)) || n(key) < 0) err[key] = "Enter a number of 0 or more.";
   }
-  if (!err.cer_auto && !err.cer_fallback && n("cer_auto") > n("cer_fallback"))
-    err.cer_fallback = "Must be at least the accept threshold.";
+  if (!err.min_chars_per_s && !err.max_chars_per_s && n("min_chars_per_s") >= n("max_chars_per_s"))
+    err.max_chars_per_s = "Must be faster than the slowest rate.";
   if (!err.clip_min_s && !err.clip_max_s && n("clip_min_s") >= n("clip_max_s"))
     err.clip_max_s = "Must be longer than the shortest clip.";
   if (!err.demucs_segment_s && n("demucs_segment_s") <= 0) err.demucs_segment_s = "Must be more than 0.";

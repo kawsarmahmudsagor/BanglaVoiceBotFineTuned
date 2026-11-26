@@ -7,7 +7,7 @@ import { Waveform } from "./Waveform";
 export const SAVE_DEBOUNCE_MS = 500;
 
 export const REASON_LABEL: Record<ReviewReason, string> = {
-  cer: "Models disagree",
+  cer: "Flagged",
   translated: "Translated",
   pending_llm: "Waiting for LLM",
 };
@@ -223,6 +223,8 @@ export function ReviewCard({ clip, onApprove, onReject, onNext, onPrev, onEdit, 
     return () => window.removeEventListener("keydown", on);
   }, []);
 
+  // text_b exists only in datasets transcribed before model B was removed
+  const hasB = clip.text_b != null;
   const diff = wordDiff(clip.text_a, clip.text_b);
   const translated = clip.text_source === "translated" || clip.reason !== "cer";
   const titleId = `clip-${clip.id}-title`;
@@ -254,10 +256,12 @@ export function ReviewCard({ clip, onApprove, onReject, onNext, onPrev, onEdit, 
           <span className={`pill pill--${clip.status}`}>{clip.status}</span>
         )}
         <dl className="rcard__metrics num">
-          <div>
-            <dt>CER</dt>
-            <dd>{clip.cer == null ? "–" : `${Math.round(clip.cer * 100)}%`}</dd>
-          </div>
+          {clip.cer != null && (
+            <div>
+              <dt>CER</dt>
+              <dd>{`${Math.round(clip.cer * 100)}%`}</dd>
+            </div>
+          )}
           <div>
             <dt>DNSMOS</dt>
             <dd>{clip.dnsmos == null ? "–" : clip.dnsmos.toFixed(2)}</dd>
@@ -282,18 +286,20 @@ export function ReviewCard({ clip, onApprove, onReject, onNext, onPrev, onEdit, 
       </div>
 
       <div className="rcard__compare">
-        <section aria-label="Model A transcript">
-          <h3>Model A</h3>
+        <section aria-label="Transcript">
+          <h3>Transcript</h3>
           <p lang="bn">
-            <DiffText parts={diff.a} side="a" />
+            {hasB ? <DiffText parts={diff.a} side="a" /> : clip.text_a || <span className="muted">No text</span>}
           </p>
         </section>
-        <section aria-label="Model B transcript">
-          <h3>Model B</h3>
-          <p lang="bn">
-            <DiffText parts={diff.b} side="b" />
-          </p>
-        </section>
+        {hasB && (
+          <section aria-label="Model B transcript">
+            <h3>Model B</h3>
+            <p lang="bn">
+              <DiffText parts={diff.b} side="b" />
+            </p>
+          </section>
+        )}
       </div>
 
       {translated && (

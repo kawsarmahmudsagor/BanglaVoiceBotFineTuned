@@ -25,7 +25,6 @@ def _default_runner(settings: Settings, store: Store, bus: EventBus):
         "demucs": separate.load_demucs,
         "ecapa": quality.load_ecapa,
         "model_a": transcribe.load_model_a,
-        "model_b": transcribe.load_model_b,
         "whisper_translate": fallback.load_whisper_translate,
     })
     stages = StageFns.default()

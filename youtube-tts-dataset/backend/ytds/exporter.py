@@ -71,8 +71,8 @@ def _git_commit() -> str | None:
 
 def _model_ids() -> dict:
     from .pipeline.fallback import TRANSLATE_MODEL
-    from .pipeline.transcribe import MODEL_A, MODEL_B
-    return {"model_a": MODEL_A, "model_b": MODEL_B, "fallback": TRANSLATE_MODEL,
+    from .pipeline.transcribe import MODEL_A
+    return {"model_a": MODEL_A, "fallback": TRANSLATE_MODEL,
             "separation": "htdemucs", "vad": "silero-vad"}
 
 

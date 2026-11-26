@@ -70,19 +70,24 @@ restart resumes where it stopped.
 | 2 | separate | Demucs `htdemucs` vocals stem, 7 s segments (halved on OOM) | GPU |
 | 3 | segment | Silero VAD; merge pauses < 300 ms; clips 2–15 s | CPU |
 | 4 | quality | DNSMOS P.835 OVRL (drop < 3.0); ECAPA speaker similarity to the video centroid (drop < 0.60) | CPU / GPU |
-| 5 | transcribe | A: `SayedShaun/Qwen3-ASR-0.6B-Bengali`; B: `mozilla-ai/whisper-large-v3-turbo-bn` (CT2 int8_float16); route by CER(A, B) | GPU |
+| 5 | transcribe | `SayedShaun/Qwen3-ASR-0.6B-Bengali` (English glosses in `{}` stripped); route by transcript checks | GPU |
 | 6 | fallback | faster-whisper `large-v3` translate → English → LLM → Bangla; tagged `translated` | GPU + LLM |
 | 7 | punctuate | LLM adds punctuation to A's text; rejected if any word changes (`no_punct`) | LLM |
 | 8 | review | manual, in the UI | — |
 | 9 | export | per dataset, on demand | CPU |
 
-Routing after transcription (CER after `bn_normalize(mode="asr")`):
+Routing after transcription. A transcript goes to the fallback when any check fails; otherwise it is `auto`
+(exported as is):
 
-| Condition | Status |
+| Check | Fails when |
 |---|---|
-| CER ≤ `cer_auto` | `auto` — exported as is |
-| `cer_auto` < CER ≤ `cer_fallback` | `flagged` — review queue |
-| CER > `cer_fallback` or A empty | fallback → `needs_review` (translated) — review queue; `pending_llm` while the LLM is down |
+| empty | no text after `bn_normalize(mode="asr")` |
+| script | Bangla characters are less than `min_bn_ratio` of the letters (English loanwords in Latin script pass) |
+| speaking rate | characters per second outside `min_chars_per_s`–`max_chars_per_s` (missed words or made-up text) |
+| loop | one word repeated `max_word_repeat` times in a row |
+
+Fallback clips become `needs_review` (translated) in the review queue, or `pending_llm` while the LLM is down.
+Datasets transcribed before model B was removed may still hold `flagged` clips; they review as before.
 
 A video gets a "poor STT" warning when over half its clips fall back, and a "<30 s clean audio" warning
 when little survives.
@@ -91,8 +96,9 @@ when little survives.
 
 | Setting | Default |
 |---|---|
-| `cer_auto` | 0.05 |
-| `cer_fallback` | 0.30 |
+| `min_bn_ratio` | 0.5 |
+| `min_chars_per_s` / `max_chars_per_s` | 3.0 / 30.0 |
+| `max_word_repeat` | 6 |
 | `dnsmos_min` (OVRL) | 3.0 |
 | `speaker_sim_min` | 0.60 |
 | `clip_min_s` / `clip_max_s` | 2.0 / 15.0 |

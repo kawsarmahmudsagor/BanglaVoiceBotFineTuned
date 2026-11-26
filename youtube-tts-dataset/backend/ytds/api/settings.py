@@ -44,7 +44,7 @@ def stage_models(llm_model: str) -> dict:
 
     ids = _model_ids()
     return {"separate": ids["separation"], "vad": ids["vad"], "dnsmos": DNSMOS_MODEL, "speaker": SPEAKER_MODEL,
-            "model_a": ids["model_a"], "model_b": ids["model_b"], "translate": ids["fallback"], "llm": llm_model}
+            "model_a": ids["model_a"], "translate": ids["fallback"], "llm": llm_model}
 
 
 def _settings_body(request: Request) -> dict:

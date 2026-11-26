@@ -64,8 +64,8 @@ def test_update_rejects_unknown_columns(store):
 
 def test_thresholds_default_then_saved(store):
     assert store.get_thresholds() == Thresholds()
-    store.set_thresholds(Thresholds(cer_auto=0.1))
-    assert store.get_thresholds().cer_auto == 0.1
+    store.set_thresholds(Thresholds(min_bn_ratio=0.7))
+    assert store.get_thresholds().min_bn_ratio == 0.7
 
 
 def test_settings_and_datasets(store):

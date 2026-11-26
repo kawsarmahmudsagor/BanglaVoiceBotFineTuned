@@ -271,14 +271,14 @@ def test_settings_roundtrip_updates_live_llm(env, tmp_path):
     client, store, _, runner, settings = env
     got = client.get("/api/settings").json()
     assert got["llm_host"] == settings.ollama_host and got["llm_model"] == settings.llm_model
-    assert got["thresholds"]["cer_auto"] == 0.05 and got["cookies_path"] == ""
+    assert got["thresholds"]["min_bn_ratio"] == 0.5 and got["cookies_path"] == ""
 
     cookies = tmp_path / "cookies.txt"
     cookies.write_text("# Netscape HTTP Cookie File\n")
-    body = {"thresholds": {**got["thresholds"], "cer_auto": 0.1}, "cookies_path": str(cookies),
+    body = {"thresholds": {**got["thresholds"], "min_bn_ratio": 0.7}, "cookies_path": str(cookies),
             "llm_host": "http://h:1", "llm_model": "m2"}
     assert client.put("/api/settings", json=body).status_code == 200
-    assert store.get_thresholds().cer_auto == 0.1 and store.get_setting("cookies_path") == str(cookies)
+    assert store.get_thresholds().min_bn_ratio == 0.7 and store.get_setting("cookies_path") == str(cookies)
     assert (runner.llm.host, runner.llm.model) == ("http://h:1", "m2")
     assert client.put("/api/settings", json={"cookies_path": str(tmp_path / "missing.txt")}).status_code == 400
 
@@ -312,7 +312,7 @@ def test_default_runner_wiring_passes_cookies_and_store_llm(tmp_path, monkeypatc
     app = create_app(Settings(data_dir=tmp_path), store=store, bus=EventBus())
     runner = app.state.runner
     assert isinstance(runner, JobRunner) and runner.llm.model == "from-settings-page"
-    assert sorted(runner.gpu._loaders) == ["demucs", "ecapa", "model_a", "model_b", "whisper_translate"]
+    assert sorted(runner.gpu._loaders) == ["demucs", "ecapa", "model_a", "whisper_translate"]
 
     runner.stages.download("v", "u", tmp_path, lambda d, t: None)
     store.set_setting("cookies_path", str(tmp_path / "cookies.txt"))
@@ -374,7 +374,7 @@ def test_settings_lists_stage_models(env):
     client = env[0]
     client.put("/api/settings", json={"llm_model": "m3"})
     models = client.get("/api/settings").json()["models"]
-    assert set(models) == {"separate", "vad", "dnsmos", "speaker", "model_a", "model_b", "translate", "llm"}
+    assert set(models) == {"separate", "vad", "dnsmos", "speaker", "model_a", "translate", "llm"}
     assert models["separate"] == "htdemucs" and models["llm"] == "m3"
     assert models["model_a"] == "SayedShaun/Qwen3-ASR-0.6B-Bengali"
 

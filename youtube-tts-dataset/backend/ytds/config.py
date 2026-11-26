@@ -13,8 +13,10 @@ REPO_ROOT = SUB_ROOT.parent
 
 
 class Thresholds(BaseModel):
-    cer_auto: float = 0.05
-    cer_fallback: float = 0.30
+    min_bn_ratio: float = 0.5        # below this share of Bangla script, the transcript goes to the fallback
+    min_chars_per_s: float = 3.0     # plausible speaking rate, in Bangla characters per second of audio
+    max_chars_per_s: float = 30.0
+    max_word_repeat: int = 6         # one word this many times in a row is a hallucination loop
     dnsmos_min: float = 3.0
     speaker_sim_min: float = 0.60
     clip_min_s: float = 2.0
