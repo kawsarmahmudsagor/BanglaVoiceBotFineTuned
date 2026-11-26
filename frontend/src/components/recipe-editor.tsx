@@ -9,11 +9,12 @@ import { SplitFields, type SplitDataset } from "@/components/split-fields";
 import { StartFromPicker } from "@/components/start-from-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getDataset, getVersion, listBackends, listDatasets, saveRecipe, validateRecipe } from "@/lib/api";
+import { getCatalogEntry, getDataset, getVersion, listBackends, listCatalog, listDatasets, saveRecipe, validateRecipe } from "@/lib/api";
+import { applyModel, modelOptions, TASK_LABELS } from "@/lib/model-options";
 import { groupErrors, type RecipeField } from "@/lib/recipe-errors";
 import { DEFAULT_SPLIT, ratiosValid } from "@/lib/splits";
 import { specToYaml, yamlToSpec } from "@/lib/recipe-yaml";
-import type { DatasetDetail, DatasetListItem, InitFrom, RecipeBody, SplitConfig, Task } from "@/lib/types";
+import type { CatalogEntry, CatalogSummary, DatasetDetail, DatasetListItem, InitFrom, RecipeBody, SplitConfig, Task } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Spec = Record<string, unknown>;
@@ -21,6 +22,8 @@ interface TaskCap { methods: string[]; export_formats: string[]; schema: JsonSch
 interface BackendCaps { name: string; label: string; tasks: Record<string, TaskCap> }
 
 const TASKS: Task[] = ["llm-sft", "asr", "tts"];
+const DEFAULT_DATASET = "bengaliai-200h";
+const CUSTOM = "__custom__";
 const SELECT_CLASS = "h-9 w-full rounded-md border border-input bg-card px-2 text-sm";
 const EMPTY_SPEC: Spec = {
   name: "",
@@ -81,6 +84,9 @@ export function RecipeEditor({ initial, notice }: { initial?: Spec; notice?: str
   const [yamlError, setYamlError] = useState<string | null>(null);
   const [backends, setBackends] = useState<BackendCaps[]>([]);
   const [datasets, setDatasets] = useState<DatasetListItem[]>([]);
+  const [catalog, setCatalog] = useState<CatalogSummary[]>([]);
+  // True after "Custom…" is picked, so the free-text model field stays open while it is empty or unlisted.
+  const [customModel, setCustomModel] = useState(false);
   const [details, setDetails] = useState<Record<string, DatasetDetail>>({});
   const [errors, setErrors] = useState<string[]>([]);
   const [validating, setValidating] = useState(true);
@@ -100,6 +106,10 @@ export function RecipeEditor({ initial, notice }: { initial?: Spec; notice?: str
         setDatasets(d);
       })
       .catch((e) => active && setLoadError(errMsg(e)));
+    // The model list is a convenience: without the catalog, the backends' model lists and Custom still work.
+    listCatalog()
+      .then((c) => active && setCatalog(c.entries))
+      .catch(() => active && setCatalog([]));
     return () => {
       active = false;
     };
@@ -127,7 +137,8 @@ export function RecipeEditor({ initial, notice }: { initial?: Spec; notice?: str
     );
   const trainRefs = refs(taskDatasets.filter((d) => !d.eval_only));
   const evalRefs = refs(taskDatasets);
-  const firstTrain = trainRefs[0] ?? "";
+  // the default dataset (seeded by scripts/seed_default_dataset.sh) wins over alphabetical order
+  const firstTrain = trainRefs.find((r) => r.startsWith(`${DEFAULT_DATASET}@`)) ?? trainRefs[0] ?? "";
 
   // Form edits rewrite the YAML panel; YAML edits leave the user's text alone.
   const updateSpec = (fn: (s: Spec) => Spec) => {
@@ -186,9 +197,40 @@ export function RecipeEditor({ initial, notice }: { initial?: Spec; notice?: str
   const cap = backends.find((b) => b.name === spec.backend)?.tasks?.[task];
 
   function changeTask(t: string) {
+    setCustomModel(false);
     updateSpec((s) => ({
-      ...s, task: t, backend: "", datasets: { train: "", eval: null }, method: { type: "" }, hparams: {}, export: [],
+      ...s, task: t, backend: "", base_model: "", base_model_meta: { license: "", commercial_ok: false },
+      datasets: { train: "", eval: null }, method: { type: "" }, hparams: {}, export: [],
     }));
+  }
+
+  const models = modelOptions(task, catalog, backends);
+  const baseModel = str(spec.base_model);
+  const listed = models.some((m) => m.value === baseModel);
+  const showCustom = customModel || (baseModel !== "" && !listed);
+  const modelSelectValue = customModel ? CUSTOM : baseModel;
+
+  async function changeModel(value: string) {
+    if (value === CUSTOM) {
+      setCustomModel(true);
+      return;
+    }
+    setCustomModel(false);
+    const opt = models.find((m) => m.value === value);
+    if (!opt) {
+      setField("base_model", value);
+      return;
+    }
+    let template: CatalogEntry["recipe_template"] | undefined;
+    if (opt.entry) {
+      try {
+        template = (await getCatalogEntry(opt.entry.id)).recipe_template;
+      } catch {
+        template = undefined; // fall back to a backend that lists the model
+      }
+    }
+    // Skip a stale fetch: another model was picked while this entry was loading.
+    updateSpec((s) => (str(s.base_model) === baseModel || s.base_model === value ? applyModel(s, opt, backends, template) : s));
   }
   function changeBackend(name: string) {
     const c = backends.find((b) => b.name === name)?.tasks?.[task];
@@ -279,13 +321,30 @@ export function RecipeEditor({ initial, notice }: { initial?: Spec; notice?: str
               {(p) => <Input {...p} value={str(spec.name)} onChange={(e) => setField("name", e.target.value)} placeholder="my-config" />}
             </Field>
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Task">
+              <Field label="Type">
                 {(p) => (
                   <select {...p} className={SELECT_CLASS} value={task} onChange={(e) => changeTask(e.target.value)}>
-                    {TASKS.map((t) => <option key={t} value={t}>{t}</option>)}
+                    {TASKS.map((t) => <option key={t} value={t}>{TASK_LABELS[t] ?? t}</option>)}
                   </select>
                 )}
               </Field>
+              <Field label="Model" errors={showCustom ? undefined : err("base_model")}>
+                {(p) => (
+                  <select {...p} className={SELECT_CLASS} value={modelSelectValue} onChange={(e) => void changeModel(e.target.value)}>
+                    <option value="">(select)</option>
+                    {baseModel && !listed && !customModel && <option value={baseModel}>{baseModel}</option>}
+                    {models.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+                    <option value={CUSTOM}>Custom…</option>
+                  </select>
+                )}
+              </Field>
+            </div>
+            {showCustom && (
+              <Field label="Custom model (Hugging Face repo or path)" errors={err("base_model")}>
+                {(p) => <Input {...p} className="font-mono" value={baseModel} onChange={(e) => setField("base_model", e.target.value)} placeholder="org/model" />}
+              </Field>
+            )}
+            <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Backend" errors={err("backend")}>
                 {(p) => (
                   <select {...p} className={SELECT_CLASS} value={str(spec.backend)} onChange={(e) => changeBackend(e.target.value)}>
@@ -294,18 +353,15 @@ export function RecipeEditor({ initial, notice }: { initial?: Spec; notice?: str
                   </select>
                 )}
               </Field>
+              <Field label="Method" errors={err("method")}>
+                {(p) => (
+                  <select {...p} className={SELECT_CLASS} value={str(methodObj.type)} onChange={(e) => setField("method", { ...methodObj, type: e.target.value })}>
+                    <option value="">(select)</option>
+                    {methods.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                )}
+              </Field>
             </div>
-            <Field label="Method" errors={err("method")}>
-              {(p) => (
-                <select {...p} className={SELECT_CLASS} value={str(methodObj.type)} onChange={(e) => setField("method", { ...methodObj, type: e.target.value })}>
-                  <option value="">(select)</option>
-                  {methods.map((m) => <option key={m} value={m}>{m}</option>)}
-                </select>
-              )}
-            </Field>
-            <Field label="Base model" errors={err("base_model")}>
-              {(p) => <Input {...p} className="font-mono" value={str(spec.base_model)} onChange={(e) => setField("base_model", e.target.value)} />}
-            </Field>
             <StartFromPicker
               task={task}
               backend={str(spec.backend)}
