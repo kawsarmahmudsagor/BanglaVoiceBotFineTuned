@@ -78,3 +78,20 @@ def test_settings_and_datasets(store):
     assert store.get_dataset(ds)["speaker"] == "spk"
     assert store.get_dataset("nope") is None
     assert [d["id"] for d in store.list_datasets()] == [ds]
+
+
+def test_get_clip_speaker_and_delete_video(store):
+    ds = store.create_dataset("d", "")
+    store.add_video(ds, "v1", "u1")
+    store.add_video(ds, "v2", "u2")
+    store.mark_stage(ds, "v1", "download", True)
+    store.replace_clips(ds, "v1", [_clip(0)])
+    store.replace_clips(ds, "v2", [_clip(0, video="v2")])
+    assert store.get_clip(ds, "v1_0000")["video_id"] == "v1"
+    assert store.get_clip(ds, "nope") is None
+    store.set_dataset_speaker(ds, "Rahim")
+    assert store.get_dataset(ds)["speaker"] == "Rahim"
+    store.delete_video(ds, "v1")
+    assert [v["id"] for v in store.list_videos(ds)] == ["v2"]
+    assert [c["id"] for c in store.clips(ds)] == ["v2_0000"]
+    assert not store.stage_done(ds, "v1", "download")

@@ -87,6 +87,9 @@ class Store:
     def list_datasets(self) -> list[dict]:
         return self._read("SELECT * FROM datasets ORDER BY created, id")
 
+    def set_dataset_speaker(self, dataset_id: str, speaker: str) -> None:
+        self._write("UPDATE datasets SET speaker=? WHERE id=?", (speaker, dataset_id))
+
     # videos
     def add_video(self, dataset_id: str, video_id: str, url: str) -> bool:
         cur = self._write(
@@ -107,6 +110,12 @@ class Store:
 
     def list_videos(self, dataset_id: str) -> list[dict]:
         return self._read("SELECT * FROM videos WHERE dataset_id=? ORDER BY rowid", (dataset_id,))
+
+    def delete_video(self, dataset_id: str, video_id: str) -> None:
+        """Remove the video with its stage marks and clips."""
+        with self._lock, self._db:
+            for table, col in (("videos", "id"), ("stages", "video_id"), ("clips", "video_id")):
+                self._db.execute(f"DELETE FROM {table} WHERE dataset_id=? AND {col}=?", (dataset_id, video_id))
 
     # stages
     def mark_stage(self, dataset_id: str, video_id: str, stage: Stage, done: bool) -> None:
@@ -148,6 +157,10 @@ class Store:
             f"UPDATE clips SET {sets} WHERE dataset_id=? AND id=?",
             (*fields.values(), dataset_id, clip_id),
         )
+
+    def get_clip(self, dataset_id: str, clip_id: str) -> dict | None:
+        rows = self._read("SELECT * FROM clips WHERE dataset_id=? AND id=?", (dataset_id, clip_id))
+        return rows[0] if rows else None
 
     def clips(
         self,
