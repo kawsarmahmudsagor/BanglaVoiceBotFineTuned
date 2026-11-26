@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -72,3 +72,12 @@ def load_settings(
     if merged.get("YTDS_EXPORT_DIR"):
         kw["export_dir"] = _resolve_dir(merged["YTDS_EXPORT_DIR"])
     return Settings(**kw)
+
+
+def export_hf_token(settings: Settings, environ: MutableMapping[str, str] | None = None) -> None:
+    """huggingface_hub reads HF_TOKEN from the process environment only, so a token that came from a .env file
+    is copied there. A token already set in the environment wins."""
+    if environ is None:
+        environ = os.environ
+    if settings.hf_token:
+        environ.setdefault("HF_TOKEN", settings.hf_token)

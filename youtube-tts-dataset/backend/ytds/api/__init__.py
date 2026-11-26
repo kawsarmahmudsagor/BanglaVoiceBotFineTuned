@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from ..config import SUB_ROOT, Settings
+from ..config import SUB_ROOT, Settings, export_hf_token
 from ..events import EventBus
 from ..store import Store
 from . import dataset, jobs, review, settings as settings_routes, ws
@@ -42,6 +42,7 @@ def _default_runner(settings: Settings, store: Store, bus: EventBus):
 
 def create_app(settings: Settings, runner=None, store: Store | None = None, bus: EventBus | None = None,
                ) -> FastAPI:
+    export_hf_token(settings)  # before any model loader can reach huggingface_hub
     store = store or Store(Path(settings.data_dir) / "ytds.db")
     bus = bus or EventBus()
     runner = runner or _default_runner(settings, store, bus)

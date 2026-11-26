@@ -42,3 +42,31 @@ def test_defaults(tmp_path):
     assert t.dnsmos_min == 3.0
     assert t.speaker_sim_min == 0.60
     assert (t.clip_min_s, t.clip_max_s, t.merge_gap_s, t.demucs_segment_s) == (2.0, 15.0, 0.30, 7.0)
+
+
+def test_export_hf_token_sets_only_when_missing(tmp_path):
+    from ytds.config import Settings, export_hf_token
+
+    env: dict[str, str] = {}
+    export_hf_token(Settings(hf_token="from-dotenv"), env)
+    assert env == {"HF_TOKEN": "from-dotenv"}
+
+    env = {"HF_TOKEN": "from-process"}
+    export_hf_token(Settings(hf_token="from-dotenv"), env)
+    assert env == {"HF_TOKEN": "from-process"}
+
+    env = {}
+    export_hf_token(Settings(), env)
+    assert env == {}
+
+
+def test_create_app_exports_hf_token(tmp_path, monkeypatch):
+    import os
+
+    from ytds.api import create_app
+    from ytds.config import Settings
+    from ytds.store import Store
+
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    create_app(Settings(data_dir=tmp_path, hf_token="tok"), runner=object(), store=Store(tmp_path / "db"))
+    assert os.environ["HF_TOKEN"] == "tok"
