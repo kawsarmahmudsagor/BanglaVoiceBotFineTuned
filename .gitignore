@@ -23,3 +23,6 @@ var/
 !.env.example
 unsloth_compiled_cache/
 realtimesst.log
+
+# ytds frontend build output
+youtube-tts-dataset/frontend/dist/
