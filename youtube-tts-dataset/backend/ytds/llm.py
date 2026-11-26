@@ -1,6 +1,7 @@
-"""Minimal Ollama client (local daemon or ollama.com cloud) with retry/backoff."""
+"""Minimal Ollama client (local daemon or ollama.com cloud) with retry/backoff and a circuit breaker."""
 from __future__ import annotations
 
+import threading
 import time
 from typing import Callable
 
@@ -17,6 +18,8 @@ TRANSLATE_SYSTEM = (
 )
 
 BACKOFF = (1, 2, 4)
+BREAKER_THRESHOLD = 3      # consecutive LlmUnavailable calls that open the circuit
+BREAKER_COOLDOWN_S = 60.0  # while open, chat() fails at once without a network call
 
 
 class LlmUnavailable(RuntimeError):
@@ -26,10 +29,15 @@ class LlmUnavailable(RuntimeError):
 class OllamaClient:
     def __init__(self, host: str, model: str, api_key: str | None,
                  transport: httpx.BaseTransport | None = None,
-                 sleep: Callable[[float], None] = time.sleep, timeout: float = 120.0):
+                 sleep: Callable[[float], None] = time.sleep, timeout: float = 120.0,
+                 clock: Callable[[], float] = time.monotonic):
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         self.model = model
         self._sleep = sleep
+        self._clock = clock
+        self._lock = threading.Lock()  # chat() is called from the pool threads and the GPU thread
+        self._failures = 0
+        self._open_until = 0.0
         self._http = httpx.Client(base_url=host.rstrip("/"), headers=headers, transport=transport, timeout=timeout)
 
     def show(self) -> bool:
@@ -39,6 +47,25 @@ class OllamaClient:
             return False
 
     def chat(self, system: str, user: str) -> str:
+        """After BREAKER_THRESHOLD consecutive failures the circuit opens: for BREAKER_COOLDOWN_S every call
+        raises LlmUnavailable at once, so a whole video falls back to no_punct / pending_llm quickly. After the
+        cooldown one call probes again; a failure reopens the circuit, a success closes it."""
+        with self._lock:
+            if self._clock() < self._open_until:
+                raise LlmUnavailable("circuit open: LLM failed repeatedly, retrying later")
+        try:
+            out = self._chat(system, user)
+        except LlmUnavailable:
+            with self._lock:
+                self._failures += 1
+                if self._failures >= BREAKER_THRESHOLD:
+                    self._open_until = self._clock() + BREAKER_COOLDOWN_S
+            raise
+        with self._lock:
+            self._failures, self._open_until = 0, 0.0
+        return out
+
+    def _chat(self, system: str, user: str) -> str:
         payload = {
             "model": self.model,
             "stream": False,

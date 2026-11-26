@@ -124,3 +124,61 @@ def test_429_retried():
 
     assert _client(handler).chat("s", "u") == "hi"
     assert n["i"] == 2
+
+
+class Clock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+def test_circuit_opens_after_consecutive_failures_and_recovers_after_cooldown():
+    from ytds.llm import BREAKER_COOLDOWN_S, BREAKER_THRESHOLD
+
+    clock, calls, state = Clock(), [], {"up": False}
+
+    def handler(request):
+        calls.append(1)
+        return _ok(request) if state["up"] else httpx.Response(402)
+
+    c = OllamaClient("http://x", "m", None, transport=httpx.MockTransport(handler), sleep=lambda s: None,
+                     clock=clock)
+    for _ in range(BREAKER_THRESHOLD):
+        with pytest.raises(LlmUnavailable):
+            c.chat("s", "u")
+    assert len(calls) == BREAKER_THRESHOLD
+
+    with pytest.raises(LlmUnavailable, match="circuit open"):  # fails fast, no network call
+        c.chat("s", "u")
+    assert len(calls) == BREAKER_THRESHOLD
+
+    clock.t += BREAKER_COOLDOWN_S + 1  # half-open: one probe goes out and fails, so it reopens
+    with pytest.raises(LlmUnavailable):
+        c.chat("s", "u")
+    assert len(calls) == BREAKER_THRESHOLD + 1
+    with pytest.raises(LlmUnavailable, match="circuit open"):
+        c.chat("s", "u")
+
+    clock.t += BREAKER_COOLDOWN_S + 1
+    state["up"] = True
+    assert c.chat("s", "u") == "hi"
+    assert c.chat("s", "u") == "hi"
+
+
+def test_success_resets_failure_count():
+    from ytds.llm import BREAKER_THRESHOLD
+
+    seq = iter([402] * (BREAKER_THRESHOLD - 1) + [200] + [402] * (BREAKER_THRESHOLD - 1) + [200])
+
+    def handler(request):
+        code = next(seq)
+        return _ok(request) if code == 200 else httpx.Response(code)
+
+    c = _client(handler)
+    for _ in range(2):
+        for _ in range(BREAKER_THRESHOLD - 1):
+            with pytest.raises(LlmUnavailable):
+                c.chat("s", "u")
+        assert c.chat("s", "u") == "hi"  # never reached the threshold in a row
