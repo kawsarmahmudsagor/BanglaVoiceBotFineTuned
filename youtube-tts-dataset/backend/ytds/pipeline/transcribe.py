@@ -4,6 +4,7 @@ Model loaders are plain functions; the GPU worker's loaders are registered by th
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Callable
 
@@ -18,6 +19,9 @@ Transcriber = Callable[[list[np.ndarray]], list[str]]
 MODEL_A = "SayedShaun/Qwen3-ASR-0.6B-Bengali"
 MODEL_B = "mozilla-ai/whisper-large-v3-turbo-bn"
 MODEL_B_COMPUTE = "int8_float16"
+# Whisper's decoder holds at most 448 tokens and Bangla costs about 2 tokens per character, so a 15 s
+# clip (about 450 tokens) gets cut off mid-word. Model B decodes clips in windows of at most this length.
+MODEL_B_WINDOW_S = 6.0
 BATCH = 8
 
 # --- Ported from backend/workers/backends/qwen-asr/mlops_backend/prompt.py and prepare/qwen_asr.py
@@ -61,8 +65,27 @@ def max_new_tokens(max_audio_s: float) -> int:
 
 def split_transcript(decoded: str) -> str:
     """Generated text -> transcript: the part after the marker (the whole text when the marker is absent)."""
-    return decoded.split(MARKER, 1)[-1].strip()
+    return strip_glosses(decoded.split(MARKER, 1)[-1])
 # --- end of port
+
+_GLOSS = re.compile(r"\s*\{[^{}]*\}")
+
+
+def strip_glosses(text: str) -> str:
+    """Drop the English glosses model A sometimes adds after loanwords ("স্কিল {Skill}" -> "স্কিল")."""
+    return re.sub(r"\s+", " ", _GLOSS.sub("", text)).strip()
+
+
+def split_windows(audio: np.ndarray, max_s: float = MODEL_B_WINDOW_S, frame_s: float = 0.02) -> list[np.ndarray]:
+    """Split `audio` into pieces of at most `max_s` seconds, each cut at the quietest 20 ms frame in the
+    middle 40 % of the piece being split (so cuts fall in pauses between words where there are any)."""
+    if len(audio) <= max_s * SR:
+        return [audio]
+    frame = max(1, int(frame_s * SR))
+    lo, hi = int(len(audio) * 0.3) // frame, int(len(audio) * 0.7) // frame
+    energy = [float(np.mean(np.square(audio[i * frame:(i + 1) * frame]))) for i in range(lo, hi)]
+    cut = (lo + int(np.argmin(energy))) * frame + frame // 2
+    return split_windows(audio[:cut], max_s, frame_s) + split_windows(audio[cut:], max_s, frame_s)
 
 
 def in_batches(model: Transcriber, audios: list[np.ndarray],
@@ -126,8 +149,12 @@ def load_model_b() -> Transcriber:
     def transcribe(audios: list[np.ndarray]) -> list[str]:
         texts = []
         for a in audios:
-            segments, _ = model.transcribe(a, language="bn", beam_size=1)
-            texts.append("".join(s.text for s in segments).strip())
+            parts = []
+            for w in split_windows(a):
+                segments, _ = model.transcribe(w, language="bn", beam_size=1, without_timestamps=True,
+                                               condition_on_previous_text=False)
+                parts.append("".join(s.text for s in segments).strip())
+            texts.append(" ".join(p for p in parts if p))
         return texts
 
     return transcribe

@@ -98,3 +98,26 @@ def test_model_b_loads_and_transcribes():
     out = model([load_16k(BN_CLIP)])
     print("model_b:", out)
     assert len(out) == 1 and any("ঀ" <= ch <= "৿" for ch in out[0])
+
+
+def test_split_windows_short_clip_untouched():
+    a = np.ones(int(5 * 16000), dtype=np.float32)
+    assert [len(w) for w in tr.split_windows(a)] == [len(a)]
+
+
+def test_split_windows_cuts_long_clip_at_quietest_point():
+    sr = 16000
+    loud = np.full(int(7.0 * sr), 0.5, dtype=np.float32)
+    quiet = np.zeros(int(0.2 * sr), dtype=np.float32)
+    a = np.concatenate([loud, quiet, loud])  # 14.2 s, silence in the middle
+    ws = tr.split_windows(a, max_s=tr.MODEL_B_WINDOW_S)
+    assert sum(len(w) for w in ws) == len(a)
+    assert all(len(w) <= tr.MODEL_B_WINDOW_S * sr for w in ws)
+    cuts = np.cumsum([len(w) for w in ws])[:-1]
+    assert any(int(7.0 * sr) <= c <= int(7.2 * sr) for c in cuts)  # one cut lands in the silent gap
+
+
+def test_strip_glosses_removes_braced_english():
+    assert tr.strip_glosses("একটা স্কিল {Skill} দুইটা") == "একটা স্কিল দুইটা"
+    assert tr.strip_glosses("ইনফরমেশন {information} টা") == "ইনফরমেশন টা"
+    assert tr.strip_glosses("কোনো কিছু") == "কোনো কিছু"
