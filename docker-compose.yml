@@ -65,7 +65,7 @@ services:
       BACKENDS_ROOT: ${REPO_ROOT:?set REPO_ROOT in .env}/backend/workers/backends
       RECIPES_DIR: ${REPO_ROOT}/recipes
       CATALOG_DIR: ${REPO_ROOT}/catalog
-      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:${WEB_PORT:-3000}}
       MLFLOW_TRACKING_URI: http://mlflow:5000
       DISK_WARN_GB: ${DISK_WARN_GB:-20}
       DISK_MIN_GB: ${DISK_MIN_GB:-10}
@@ -96,7 +96,7 @@ services:
     depends_on:
       - api
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
 
 volumes:
   pgdata:

@@ -1,0 +1,33 @@
+# Generated from the platform database. Edit in the UI.
+name: training-1-whisper-v3-turbo-bn
+task: asr
+backend: hf
+base_model: mozilla-ai/whisper-large-v3-turbo-bn
+base_model_meta:
+  license: ''
+  commercial_ok: false
+datasets:
+  train: bengaliai-200h@v1
+  eval: bengaliai-200h@v1
+  split:
+    use_dataset_splits: false
+    ratios:
+      train: 0.9
+      val: 0.05
+      test: 0.05
+method:
+  type: full
+hparams:
+  learning_rate: 1.0e-05
+  epochs: 2
+  batch_size: 8
+  grad_accum: 4
+  warmup_steps: 500
+  gradient_checkpointing: true
+  eval:
+    baseline: true
+    max_samples: 2000
+    max_val_samples: 1000
+export:
+- ct2
+init_from: null
