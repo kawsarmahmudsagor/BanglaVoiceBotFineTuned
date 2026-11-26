@@ -1,0 +1,27 @@
+[project]
+name = "whisper-stt-playground"
+version = "0.1.0"
+description = "Gradio UI to test Whisper large-v3-turbo Bangla STT quality and latency"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "bangla-voice-backend[audio]",
+  "torch==2.7.1",
+  "transformers",
+  "faster-whisper",
+  "ctranslate2",
+  "gradio>=5",
+  "RealtimeSTT[faster-whisper]",
+]
+
+[tool.uv]
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+
+[tool.uv.sources]
+RealtimeSTT = { git = "https://github.com/kawsarmahmudsagor/LocalVoiceAgent", subdirectory = "RealtimeSTT" }
+bangla-voice-backend = { path = "../backend", editable = true }
+torch = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
