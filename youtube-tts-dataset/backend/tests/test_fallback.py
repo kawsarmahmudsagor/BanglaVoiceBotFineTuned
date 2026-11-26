@@ -77,3 +77,11 @@ def test_empty_whisper_result_not_retranscribed(tmp_path):
     clips = [{"start_s": 0.0, "end_s": 3.0, "status": "pending_llm", "text_en": ""}]
     fb.run_fallback(clips, _vocals(tmp_path), gpu, Llm(), lambda d, t: None)
     assert gpu.used == [] and clips[0]["status"] == "needs_review"
+
+
+def test_null_text_en_from_store_runs_whisper(tmp_path):
+    gpu = FakeGpu(lambda audios: ["i eat rice"] * len(audios))
+    clips = [{"start_s": 0.0, "end_s": 3.0, "status": "pending_llm", "text_en": None}]
+    fb.run_fallback(clips, _vocals(tmp_path), gpu, Llm(), lambda d, t: None)
+    assert gpu.used == ["whisper_translate"]
+    assert clips[0]["text_en"] == "i eat rice" and clips[0]["status"] == "needs_review"
