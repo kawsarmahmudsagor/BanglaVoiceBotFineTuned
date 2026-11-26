@@ -12,6 +12,7 @@ const STATUS_OPTIONS: { value: NonNullable<ReviewFilters["status"]> | ""; label:
   { value: "pending_llm", label: "Waiting for LLM" },
   { value: "approved", label: "Approved" },
   { value: "rejected", label: "Rejected" },
+  { value: "auto", label: "Auto-accepted" },
 ];
 
 /** Whether the server would list this clip under these filters. */
@@ -212,7 +213,7 @@ export function Review({ dataset }: { dataset: DatasetSummary | null }) {
         <div className="panel empty">
           {filters.status || filters.reason || filters.video
             ? "No clips match these filters."
-            : "Nothing to review. Every clip in this dataset was accepted automatically or has been reviewed."}
+            : "Nothing to review. Every clip in this dataset was accepted automatically or has been reviewed. To check the automatic ones, set Status to Auto-accepted."}
         </div>
       ) : (
         <div className="review">

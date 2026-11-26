@@ -650,6 +650,10 @@ kbd {
   background: var(--danger-soft);
   color: var(--danger);
 }
+.pill--reason-auto {
+  background: var(--surface-2, transparent);
+  color: var(--muted, inherit);
+}
 .pill--reason-cer {
   background: var(--warn-soft);
   color: var(--warn);
@@ -668,6 +672,9 @@ kbd {
   width: 8px;
   height: 8px;
   border-radius: 50%;
+}
+.dot--auto {
+  background: var(--muted, #888);
 }
 .dot--cer {
   background: var(--warn);

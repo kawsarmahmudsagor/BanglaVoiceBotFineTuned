@@ -119,7 +119,7 @@ def test_video_actions(env):
 def test_review_patch_approve_and_edit(env):
     client, store, _, _, _ = env
     ds = _dataset_with_clips(store, [
-        {"start_s": 0, "end_s": 3, "status": "flagged"},
+        {"start_s": 0, "end_s": 3, "status": "flagged", "cer": 0.2},
         {"start_s": 3, "end_s": 6, "status": "needs_review", "text_source": "translated"},
         {"start_s": 6, "end_s": 9, "status": "pending_llm", "text_final": None},
         {"start_s": 9, "end_s": 12},
@@ -392,3 +392,18 @@ def test_delete_refused_while_video_in_flight(env, status):
 
     runner.in_flight.clear()  # the stage stopped
     assert client.delete(f"/api/datasets/{ds}/videos/vid1").status_code == (409 if status == "running" else 200)
+
+
+def test_review_lists_auto_clips_on_request(env):
+    client, store, _, _, _ = env
+    ds = _dataset_with_clips(store, [
+        {"start_s": 0, "end_s": 3, "status": "auto", "text_source": "stt", "cer": None, "text_final": "এক"},
+        {"start_s": 3, "end_s": 6, "status": "flagged", "text_source": "stt", "cer": 0.2},
+    ])
+    queue = client.get(f"/api/datasets/{ds}/review").json()
+    assert [c["id"] for c in queue["clips"]] == ["vid1_0001"]  # auto clips are not in the default queue
+    auto = client.get(f"/api/datasets/{ds}/review", params={"status": "auto"}).json()["clips"]
+    assert [(c["id"], c["reason"]) for c in auto] == [("vid1_0000", "auto")]
+    r = client.patch(f"/api/datasets/{ds}/clips/vid1_0000", json={"status": "approved"})
+    approved = client.get(f"/api/datasets/{ds}/review", params={"status": "approved"}).json()["clips"]
+    assert r.status_code == 200 and [c["reason"] for c in approved] == ["auto"]

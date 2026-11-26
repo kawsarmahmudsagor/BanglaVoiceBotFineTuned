@@ -10,6 +10,7 @@ export const REASON_LABEL: Record<ReviewReason, string> = {
   cer: "Flagged",
   translated: "Translated",
   pending_llm: "Waiting for LLM",
+  auto: "Auto-accepted",
 };
 
 export interface DiffToken {
@@ -226,7 +227,7 @@ export function ReviewCard({ clip, onApprove, onReject, onNext, onPrev, onEdit, 
   // text_b exists only in datasets transcribed before model B was removed
   const hasB = clip.text_b != null;
   const diff = wordDiff(clip.text_a, clip.text_b);
-  const translated = clip.text_source === "translated" || clip.reason !== "cer";
+  const translated = clip.text_source === "translated" || clip.reason === "translated" || clip.reason === "pending_llm";
   const titleId = `clip-${clip.id}-title`;
   const errorId = `clip-${clip.id}-error`;
   const saveText: Record<SaveState, string> = {

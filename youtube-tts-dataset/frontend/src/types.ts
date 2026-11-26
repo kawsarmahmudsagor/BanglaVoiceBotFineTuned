@@ -22,7 +22,7 @@ export type ClipStatus =
   | "rejected";
 export type TextSource = "stt" | "translated";
 export type DropReason = "length" | "dnsmos" | "other_speaker";
-export type ReviewReason = "cer" | "translated" | "pending_llm";
+export type ReviewReason = "cer" | "translated" | "pending_llm" | "auto";
 
 export interface Dataset {
   id: string;
@@ -108,7 +108,7 @@ export interface ReviewClip extends Clip {
 export interface ReviewFilters {
   reason?: ReviewReason;
   video?: string;
-  status?: "flagged" | "needs_review" | "pending_llm" | "approved" | "rejected";
+  status?: "flagged" | "needs_review" | "pending_llm" | "approved" | "rejected" | "auto";
 }
 
 export interface ReviewQueue {
