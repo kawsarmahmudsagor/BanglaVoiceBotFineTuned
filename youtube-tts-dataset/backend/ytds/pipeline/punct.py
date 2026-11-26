@@ -19,9 +19,10 @@ def words_unchanged(original: str, punctuated: str) -> bool:
 
 
 def punctuate(text: str, llm) -> tuple[str, bool]:
-    """Returns (text, no_punct). no_punct is True when the original is kept (empty, rejected or LLM down)."""
+    """Returns (text, no_punct). no_punct is True when the original is kept because the LLM was down or its
+    output was rejected; empty text has nothing to punctuate and is not a failure."""
     if not text.strip():
-        return text, True
+        return text, False
     try:
         out = llm.chat(PUNCT_SYSTEM, text)
     except LlmUnavailable:

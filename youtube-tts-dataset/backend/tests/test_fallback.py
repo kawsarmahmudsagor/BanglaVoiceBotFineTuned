@@ -70,3 +70,10 @@ def test_retry_skips_whisper_when_all_have_text_en(tmp_path):
     fb.run_fallback(clips, _vocals(tmp_path), gpu, Llm(), lambda d, t: None)
     assert clips[0]["status"] == "needs_review"
     assert gpu.used == []
+
+
+def test_empty_whisper_result_not_retranscribed(tmp_path):
+    gpu = FakeGpu(lambda audios: (_ for _ in ()).throw(AssertionError("no whisper")))
+    clips = [{"start_s": 0.0, "end_s": 3.0, "status": "pending_llm", "text_en": ""}]
+    fb.run_fallback(clips, _vocals(tmp_path), gpu, Llm(), lambda d, t: None)
+    assert gpu.used == [] and clips[0]["status"] == "needs_review"

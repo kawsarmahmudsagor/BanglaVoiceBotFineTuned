@@ -43,5 +43,6 @@ def test_punctuate_falls_back_on_unavailable():
 
 def test_punctuate_empty_skips_llm():
     llm = Llm("x")
-    assert punctuate("", llm) == ("", True)
+    assert punctuate("", llm) == ("", False)
+    assert punctuate("  ", llm) == ("  ", False)
     assert llm.calls == 0

@@ -40,7 +40,7 @@ def run_fallback(clips: list[dict], vocals_wav: Path, gpu, llm,
     if not pending:
         return
     total = len(pending)
-    todo = [c for c in pending if not c.get("text_en")]
+    todo = [c for c in pending if "text_en" not in c]
     if todo:
         y = load_16k(vocals_wav)
         audios = [y[int(c["start_s"] * SR):int(c["end_s"] * SR)] for c in todo]

@@ -51,13 +51,16 @@ class OllamaClient:
                 self._sleep(BACKOFF[attempt - 1])
             try:
                 r = self._http.post("/api/chat", json=payload)
-            except httpx.ConnectError as exc:
-                last = f"connect error: {exc}"
+            except httpx.TransportError as exc:
+                last = f"transport error: {exc!r}"
                 continue
             if r.status_code == 429 or r.status_code >= 500:
                 last = f"HTTP {r.status_code}"
                 continue
             if r.status_code != 200:
                 raise LlmUnavailable(f"HTTP {r.status_code}")
-            return r.json()["message"]["content"].strip()
+            try:
+                return r.json()["message"]["content"].strip()
+            except (ValueError, KeyError, TypeError, AttributeError) as exc:
+                raise LlmUnavailable(f"malformed response: {exc!r}") from exc
         raise LlmUnavailable(last)

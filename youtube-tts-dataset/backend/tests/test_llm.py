@@ -92,3 +92,35 @@ def test_live_punctuate():
     out, no_punct = punctuate("আমি ভাত খাই তুমি কি খাও", llm)
     print(ascii(out), no_punct)
     assert out
+
+
+def test_timeout_retries_then_unavailable():
+    sleeps: list[float] = []
+
+    def handler(request):
+        raise httpx.ReadTimeout("slow")
+
+    with pytest.raises(LlmUnavailable):
+        _client(handler, sleeps=sleeps).chat("s", "u")
+    assert sleeps == [1, 2, 4]
+
+
+@pytest.mark.parametrize("resp", [
+    httpx.Response(200, content=b"not json"),
+    httpx.Response(200, json={"oops": 1}),
+    httpx.Response(200, json=[1]),
+])
+def test_malformed_200_is_unavailable(resp):
+    with pytest.raises(LlmUnavailable):
+        _client(lambda r: resp).chat("s", "u")
+
+
+def test_429_retried():
+    n = {"i": 0}
+
+    def handler(request):
+        n["i"] += 1
+        return httpx.Response(429) if n["i"] == 1 else _ok(request)
+
+    assert _client(handler).chat("s", "u") == "hi"
+    assert n["i"] == 2
