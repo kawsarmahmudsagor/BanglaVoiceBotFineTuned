@@ -94,3 +94,50 @@ def test_curation_has_provenance_and_commercial_false(env):
     assert v["url"] == "http://x/vid1" and v["license"] == "cc" and v["clips_kept"] == 2
     assert v["seconds_dropped"] == {"dnsmos": 3.0}
     assert cur["validation_dropped"] == 0
+
+
+def test_validation_failure_drops_row_and_wav(env, monkeypatch):
+    from app.datasets import validate_audio as va
+
+    store, ds, _ = env
+    _add(store, ds, [("auto", "stt", "এক"), ("auto", "stt", "দুই"), ("auto", "stt", "তিন")])
+    real = va.validate_audio
+
+    def corrupting(root, task, **kw):
+        (root / "wavs" / "vid1_0001.wav").write_bytes(b"not audio")
+        return real(root, task, **kw)
+
+    monkeypatch.setattr(va, "validate_audio", corrupting)
+    s, _, out = _run(env)
+    with open(out / "metadata.csv", encoding="utf-8", newline="") as fh:
+        files = [r["file"] for r in csv.DictReader(fh)]
+    assert files == ["wavs/vid1_0000.wav", "wavs/vid1_0002.wav"]
+    assert not (out / "wavs" / "vid1_0001.wav").exists()
+    assert s["validation_dropped"] == 1
+    cur = json.loads((out / "curation.json").read_text(encoding="utf-8"))
+    assert cur["validation_dropped"] == 1 and cur["counts"]["total_clips"] == 2
+
+
+def test_whole_dataset_validation_error_raises(env, monkeypatch):
+    from app.datasets import validate_audio as va
+    from app.datasets.report import Issue, Report
+
+    store, ds, _ = env
+    _add(store, ds, [("auto", "stt", "এক")])
+    rep = Report()
+    rep.add_error(Issue("missing_column", "metadata.csv has no 'speaker' column"))
+    monkeypatch.setattr(va, "validate_audio", lambda root, task, **kw: (rep, []))
+    with pytest.raises(RuntimeError):
+        _run(env)
+
+
+def test_zero_rows_aborts_and_keeps_previous_export(env):
+    store, ds, tmp = env
+    _add(store, ds, [("auto", "stt", "এক")])
+    _, _, out = _run(env)
+    before = (out / "metadata.csv").read_bytes()
+    vocals_path(tmp, ds, "vid1").unlink()
+    with pytest.raises(Exception):
+        _run(env)
+    assert (out / "metadata.csv").read_bytes() == before
+    assert not (tmp / "out.tmp").exists()

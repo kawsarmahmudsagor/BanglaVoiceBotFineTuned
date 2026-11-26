@@ -9,15 +9,16 @@ def _dur(c: dict) -> float:
     return float(c["end_s"]) - float(c["start_s"])
 
 
-def _run_len(durs: list[float], start: int, target: float) -> int:
-    """Number of clips from `start` whose total duration is closest to `target` (at least one)."""
+def _run_len(durs: list[float], start: int, target: float) -> tuple[int, bool]:
+    """(clips from `start` whose total duration is closest to `target`, at least one; whether the run is
+    complete, i.e. not cut short by the end of the video)."""
     total, n = 0.0, 0
     for d in durs[start:]:
         if n and abs(total + d - target) >= abs(total - target):
-            break
+            return n, True
         total += d
         n += 1
-    return max(n, 1)
+    return max(n, 1), total >= target
 
 
 def assign_splits(
@@ -38,12 +39,13 @@ def assign_splits(
             taken: set[int] = set()
             for name, ratio in (("val", ratios[1]), ("test", ratios[2])):
                 target = ratio * total
-                options = []
+                full, partial = [], []
                 for s in range(len(vclips)):
-                    n = _run_len(durs, s, target)
+                    n, complete = _run_len(durs, s, target)
                     span = set(range(s, s + n))
                     if s + n <= len(vclips) and not span & taken:
-                        options.append(span)
+                        (full if complete else partial).append(span)
+                options = full or partial
                 if not options:
                     continue
                 span = rng.choice(options)

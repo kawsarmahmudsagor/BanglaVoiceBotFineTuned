@@ -3,11 +3,10 @@ from __future__ import annotations
 
 import csv
 import json
-import re
 import shutil
 import subprocess
-import time
 from collections import Counter, defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -21,7 +20,11 @@ PAD_S = 0.15
 OUT_SR = 24000
 HEADER = ["file", "text", "speaker", "split"]
 _FILE_ERR_CODES = {"undecodable", "missing_transcript", "missing_audio", "duplicate_file"}
-_QUOTED = re.compile(r"'([^']+)'")
+_DROP_WARNINGS = {"duration_out_of_range", "loudness_out_of_range"}
+
+
+class NothingToExport(Exception):
+    """No clip could be rendered into the export; the previous export (if any) is left untouched."""
 
 
 class UnreviewedTranslated(Exception):
@@ -104,7 +107,7 @@ def export_dataset(
     speaker = ds.get("speaker") or ds["name"]
     splits = assign_splits(clips)
 
-    tmp = out_dir.with_suffix(".tmp")
+    tmp = out_dir.with_name(out_dir.name + ".tmp")
     if tmp.exists():
         shutil.rmtree(tmp)
     (tmp / "wavs").mkdir(parents=True)
@@ -113,28 +116,43 @@ def export_dataset(
     seconds: dict[str, float] = {}
     process_errors = 0
     total = len(clips)
-    for i, c in enumerate(clips, 1):
-        try:
-            audio = _render(dataset_id, c, Path(data_dir))
-        except (ValueError, OSError, RuntimeError):
-            process_errors += 1
-        else:
-            rel = f"wavs/{c['id']}.wav"
-            sf.write(tmp / rel, audio, OUT_SR, subtype="PCM_16")
-            seconds[c["id"]] = len(audio) / OUT_SR
-            rows.append({"file": rel, "text": c["text_final"], "speaker": speaker, "split": splits[c["id"]]})
-        on_progress(i, total)
+    try:
+        for i, c in enumerate(clips, 1):
+            try:
+                audio = _render(dataset_id, c, Path(data_dir))
+            except ValueError:
+                process_errors += 1
+            else:
+                rel = f"wavs/{c['id']}.wav"
+                sf.write(tmp / rel, audio, OUT_SR, subtype="PCM_16")
+                seconds[c["id"]] = len(audio) / OUT_SR
+                rows.append({"file": rel, "text": c["text_final"].strip(), "speaker": speaker, "split": splits[c["id"]]})
+            on_progress(i, total)
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
     _write_metadata(tmp / "metadata.csv", rows)
 
-    report, _ = validate_audio(tmp, "tts")
-    bad: set[str] = set()
-    for issue in report.errors:
-        if issue.code in _FILE_ERR_CODES and (m := _QUOTED.search(issue.message)):
-            bad.add(m.group(1))
+    if not rows:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise NothingToExport(f"no clip could be rendered ({process_errors} failed)")
+    report, valid_rows = validate_audio(tmp, "tts")
+    whole = [e for e in report.errors if e.code not in _FILE_ERR_CODES]
+    if whole:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise RuntimeError(f"export validation failed: {whole[0].code}: {whole[0].message}")
+    valid_files = {r["file"] for r in valid_rows}
+    file_of = {r["sample_id"]: r["file"] for r in valid_rows}
+    bad = {r["file"] for r in rows} - valid_files
+    bad |= {file_of[w.sample_id] for w in report.warnings
+            if w.code in _DROP_WARNINGS and w.sample_id in file_of}
     if bad:
         for rel in bad:
             (tmp / rel).unlink(missing_ok=True)
         rows = [r for r in rows if r["file"] not in bad]
+        if not rows:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise NothingToExport("every clip failed export validation")
         _write_metadata(tmp / "metadata.csv", rows)
     by_file = {f"wavs/{c['id']}.wav": c for c in clips}
     final = [by_file[r["file"]] for r in rows]
@@ -156,7 +174,7 @@ def export_dataset(
         })
     curation = {
         "tool": "youtube-tts-dataset", "git_commit": _git_commit(),
-        "exported_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "exported_at": datetime.now(timezone.utc).isoformat(),
         "dataset": {"id": dataset_id, "name": ds["name"], "speaker": speaker},
         "thresholds": store.get_thresholds().model_dump(), "models": _model_ids(),
         "videos": videos,
