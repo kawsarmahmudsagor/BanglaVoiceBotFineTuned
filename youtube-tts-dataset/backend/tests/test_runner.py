@@ -1,0 +1,327 @@
+import threading
+from pathlib import Path
+
+import pytest
+
+from ytds.config import Settings
+from ytds.pipeline import STAGES
+from ytds.runner import JobRunner, StageFns, vocals_path
+from ytds.store import Store
+
+IDLE_S = 10
+
+
+class FakeBus:
+    def __init__(self):
+        self.events, self._lock = [], threading.Lock()
+
+    def publish(self, event):
+        with self._lock:
+            self.events.append(dict(event))
+
+    def of(self, type_):
+        with self._lock:
+            return [e for e in self.events if e["type"] == type_]
+
+
+class FakeGpu:
+    def __init__(self):
+        self.used = []
+
+    def use(self, name):
+        self.used.append(name)
+        return name
+
+
+def _vid(path) -> str:
+    return Path(path).parent.parent.name  # <dataset>/<video>/<stage>/<file>
+
+
+class Fakes:
+    """Stage fakes with the real stage signatures; `log` records (stage, video_id) in call order."""
+
+    def __init__(self, n_clips=4, clip_s=10.0, fail=None, routes=None):
+        self.log, self._lock = [], threading.Lock()
+        self.n_clips, self.clip_s = n_clips, clip_s
+        self.fail = fail or {}  # (stage, video_id) -> exception
+        self.routes = routes  # per-clip status set by transcribe, default all "auto"
+        self.llm_up = True
+
+    def _rec(self, stage, vid):
+        with self._lock:
+            self.log.append((stage, vid))
+        exc = self.fail.get((stage, vid))
+        if exc:
+            raise exc
+
+    def download(self, video_id, url, out_dir, on_progress):
+        self._rec("download", video_id)
+        on_progress(50, 100)
+        on_progress(100, 100)
+        return {"title": f"title {video_id}", "duration_s": 60.0}
+
+    def separate(self, audio_wav, out_wav, model, segment_s, on_progress):
+        assert model == "demucs"
+        self._rec("separate", _vid(out_wav))
+        on_progress(1, 1)
+
+    def segment(self, vocals_wav, th):
+        self._rec("segment", _vid(vocals_wav))
+        return [{"idx": i, "start_s": i * 20.0, "end_s": i * 20.0 + self.clip_s} for i in range(self.n_clips)]
+
+    def quality(self, vocals_wav, clips, th, scorer=None, embedder=None):
+        assert embedder == "ecapa"
+        self._rec("quality", _vid(vocals_wav))
+        for c in clips:
+            c.update(dnsmos=3.5, speaker_sim=0.9, drop_reason=None)
+        return clips
+
+    def transcribe(self, clips, vocals_wav, gpu, on_progress, th=None):
+        assert th is not None
+        vid = _vid(vocals_wav)
+        self._rec("transcribe", vid)
+        for i, c in enumerate(clips):
+            status = self.routes[i] if self.routes else "auto"
+            c.update(text_a=f"{vid} text {i}", text_b="b", cer=0.0, text_source="stt", status=status)
+        on_progress(len(clips), len(clips))
+
+    def fallback(self, clips, vocals_wav, gpu, llm, on_progress):
+        self._rec("fallback", _vid(vocals_wav))
+        for c in clips:
+            if c["status"] == "pending_llm" and self.llm_up:
+                c.update(text_en="en", text_translated="bn", text_final="bn",
+                         text_source="translated", status="needs_review")
+
+    def punctuate(self, text, llm):
+        self._rec("punctuate", text.split()[0])
+        if not self.llm_up:
+            return text, True
+        return text + "।", False
+
+    def stage_fns(self):
+        return StageFns(download=self.download, separate=self.separate, segment=self.segment,
+                        quality=self.quality, transcribe=self.transcribe, fallback=self.fallback,
+                        punctuate=self.punctuate)
+
+    def stages_for(self, vid):
+        with self._lock:
+            seq = [s for s, v in self.log if v == vid]
+        out = []
+        for s in seq:  # punctuate is called once per clip
+            if not out or out[-1] != s:
+                out.append(s)
+        return out
+
+
+@pytest.fixture
+def env(tmp_path):
+    store = Store(tmp_path / "db.sqlite")
+    bus = FakeBus()
+    settings = Settings(data_dir=tmp_path / "var")
+    runners = []
+
+    def make(fakes):
+        r = JobRunner(store, bus, FakeGpu(), llm=object(), settings=settings, stages=fakes.stage_fns())
+        runners.append(r)
+        return r
+
+    yield store, bus, settings, make
+    for r in runners:
+        r.stop()
+
+
+def _dataset(store, *vids):
+    ds = store.create_dataset("d", "spk")
+    for v in vids:
+        store.add_video(ds, v, f"https://youtu.be/{v}")
+    return ds
+
+
+def _video(store, ds, vid):
+    return next(v for v in store.list_videos(ds) if v["id"] == vid)
+
+
+def _run(runner, ds):
+    runner.start()
+    runner.enqueue(ds)
+    assert runner.wait_idle(IDLE_S)
+
+
+def test_runs_all_stages_in_order(env):
+    store, bus, settings, make = env
+    fakes = Fakes()
+    ds = _dataset(store, "v1")
+    _run(make(fakes), ds)
+
+    assert fakes.stages_for("v1") == list(STAGES)
+    v = _video(store, ds, "v1")
+    assert v["status"] == "done" and v["warning"] is None and v["error"] is None
+    assert v["title"] == "title v1"
+    assert all(store.stage_done(ds, "v1", s) for s in STAGES)
+    clips = store.clips(ds, video_id="v1")
+    assert [c["id"] for c in clips] == [f"v1_{i:04d}" for i in range(4)]
+    assert all(c["text_final"] == c["text_a"] + "।" and c["no_punct"] == 0 for c in clips)
+    assert [e["stage"] for e in bus.of("stage_done")] == list(STAGES)
+    assert len(bus.of("video_done")) == 1
+    progress = bus.of("progress")
+    assert {"dataset_id": ds, "video_id": "v1", "stage": "download", "done": 50, "total": 100}.items() \
+        <= progress[0].items()
+    assert "eta_s" in progress[0]
+
+
+def test_resume_skips_done_stages(env):
+    store, bus, settings, make = env
+    fakes = Fakes()
+    ds = _dataset(store, "v1")
+    store.mark_stage(ds, "v1", "download", True)
+    store.mark_stage(ds, "v1", "separate", True)
+    _run(make(fakes), ds)
+
+    assert fakes.stages_for("v1") == list(STAGES[2:])
+    assert _video(store, ds, "v1")["status"] == "done"
+
+
+def test_failure_isolated_to_video(env):
+    store, bus, settings, make = env
+    fakes = Fakes(fail={("segment", "v1"): RuntimeError("vad exploded")})
+    ds = _dataset(store, "v1", "v2")
+    _run(make(fakes), ds)
+
+    v1, v2 = _video(store, ds, "v1"), _video(store, ds, "v2")
+    assert v1["status"] == "failed" and v1["error"] == "vad exploded"
+    assert v2["status"] == "done"
+    assert fakes.stages_for("v1") == ["download", "separate", "segment"]
+    assert not store.stage_done(ds, "v1", "segment")
+    failed = bus.of("stage_failed")
+    assert len(failed) == 1
+    assert failed[0]["video_id"] == "v1" and failed[0]["stage"] == "segment"
+    assert failed[0]["error"] == "vad exploded"
+
+
+def test_gpu_stage_major_across_videos(env):
+    store, bus, settings, make = env
+    fakes = Fakes()
+    ds = _dataset(store, "v1", "v2")
+    for v in ("v1", "v2"):
+        store.mark_stage(ds, v, "download", True)
+    _run(make(fakes), ds)
+
+    seq = [s for s, _ in fakes.log]
+    last_separate = max(i for i, s in enumerate(seq) if s == "separate")
+    first_transcribe = min(i for i, s in enumerate(seq) if s == "transcribe")
+    assert seq.count("separate") == 2
+    assert last_separate < first_transcribe
+    assert all(_video(store, ds, v)["status"] == "done" for v in ("v1", "v2"))
+
+
+def test_no_speech_video_done_with_warning(env):
+    store, bus, settings, make = env
+    fakes = Fakes(n_clips=0)
+    ds = _dataset(store, "v1")
+    _run(make(fakes), ds)
+
+    v = _video(store, ds, "v1")
+    assert v["status"] == "done"
+    assert v["warning"] == "<30 s clean audio"
+    assert store.clips(ds, video_id="v1") == []
+    assert len(bus.of("video_done")) == 1
+
+
+def test_short_kept_audio_warns(env):
+    store, bus, settings, make = env
+    fakes = Fakes(n_clips=2, clip_s=10.0)  # 20 s kept
+    ds = _dataset(store, "v1")
+    _run(make(fakes), ds)
+    assert _video(store, ds, "v1")["warning"] == "<30 s clean audio"
+
+
+def test_running_reset_on_start(env):
+    store, bus, settings, make = env
+    fakes = Fakes()
+    ds = _dataset(store, "v1")
+    for s in STAGES[:5]:
+        store.mark_stage(ds, "v1", s, True)
+    store.replace_clips(ds, "v1", [
+        {"id": f"v1_{i:04d}", "idx": i, "start_s": i * 20.0, "end_s": i * 20.0 + 10, "text_a": f"v1 t{i}",
+         "status": "auto"} for i in range(4)
+    ])
+    store.update_video(ds, "v1", status="running")  # backend died mid-job
+
+    runner = make(fakes)
+    runner.start()  # no enqueue: start alone resumes
+    assert runner.wait_idle(IDLE_S)
+
+    assert fakes.stages_for("v1") == ["fallback", "punctuate"]
+    assert _video(store, ds, "v1")["status"] == "done"
+
+
+def test_poor_stt_warning(env):
+    store, bus, settings, make = env
+    fakes = Fakes(routes=["pending_llm", "pending_llm", "pending_llm", "auto"])
+    ds = _dataset(store, "v1")
+    _run(make(fakes), ds)
+
+    v = _video(store, ds, "v1")
+    assert v["status"] == "done" and v["warning"] == "poor STT"
+    statuses = [c["status"] for c in store.clips(ds, video_id="v1")]
+    assert statuses == ["needs_review"] * 3 + ["auto"]
+
+
+def test_both_warnings_joined(env):
+    store, bus, settings, make = env
+    fakes = Fakes(n_clips=2, routes=["pending_llm", "pending_llm"])
+    ds = _dataset(store, "v1")
+    _run(make(fakes), ds)
+    assert _video(store, ds, "v1")["warning"] == "<30 s clean audio; poor STT"
+
+
+def test_retry_reruns_failed_stage(env):
+    store, bus, settings, make = env
+    fakes = Fakes(fail={("segment", "v1"): RuntimeError("boom")})
+    ds = _dataset(store, "v1")
+    runner = make(fakes)
+    _run(runner, ds)
+    assert _video(store, ds, "v1")["status"] == "failed"
+
+    fakes.fail = {}
+    runner.retry(ds, "v1")
+    assert runner.wait_idle(IDLE_S)
+    v = _video(store, ds, "v1")
+    assert v["status"] == "done" and v["error"] is None
+    assert fakes.stages_for("v1") == list(STAGES)  # download/separate not rerun
+
+
+def test_skip_video(env):
+    store, bus, settings, make = env
+    fakes = Fakes()
+    ds = _dataset(store, "v1", "v2")
+    runner = make(fakes)
+    runner.skip(ds, "v1")
+    _run(runner, ds)
+    assert _video(store, ds, "v1")["status"] == "skipped"
+    assert fakes.stages_for("v1") == []
+    assert _video(store, ds, "v2")["status"] == "done"
+
+
+def test_retry_llm(env):
+    store, bus, settings, make = env
+    fakes = Fakes(routes=["pending_llm", "auto", "auto", "auto"])
+    fakes.llm_up = False
+    ds = _dataset(store, "v1")
+    runner = make(fakes)
+    _run(runner, ds)
+    clips = store.clips(ds, video_id="v1")
+    assert clips[0]["status"] == "pending_llm"
+    assert all(c["no_punct"] == 1 for c in clips[1:])
+
+    fakes.llm_up = True
+    runner.retry_llm(ds)
+    assert runner.wait_idle(IDLE_S)
+    clips = store.clips(ds, video_id="v1")
+    assert clips[0]["status"] == "needs_review" and clips[0]["text_final"] == "bn"
+    assert all(c["no_punct"] == 0 and c["text_final"] == c["text_a"] + "।" for c in clips[1:])
+    assert _video(store, ds, "v1")["status"] == "done"
+
+
+def test_vocals_path_layout(tmp_path):
+    assert vocals_path(tmp_path, "ds1", "abc") == tmp_path / "videos" / "ds1" / "abc" / "separate" / "vocals.wav"
