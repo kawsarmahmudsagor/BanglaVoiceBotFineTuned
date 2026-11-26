@@ -45,8 +45,8 @@ unreachable. Once the LLM works again, press **Retry LLM** on the Review page to
 
 ```powershell
 cd youtube-tts-dataset
-.\run.ps1            # checks tools, uv sync, builds the frontend once, serves http://localhost:8765
-.\run.ps1 -Rebuild   # reinstall frontend packages (npm ci) and rebuild frontend/dist
+.\run.ps1            # checks tools, uv sync, rebuilds the frontend if its sources changed, serves :8765
+.\run.ps1 -Rebuild   # force npm ci and a rebuild of frontend/dist
 .\run.ps1 -Dev       # backend + Vite dev server (http://localhost:5173) in two windows
 ```
 

@@ -2,7 +2,9 @@
 .SYNOPSIS
   Start the YouTube TTS dataset builder (Windows PowerShell 5.1).
 .PARAMETER Rebuild
-  Reinstall frontend packages and rebuild frontend/dist even if it exists.
+  Reinstall frontend packages and rebuild frontend/dist even if they look current. Without it, npm ci runs
+  when package-lock.json is newer than the installed node_modules, and dist is rebuilt when any file in
+  frontend/src, index.html, package.json or package-lock.json is newer than dist/index.html.
 .PARAMETER Dev
   Start the backend and the Vite dev server (hot reload) in two windows instead.
 #>
@@ -36,6 +38,24 @@ function Invoke-Checked([string]$exe, [string[]]$arguments, [string]$where) {
     }
 }
 
+function Get-NewestWrite([string[]]$paths) {
+    # Latest LastWriteTimeUtc over the given files and every file under the given folders.
+    $newest = [datetime]::MinValue
+    foreach ($p in $paths) {
+        if (-not (Test-Path $p)) { continue }
+        $item = Get-Item $p
+        if ($item.PSIsContainer) {
+            $files = @(Get-ChildItem $p -Recurse -File -ErrorAction SilentlyContinue)
+        } else {
+            $files = @($item)
+        }
+        foreach ($f in $files) {
+            if ($f.LastWriteTimeUtc -gt $newest) { $newest = $f.LastWriteTimeUtc }
+        }
+    }
+    return $newest
+}
+
 function Get-Port {
     # Same order as the backend: environment, youtube-tts-dataset/.env, repo-root .env.
     if ($env:YTDS_PORT) { return $env:YTDS_PORT }
@@ -66,11 +86,27 @@ Invoke-Checked 'uv' @('sync') $backend
 
 # --- frontend
 $dist = Join-Path $frontend 'dist'
-if ($Rebuild -or -not (Test-Path (Join-Path $frontend 'node_modules'))) {
+$distIndex = Join-Path $dist 'index.html'
+$lockFile = Join-Path $frontend 'package-lock.json'
+$installedLock = Join-Path $frontend 'node_modules\.package-lock.json'  # written by npm ci / npm install
+
+$needInstall = $Rebuild -or -not (Test-Path $installedLock)
+if (-not $needInstall) {
+    # package-lock.json changed (e.g. after git pull) since node_modules was installed
+    $needInstall = (Get-NewestWrite @($lockFile)) -gt (Get-Item $installedLock).LastWriteTimeUtc
+}
+if ($needInstall) {
     Invoke-Checked 'npm.cmd' @('ci') $frontend
 }
 if (-not $Dev) {
-    if ($Rebuild -or -not (Test-Path (Join-Path $dist 'index.html'))) {
+    $needBuild = $Rebuild -or -not (Test-Path $distIndex)
+    if (-not $needBuild) {
+        # any frontend source newer than the built bundle means dist is stale
+        $sources = @((Join-Path $frontend 'src'), (Join-Path $frontend 'index.html'),
+                     (Join-Path $frontend 'package.json'), $lockFile)
+        $needBuild = (Get-NewestWrite $sources) -gt (Get-Item $distIndex).LastWriteTimeUtc
+    }
+    if ($needBuild) {
         Invoke-Checked 'npm.cmd' @('run', 'build') $frontend
     }
 }
