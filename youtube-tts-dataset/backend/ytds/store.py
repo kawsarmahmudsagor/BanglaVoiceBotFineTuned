@@ -158,6 +158,21 @@ class Store:
             (*fields.values(), dataset_id, clip_id),
         )
 
+    def update_clip_if(self, dataset_id: str, clip_id: str, expect: dict[str, Any], **fields: Any) -> bool:
+        """Compare-and-set: apply `fields` only while every `expect` column still holds its value (NULL-safe).
+        Returns False, writing nothing, when the clip changed since it was read (for example a review edit)."""
+        _check(fields, CLIP_COLS)
+        _check(expect, CLIP_COLS)
+        if not fields:
+            return False
+        sets = ", ".join(f"{k}=?" for k in fields)
+        conds = "".join(f" AND {k} IS ?" for k in expect)
+        cur = self._write(
+            f"UPDATE clips SET {sets} WHERE dataset_id=? AND id=?{conds}",
+            (*fields.values(), dataset_id, clip_id, *expect.values()),
+        )
+        return cur.rowcount == 1
+
     def get_clip(self, dataset_id: str, clip_id: str) -> dict | None:
         rows = self._read("SELECT * FROM clips WHERE dataset_id=? AND id=?", (dataset_id, clip_id))
         return rows[0] if rows else None

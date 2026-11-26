@@ -36,6 +36,11 @@ _TRANSCRIBE_FIELDS = ("text_a", "text_b", "cer", "text_source", "status")
 _FALLBACK_FIELDS = ("text_en", "text_translated", "text_final", "text_source", "status")
 
 
+def _machine_text(c: dict) -> bool:
+    """True while text_final is untouched by a reviewer: not set yet, or the unpunctuated STT text."""
+    return c["text_final"] is None or c["text_final"] == (c["text_a"] or "")
+
+
 def video_dir(data_dir: Path, dataset_id: str, video_id: str) -> Path:
     return Path(data_dir) / "videos" / dataset_id / video_id
 
@@ -311,19 +316,26 @@ class JobRunner:
         self._save(ds, clips, _TRANSCRIBE_FIELDS)
 
     def _stage_fallback(self, ds: str, vid: str) -> None:
+        """Only clips nobody has typed text on (text_final NULL); each write is compare-and-set, so a review
+        edit or approval made while the stage runs is kept."""
         _, vocals = self._paths(ds, vid)
-        clips = self.store.clips(ds, video_id=vid, statuses=["pending_llm"])
+        clips = [c for c in self.store.clips(ds, video_id=vid, statuses=["pending_llm"]) if c["text_final"] is None]
         self.stages.fallback(clips, vocals, self.gpu, self.llm, self._progress(ds, vid, "fallback"))
-        self._save(ds, clips, _FALLBACK_FIELDS)
+        for c in clips:
+            self.store.update_clip_if(ds, c["id"], {"status": "pending_llm", "text_final": None},
+                                      **{k: c.get(k) for k in _FALLBACK_FIELDS})
 
     def _stage_punctuate(self, ds: str, vid: str, only_no_punct: bool = False) -> None:
-        clips = self.store.clips(ds, video_id=vid, statuses=["auto", "flagged"])
+        """Only clips whose text_final is still the machine text (NULL or text_a); each write is compare-and-set
+        against the snapshot, so a review edit or approval is never overwritten."""
+        clips = [c for c in self.store.clips(ds, video_id=vid, statuses=["auto", "flagged"]) if _machine_text(c)]
         if only_no_punct:
             clips = [c for c in clips if c["no_punct"]]
         cb = self._progress(ds, vid, "punctuate")
         for i, c in enumerate(clips, 1):
             text, no_punct = self.stages.punctuate(c["text_a"] or "", self.llm)
-            self.store.update_clip(ds, c["id"], text_final=text, no_punct=int(no_punct))
+            self.store.update_clip_if(ds, c["id"], {"status": c["status"], "text_final": c["text_final"]},
+                                      text_final=text, no_punct=int(no_punct))
             cb(i, len(clips))
 
     def _finalize(self, ds: str, vid: str) -> None:

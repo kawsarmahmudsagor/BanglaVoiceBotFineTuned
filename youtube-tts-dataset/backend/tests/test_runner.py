@@ -325,3 +325,64 @@ def test_retry_llm(env):
 
 def test_vocals_path_layout(tmp_path):
     assert vocals_path(tmp_path, "ds1", "abc") == tmp_path / "videos" / "ds1" / "abc" / "separate" / "vocals.wav"
+
+
+def test_review_edit_during_punctuate_survives(env):
+    store, bus, settings, make = env
+    fakes = Fakes(routes=["flagged"] * 4)
+    ds = _dataset(store, "v1")
+    orig = fakes.punctuate
+
+    def punctuate(text, llm):  # the reviewer acts after punctuate took its snapshot
+        if not any(s == "punctuate" for s, _ in fakes.log):
+            store.update_clip(ds, "v1_0002", text_final="edited")
+            store.update_clip(ds, "v1_0003", text_final="human", status="approved")
+        return orig(text, llm)
+
+    fakes.punctuate = punctuate
+    _run(make(fakes), ds)
+    clips = {c["id"]: c for c in store.clips(ds, video_id="v1")}
+    assert (clips["v1_0002"]["status"], clips["v1_0002"]["text_final"]) == ("flagged", "edited")
+    assert (clips["v1_0003"]["status"], clips["v1_0003"]["text_final"]) == ("approved", "human")
+    assert clips["v1_0000"]["text_final"] == clips["v1_0000"]["text_a"] + "।"
+    assert _video(store, ds, "v1")["status"] == "done"
+
+
+def test_review_edit_during_fallback_survives(env):
+    store, bus, settings, make = env
+    fakes = Fakes(routes=["pending_llm", "pending_llm", "pending_llm", "auto"])
+    ds = _dataset(store, "v1")
+    orig = fakes.fallback
+
+    def fallback(clips, vocals_wav, gpu, llm, on_progress):  # reviewer acts after the snapshot
+        store.update_clip(ds, "v1_0000", text_final="human")
+        store.update_clip(ds, "v1_0001", text_final="ok", status="approved")
+        return orig(clips, vocals_wav, gpu, llm, on_progress)
+
+    fakes.fallback = fallback
+    _run(make(fakes), ds)
+    clips = {c["id"]: c for c in store.clips(ds, video_id="v1")}
+    assert (clips["v1_0000"]["status"], clips["v1_0000"]["text_final"]) == ("pending_llm", "human")
+    assert (clips["v1_0001"]["status"], clips["v1_0001"]["text_final"]) == ("approved", "ok")
+    assert (clips["v1_0002"]["status"], clips["v1_0002"]["text_final"]) == ("needs_review", "bn")
+
+
+def test_retry_llm_keeps_review_edits_and_approvals(env):
+    store, bus, settings, make = env
+    fakes = Fakes(routes=["pending_llm", "flagged", "flagged", "auto"])
+    fakes.llm_up = False
+    ds = _dataset(store, "v1")
+    runner = make(fakes)
+    _run(runner, ds)
+    store.update_clip(ds, "v1_0000", text_final="typed on pending")
+    store.update_clip(ds, "v1_0001", text_final="fixed words")
+    store.update_clip(ds, "v1_0002", text_final="v1 text 2", status="approved")
+
+    fakes.llm_up = True
+    runner.retry_llm(ds)
+    assert runner.wait_idle(IDLE_S)
+    clips = {c["id"]: c for c in store.clips(ds, video_id="v1")}
+    assert (clips["v1_0000"]["status"], clips["v1_0000"]["text_final"]) == ("pending_llm", "typed on pending")
+    assert (clips["v1_0001"]["status"], clips["v1_0001"]["text_final"]) == ("flagged", "fixed words")
+    assert (clips["v1_0002"]["status"], clips["v1_0002"]["text_final"]) == ("approved", "v1 text 2")
+    assert clips["v1_0003"]["text_final"] == "v1 text 3।" and clips["v1_0003"]["no_punct"] == 0

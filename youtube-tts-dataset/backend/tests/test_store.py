@@ -95,3 +95,20 @@ def test_get_clip_speaker_and_delete_video(store):
     assert [v["id"] for v in store.list_videos(ds)] == ["v2"]
     assert [c["id"] for c in store.clips(ds)] == ["v2_0000"]
     assert not store.stage_done(ds, "v1", "download")
+
+
+def test_update_clip_if_applies_only_when_unchanged(store):
+    ds = store.create_dataset("d", "spk")
+    store.add_video(ds, "v1", "u")
+    store.replace_clips(ds, "v1", [_clip(0, status="flagged")])
+    expect = {"status": "flagged", "text_final": None}
+    assert store.update_clip_if(ds, "v1_0000", expect, text_final="machine") is True
+    assert store.get_clip(ds, "v1_0000")["text_final"] == "machine"
+
+    store.update_clip(ds, "v1_0000", text_final="human", status="approved")
+    assert store.update_clip_if(ds, "v1_0000", {"status": "flagged", "text_final": "machine"},
+                                text_final="machine 2") is False
+    c = store.get_clip(ds, "v1_0000")
+    assert (c["status"], c["text_final"]) == ("approved", "human")
+    with pytest.raises(ValueError):
+        store.update_clip_if(ds, "v1_0000", {"bogus": 1}, text_final="x")
