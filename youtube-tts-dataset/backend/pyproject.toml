@@ -1,0 +1,62 @@
+[project]
+name = "ytds"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "bangla-voice-backend[audio]",
+  "bangla-dataprep",
+  "torch==2.7.1",
+  "torchaudio==2.7.1",
+  "transformers==5.24.1",
+  "accelerate",
+  "faster-whisper",
+  "ctranslate2",
+  "demucs",
+  "silero-vad",
+  "yt-dlp",
+  "torchmetrics",
+  "onnxruntime",
+  "requests",
+  "speechbrain>=1.0",
+  "pyloudnorm",
+  "soxr",
+  "soundfile",
+  "scipy",
+  "librosa",
+  "fastapi>=0.110",
+  "uvicorn[standard]",
+  "httpx",
+  "python-dotenv",
+  "pydantic>=2",
+]
+
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ytds"]
+
+[tool.uv]
+environments = ["sys_platform == 'win32'"]
+
+[tool.uv.sources]
+bangla-voice-backend = { path = "../../backend", editable = true }
+bangla-dataprep = { path = "../../tools/dataprep", editable = true }
+torch = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"
+markers = ["gpu: needs a GPU", "network: needs network access"]
+addopts = "-m 'not gpu and not network'"
+filterwarnings = ["ignore:`huggingface_hub` cache-system uses symlinks:UserWarning"]

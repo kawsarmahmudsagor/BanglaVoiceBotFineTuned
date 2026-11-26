@@ -6,6 +6,7 @@ node_modules/
 .next/
 data/
 !tools/dataprep/data/
+!youtube-tts-dataset/backend/tests/data/
 runs/
 models/
 mlruns/
@@ -22,3 +23,6 @@ var/
 !.env.example
 unsloth_compiled_cache/
 realtimesst.log
+
+# ytds frontend build output
+youtube-tts-dataset/frontend/dist/
