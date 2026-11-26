@@ -87,10 +87,14 @@ def download(
         proc = subprocess.run(
             ["ffmpeg", "-y", "-loglevel", "error", "-i", str(raw_wav),
              "-ac", "1", "-ar", "48000", "-c:a", "pcm_s16le", str(final)],
-            capture_output=True, text=True,
+            capture_output=True, encoding="utf-8", errors="replace",
         )
         if proc.returncode != 0:
-            raise DownloadError(_last_error_line(RuntimeError(proc.stderr)))
+            err = proc.stderr.strip()
+            raise DownloadError(
+                _last_error_line(RuntimeError(err)) if err
+                else f"ffmpeg exited with code {proc.returncode}"
+            )
     except yt_dlp.utils.DownloadError as exc:
         raise DownloadError(_last_error_line(exc)) from exc
     except FileNotFoundError as exc:

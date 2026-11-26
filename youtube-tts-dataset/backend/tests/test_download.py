@@ -100,6 +100,17 @@ def test_error_line_kept(tmp_path):
         download("x", "u", tmp_path, lambda d, t: None, ydl_factory=Bad)
 
 
+def test_ffmpeg_failure_raises_download_error(tmp_path):
+    class NotAudio(FakeYDL):
+        def extract_info(self, url, download=True):
+            Path(self.opts["outtmpl"].replace("%(ext)s", "wav")).write_text("not audio")
+            return dict(self.info)
+
+    with pytest.raises(DownloadError):
+        download("x", "u", tmp_path, lambda d, t: None, ydl_factory=NotAudio)
+    assert list(tmp_path.glob("raw.*")) == []
+
+
 @pytest.mark.network
 def test_real_download_short_video(tmp_path):
     url = (Path(__file__).parent / "data" / "smoke_url.txt").read_text().strip()
