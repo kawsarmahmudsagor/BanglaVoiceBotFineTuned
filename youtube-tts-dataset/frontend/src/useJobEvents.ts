@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { eventsUrl, getDataset } from "./api";
-import { STAGES, type JobEvent, type Stage, type VideoDetail, type VideoState } from "./types";
+import { STAGES, type ExportState, type ExportSummary, type JobEvent, type Stage, type VideoDetail, type VideoState } from "./types";
 
 const BACKOFF_S = [1, 2, 4, 8, 10];
 const LOG_MAX = 500;
@@ -41,6 +41,23 @@ export function applyEvent(videos: VideoState[], e: JobEvent): VideoState[] {
   });
 }
 
+export const EXPORT_IDLE: ExportState = { status: "idle", done: 0, total: 0, summary: null, error: null };
+
+/** Applies one WebSocket event to the export state (pure). Only events with stage "export" count. */
+export function applyExportEvent(state: ExportState, e: JobEvent): ExportState {
+  if (e.stage !== "export") return state;
+  switch (e.type) {
+    case "progress":
+      return { status: "running", done: e.done ?? 0, total: e.total ?? 0, summary: null, error: null };
+    case "stage_done":
+      return { ...state, status: "done", done: state.total, summary: (e.summary as unknown as ExportSummary) ?? null };
+    case "stage_failed":
+      return { ...state, status: "failed", error: e.error ?? "export failed" };
+    default:
+      return state;
+  }
+}
+
 function logLine(e: JobEvent, titles: Map<string, string>): string | null {
   const who = e.video_id ? titles.get(e.video_id) ?? e.video_id : "dataset";
   const time = new Date().toLocaleTimeString();
@@ -65,6 +82,9 @@ export interface JobEvents {
   log: string[];
   /** Refetch the dataset (after actions that publish no event, such as skip or delete). */
   refresh: () => void;
+  exportState: ExportState;
+  /** Show the export as running as soon as the POST returns 202, before its first event. */
+  markExportStarted: () => void;
 }
 
 /**
@@ -76,11 +96,13 @@ export function useJobEvents(datasetId: string | null): JobEvents {
   const [videos, setVideos] = useState<VideoState[]>([]);
   const [connected, setConnected] = useState(false);
   const [log, setLog] = useState<string[]>([]);
+  const [exportState, setExportState] = useState<ExportState>(EXPORT_IDLE);
   const loadRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     setVideos([]);
     setLog([]);
+    setExportState(EXPORT_IDLE);
     setConnected(false);
     if (!datasetId) return;
 
@@ -128,6 +150,7 @@ export function useJobEvents(datasetId: string | null): JobEvents {
       };
       ws.onmessage = (msg: MessageEvent) => {
         const e = JSON.parse(String(msg.data)) as JobEvent;
+        setExportState((s) => applyExportEvent(s, e));
         if (pending) {
           pending.push(e);
           const line = logLine(e, titles);
@@ -157,5 +180,6 @@ export function useJobEvents(datasetId: string | null): JobEvents {
   }, [datasetId]);
 
   const refresh = useCallback(() => loadRef.current(), []);
-  return { videos, connected, log, refresh };
+  const markExportStarted = useCallback(() => setExportState({ ...EXPORT_IDLE, status: "running" }), []);
+  return { videos, connected, log, refresh, exportState, markExportStarted };
 }

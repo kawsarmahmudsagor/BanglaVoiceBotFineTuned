@@ -153,6 +153,26 @@ export interface ExportStarted {
   out_dir: string;
 }
 
+/** `summary` of the export stage_done event (exporter.export_dataset). */
+export interface ExportSummary {
+  out_dir: string;
+  clips: number;
+  hours: number;
+  process_error: number;
+  empty_text_excluded: number;
+  validation_dropped: number;
+  unreviewed_translated: number;
+}
+
+/** The dataset's export as seen through WebSocket events with stage "export". */
+export interface ExportState {
+  status: "idle" | "running" | "done" | "failed";
+  done: number;
+  total: number;
+  summary: ExportSummary | null;
+  error: string | null;
+}
+
 export interface Thresholds {
   cer_auto: number;
   cer_fallback: number;

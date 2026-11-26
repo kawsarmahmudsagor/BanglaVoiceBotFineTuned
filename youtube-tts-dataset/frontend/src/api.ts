@@ -85,6 +85,12 @@ export const patchClip = (id: string, clipId: string, patch: ClipPatch) =>
   request<ReviewClip>("PATCH", clip(id, clipId), patch);
 /** URL for an <audio> element; the backend slices the vocals stem on demand. */
 export const clipAudioUrl = (id: string, clipId: string) => `${clip(id, clipId)}/audio`;
+/** The clip's WAV bytes, for drawing its waveform. */
+export async function getClipAudio(id: string, clipId: string): Promise<ArrayBuffer> {
+  const res = await fetch(clipAudioUrl(id, clipId));
+  if (!res.ok) throw new ApiError(res.status, null);
+  return res.arrayBuffer();
+}
 
 // dataset stats and export
 export const getStats = (id: string) => request<DatasetStats>("GET", `${ds(id)}/stats`);

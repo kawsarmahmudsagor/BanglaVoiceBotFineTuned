@@ -153,7 +153,7 @@ export function App() {
         {page === "jobs" && <Jobs dataset={dataset} onDatasetCreated={onDatasetCreated} onVideosChanged={reloadDatasets} />}
         {page === "review" && <Review dataset={dataset} />}
         {page === "dataset" && <DatasetPage dataset={dataset} />}
-        {page === "settings" && <Settings />}
+        {page === "settings" && <Settings dataset={dataset} onDatasetChanged={() => void reloadDatasets()} />}
       </main>
     </div>
   );

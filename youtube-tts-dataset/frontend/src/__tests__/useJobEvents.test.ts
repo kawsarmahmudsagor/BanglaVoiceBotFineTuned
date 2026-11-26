@@ -106,3 +106,25 @@ test("useJobEvents applies stage_done", async () => {
   expect(result.current.videos[0].stages.download).toBe(true);
   expect(result.current.log.some((line) => line.includes("download"))).toBe(true);
 });
+
+test("useJobEvents tracks export progress, completion and failure", async () => {
+  const { result } = renderHook(() => useJobEvents("ds1"));
+  act(() => MockWebSocket.instances[0].open());
+  await flush();
+  const ws = MockWebSocket.instances[0];
+  expect(result.current.exportState.status).toBe("idle");
+
+  act(() => ws.send({ type: "progress", dataset_id: "ds1", stage: "export", done: 3, total: 10 }));
+  expect(result.current.exportState).toMatchObject({ status: "running", done: 3, total: 10 });
+
+  const summary = { out_dir: "C:/x", clips: 10, hours: 0.1, process_error: 0, empty_text_excluded: 0,
+    validation_dropped: 1, unreviewed_translated: 0 };
+  act(() => ws.send({ type: "stage_done", dataset_id: "ds1", stage: "export", summary }));
+  expect(result.current.exportState).toMatchObject({ status: "done", done: 10, summary });
+
+  act(() => ws.send({ type: "stage_failed", dataset_id: "ds1", stage: "export", error: "disk full" }));
+  expect(result.current.exportState).toMatchObject({ status: "failed", error: "disk full" });
+  // video events leave the export alone
+  act(() => ws.send({ type: "stage_done", dataset_id: "ds1", video_id: "v1", stage: "download" }));
+  expect(result.current.exportState.status).toBe("failed");
+});
