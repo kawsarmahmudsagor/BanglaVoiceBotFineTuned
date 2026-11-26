@@ -16,3 +16,9 @@ var/
 
 .upstream/
 .secrets
+
+# local copies of .env (secrets) and generated caches
+.env.*
+!.env.example
+unsloth_compiled_cache/
+realtimesst.log
