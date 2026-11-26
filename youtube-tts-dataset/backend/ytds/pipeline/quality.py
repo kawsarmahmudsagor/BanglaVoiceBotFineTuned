@@ -32,21 +32,27 @@ def speaker_filter(
 def quality(
     vocals_wav: Path, clips: list[dict], th: Thresholds, scorer=None, embedder=None
 ) -> list[dict]:
+    if not clips:
+        return clips
     from dataprep.steps.dnsmos import score_dnsmos
 
     if embedder is None:
         embedder = load_ecapa()
     y = load_16k(vocals_wav)
-    scores, embs = [], []
+    valid, scores, embs = [], [], []
     for c in clips:
         seg = y[int(c["start_s"] * SR):int(c["end_s"] * SR)]
+        if len(seg) == 0:
+            c.update(dnsmos=None, speaker_sim=None, drop_reason="length", status="dropped")
+            continue
+        valid.append(c)
         scores.append(score_dnsmos(seg, scorer=scorer)["dnsmos_ovrl"])
         embs.append(np.asarray(embedder(seg), dtype=float).reshape(-1))
-    if not clips:
+    if not valid:
         return clips
     dn = np.array(scores)
     sims, keep = speaker_filter(np.stack(embs), dn, th.speaker_sim_min)
-    for c, d, s, k in zip(clips, dn, sims, keep):
+    for c, d, s, k in zip(valid, dn, sims, keep):
         c["dnsmos"] = float(d)
         c["speaker_sim"] = float(s)
         if d < th.dnsmos_min:

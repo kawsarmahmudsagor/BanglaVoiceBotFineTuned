@@ -63,6 +63,21 @@ def test_real_dnsmos_and_ecapa(tmp_path):
     sf.write(str(wav), y, sr, subtype="PCM_16")
     clips = [{"idx": 0, "start_s": 0.0, "end_s": 2.0}, {"idx": 1, "start_s": 2.0, "end_s": 4.0}]
     out = quality(wav, clips, Thresholds(), embedder=load_ecapa())
-    print(out)
     assert all(isinstance(c["dnsmos"], float) for c in out)
     assert all(-1.0 <= c["speaker_sim"] <= 1.0001 for c in out)
+
+
+def test_quality_empty_loads_nothing(monkeypatch):
+    import ytds.pipeline.quality as q
+
+    monkeypatch.setattr(q, "load_ecapa", lambda: pytest.fail("loaded"))
+    assert quality(None, [], Thresholds()) == []
+
+
+def test_quality_empty_slice_dropped_as_length(tmp_path):
+    wav = tmp_path / "v.wav"
+    sf.write(str(wav), np.zeros(16000 * 5, dtype="float32"), 16000, subtype="PCM_16")
+    clips = [{"idx": 0, "start_s": 1.0, "end_s": 4.0}, {"idx": 1, "start_s": 9.0, "end_s": 12.0}]
+    out = quality(wav, clips, Thresholds(), scorer=lambda y: (3, 3, 3, 3.5), embedder=lambda y: np.ones(4))
+    assert out[1]["drop_reason"] == "length" and out[1]["status"] == "dropped"
+    assert out[0]["drop_reason"] is None

@@ -3,12 +3,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import threading
+
 import numpy as np
 
 from ..config import Thresholds
 from .audio16k import SR, load_16k
 
+MAX_BRIDGE_GAP_S = 1.0
+
 _vad_model = None
+_vad_lock = threading.Lock()  # silero model is stateful; also guards lazy init
 
 
 def _get_vad():
@@ -24,10 +29,9 @@ def vad_regions(vocals_16k: np.ndarray) -> list[tuple[float, float]]:
     import torch
     from silero_vad import get_speech_timestamps
 
-    ts = get_speech_timestamps(
-        torch.from_numpy(np.ascontiguousarray(vocals_16k)), _get_vad(),
-        sampling_rate=SR, return_seconds=True,
-    )
+    wav = torch.from_numpy(np.ascontiguousarray(vocals_16k))
+    with _vad_lock:
+        ts = get_speech_timestamps(wav, _get_vad(), sampling_rate=SR, return_seconds=True)
     return [(float(t["start"]), float(t["end"])) for t in ts]
 
 
@@ -72,6 +76,9 @@ def plan_clips(
             del pieces[i]
             continue
         j = i - 1 if gap_prev <= gap_next else i + 1
+        if min(gap_prev, gap_next) > MAX_BRIDGE_GAP_S:
+            del pieces[i]
+            continue
         a, b = sorted((i, j))
         merged = (pieces[a][0], pieces[b][1])
         if merged[1] - merged[0] <= max_s:

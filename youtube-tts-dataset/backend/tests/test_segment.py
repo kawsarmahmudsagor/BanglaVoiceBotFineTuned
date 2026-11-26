@@ -37,6 +37,41 @@ def test_isolated_short_dropped():
     assert plan_clips([(0.0, 0.8), (20.0, 24.0)], **KW) == [(20.0, 24.0)]
 
 
+def test_isolated_short_not_bridged_across_big_gap():
+    assert plan_clips([(0.0, 0.8), (10.0, 14.0)], **KW) == [(10.0, 14.0)]
+
+
+def test_short_bridges_gap_within_limit():
+    assert plan_clips([(0.0, 0.8), (1.5, 5.0)], **KW) == [(0.0, 5.0)]
+
+
+def test_vad_is_serialized_across_threads(monkeypatch):
+    import threading
+    import time
+
+    import silero_vad
+
+    state = {"active": 0, "overlap": False}
+
+    def fake_ts(wav, model, **kw):
+        state["active"] += 1
+        if state["active"] > 1:
+            state["overlap"] = True
+        time.sleep(0.05)
+        state["active"] -= 1
+        return [{"start": 0.0, "end": 1.0}]
+
+    monkeypatch.setattr(silero_vad, "get_speech_timestamps", fake_ts)
+    monkeypatch.setattr(seg, "_get_vad", lambda: object())
+    y = np.zeros(16000, dtype="float32")
+    results = []
+    ts = [threading.Thread(target=lambda: results.append(seg.vad_regions(y))) for _ in range(4)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert results == [[(0.0, 1.0)]] * 4
+    assert not state["overlap"]
+
+
 def test_short_not_merged_when_too_long():
     assert plan_clips([(0.0, 14.0), (14.5, 15.5)], **KW) == [(0.0, 14.0)]
 
