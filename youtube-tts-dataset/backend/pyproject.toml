@@ -59,3 +59,4 @@ testpaths = ["tests"]
 asyncio_default_fixture_loop_scope = "function"
 markers = ["gpu: needs a GPU", "network: needs network access"]
 addopts = "-m 'not gpu and not network'"
+filterwarnings = ["ignore:`huggingface_hub` cache-system uses symlinks:UserWarning"]
