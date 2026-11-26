@@ -699,6 +699,9 @@ kbd {
 .review-count {
   min-width: 220px;
 }
+.review-retry__note {
+  margin: 0 0 var(--sp-3);
+}
 .review-count p {
   margin: 0 0 var(--sp-1);
   font-size: var(--fs-sm);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getDataset, getReview, patchClip } from "../api";
+import { getDataset, getReview, patchClip, retryLlm } from "../api";
 import { REASON_LABEL, ReviewCard } from "../components/ReviewCard";
 import type { ClipStatus, DatasetSummary, ReviewClip, ReviewFilters, ReviewQueue, ReviewReason, Video } from "../types";
 
@@ -43,12 +43,15 @@ export function Review({ dataset }: { dataset: DatasetSummary | null }) {
   const [index, setIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [videos, setVideos] = useState<Video[]>([]);
+  const [retrying, setRetrying] = useState(false);
+  const [retryNote, setRetryNote] = useState<{ text: string; error: boolean } | null>(null);
   const listRef = useRef<HTMLOListElement>(null);
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
 
   useEffect(() => {
     setVideos([]);
+    setRetryNote(null);
     setFilters((f) => (Object.keys(f).length ? {} : f));
     if (!id) return;
     let live = true;
@@ -109,6 +112,26 @@ export function Review({ dataset }: { dataset: DatasetSummary | null }) {
     return <div className="panel empty">Pick a dataset above, or start one on the Jobs page, to review its clips.</div>;
   }
 
+  const hasPendingLlm = clips.some((c) => c.status === "pending_llm");
+
+  async function retry() {
+    if (!id) return;
+    setRetrying(true);
+    setRetryNote(null);
+    try {
+      await retryLlm(id);
+      setRetryNote({
+        text: "Retry queued. Clips leave “Waiting for LLM” as the LLM answers them.",
+        error: false,
+      });
+      load();
+    } catch (e) {
+      setRetryNote({ text: `Could not retry: ${e instanceof Error ? e.message : String(e)}`, error: true });
+    } finally {
+      setRetrying(false);
+    }
+  }
+
   const total = queue ? queue.reviewed + queue.remaining : 0;
   const pct = total ? Math.round((queue!.reviewed / total) * 100) : 0;
   const titleOf = (videoId: string) => videos.find((v) => v.id === videoId)?.title || videoId;
@@ -152,6 +175,13 @@ export function Review({ dataset }: { dataset: DatasetSummary | null }) {
             </select>
           </label>
         </div>
+        {hasPendingLlm && (
+          <div className="review-retry">
+            <button type="button" className="btn" disabled={retrying} onClick={() => void retry()}>
+              {retrying ? "Retrying…" : "Retry LLM"}
+            </button>
+          </div>
+        )}
         <div className="review-count" aria-live="polite">
           <p className="num">
             <strong>{queue?.reviewed ?? 0}</strong> reviewed, <strong>{queue?.remaining ?? 0}</strong> remaining
@@ -163,6 +193,12 @@ export function Review({ dataset }: { dataset: DatasetSummary | null }) {
         </div>
       </div>
 
+      {retryNote && (
+        <p className={`notice review-retry__note${retryNote.error ? " notice--error" : ""}`}
+          role={retryNote.error ? "alert" : "status"}>
+          {retryNote.text}
+        </p>
+      )}
       {error && (
         <div className="banner" role="alert">
           <p>Could not load the review queue: {error}</p>

@@ -65,15 +65,20 @@ def test_refuses_unreviewed_translated(env):
     with pytest.raises(UnreviewedTranslated) as e:
         _run(env)
     assert e.value.count == 1
-    s, _, out = _run(env, include_unreviewed_translated=True)
-    assert s["clips"] == 2
+    assert [c["id"] for c in exportable(store, ds)[0]] == ["vid1_0000"]
+    s, _, out = _run(env, skip_unreviewed_translated=True)
+    assert s["clips"] == 1 and s["unreviewed_translated_skipped"] == 1
+    with open(out / "metadata.csv", encoding="utf-8", newline="") as fh:
+        assert [r["text"] for r in csv.DictReader(fh)] == ["এক"]
+    curation = json.loads((out / "curation.json").read_text(encoding="utf-8"))
+    assert curation["counts"]["unreviewed_translated_skipped"] == 1
 
 
 def test_flagged_unapproved_excluded(env):
     store, ds, _ = env
     _add(store, ds, [("auto", "stt", "এক"), ("flagged", "stt", "দুই"), ("rejected", "stt", "তিন"),
                      ("dropped", "stt", "চার"), ("approved", "stt", "")])
-    clips, n = exportable(store, ds, False)
+    clips, n = exportable(store, ds)
     assert [c["id"] for c in clips] == ["vid1_0000"] and n == 0
     s, _, _ = _run(env)
     assert s["clips"] == 1 and s["empty_text_excluded"] == 1

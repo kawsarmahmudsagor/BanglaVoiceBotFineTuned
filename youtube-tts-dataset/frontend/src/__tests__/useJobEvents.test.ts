@@ -118,7 +118,7 @@ test("useJobEvents tracks export progress, completion and failure", async () => 
   expect(result.current.exportState).toMatchObject({ status: "running", done: 3, total: 10 });
 
   const summary = { out_dir: "C:/x", clips: 10, hours: 0.1, process_error: 0, empty_text_excluded: 0,
-    validation_dropped: 1, unreviewed_translated: 0 };
+    validation_dropped: 1, unreviewed_translated_skipped: 0 };
   act(() => ws.send({ type: "stage_done", dataset_id: "ds1", stage: "export", summary }));
   expect(result.current.exportState).toMatchObject({ status: "done", done: 10, summary });
 

@@ -96,10 +96,12 @@ export async function getClipAudio(id: string, clipId: string): Promise<ArrayBuf
 export const getStats = (id: string) => request<DatasetStats>("GET", `${ds(id)}/stats`);
 /**
  * Starts an export (202). A 409 throws ApiError whose body is `{unreviewed: n}` when translated clips
- * are still unreviewed, or `{error}` otherwise. Progress arrives on the WebSocket with stage "export".
+ * are still unreviewed (retry with `skip_unreviewed_translated` to export without them), or `{error}` otherwise. Progress arrives on the WebSocket with stage "export".
  */
 export const exportDataset = (id: string, body: ExportBody = {}) =>
   request<ExportStarted>("POST", `${ds(id)}/export`, body);
+/** Queues punctuation and translation again for clips that waited on the LLM (202). */
+export const retryLlm = (id: string) => request<{ ok: true }>("POST", `${ds(id)}/retry-llm`);
 
 // settings and health
 export const getSettings = () => request<AppSettings>("GET", "/api/settings");

@@ -146,7 +146,8 @@ export interface DatasetStats {
 
 export interface ExportBody {
   out_dir?: string;
-  include_unreviewed_translated?: boolean;
+  /** Export without the unreviewed translated clips instead of answering 409. */
+  skip_unreviewed_translated?: boolean;
 }
 
 export interface ExportStarted {
@@ -161,7 +162,7 @@ export interface ExportSummary {
   process_error: number;
   empty_text_excluded: number;
   validation_dropped: number;
-  unreviewed_translated: number;
+  unreviewed_translated_skipped: number;
 }
 
 /** The dataset's export as seen through WebSocket events with stage "export". */

@@ -1,4 +1,5 @@
 import threading
+import time
 
 import numpy as np
 import pytest
@@ -32,6 +33,9 @@ class FakeRunner:
 
     def skip(self, dataset_id, video_id):
         self.calls.append(("skip", dataset_id, video_id))
+
+    def retry_llm(self, dataset_id):
+        self.calls.append(("retry_llm", dataset_id))
 
 
 class FakeLlm:
@@ -157,8 +161,8 @@ def test_export_runs_in_background_and_reports_over_ws(env, monkeypatch):
     seen = {}
     release = threading.Event()
 
-    def fake_export(store_, dataset_id, out_dir, on_progress, *, data_dir, include_unreviewed_translated):
-        seen.update(out_dir=out_dir, data_dir=data_dir, include=include_unreviewed_translated)
+    def fake_export(store_, dataset_id, out_dir, on_progress, *, data_dir, skip_unreviewed_translated):
+        seen.update(out_dir=out_dir, data_dir=data_dir, skip=skip_unreviewed_translated)
         release.wait(5)
         on_progress(1, 1)
         return {"clips": 1}
@@ -172,7 +176,43 @@ def test_export_runs_in_background_and_reports_over_ws(env, monkeypatch):
         assert ws.receive_json() == {"type": "progress", "dataset_id": ds, "stage": "export", "done": 1, "total": 1}
         assert ws.receive_json() == {"type": "stage_done", "dataset_id": ds, "stage": "export",
                                      "summary": {"clips": 1}}
-    assert seen == {"out_dir": settings.export_dir / "spk", "data_dir": settings.data_dir, "include": False}
+    assert seen == {"out_dir": settings.export_dir / "spk", "data_dir": settings.data_dir, "skip": False}
+
+
+def test_export_skip_unreviewed_translated(env, monkeypatch):
+    client, store, _, _, _ = env
+    ds = _dataset_with_clips(store, [
+        {"start_s": 0, "end_s": 3},
+        {"start_s": 3, "end_s": 6, "status": "needs_review", "text_source": "translated"},
+    ])
+    seen = {}
+
+    def fake_export(store_, dataset_id, out_dir, on_progress, *, data_dir, skip_unreviewed_translated):
+        seen["skip"] = skip_unreviewed_translated
+        return {"clips": 1}
+
+    monkeypatch.setattr("ytds.api.dataset.export_dataset", fake_export)
+    r = client.post(f"/api/datasets/{ds}/export", json={"skip_unreviewed_translated": True})
+    assert r.status_code == 202
+    for _ in range(200):
+        if seen and not client.app.state.exports:
+            break
+        time.sleep(0.01)
+    assert seen == {"skip": True}
+
+    # unreviewed translated clips never count as exportable
+    store.update_clip(ds, "vid1_0000", status="rejected")
+    r = client.post(f"/api/datasets/{ds}/export", json={"skip_unreviewed_translated": True})
+    assert r.status_code == 409 and r.json() == {"error": "nothing to export"}
+
+
+def test_retry_llm(env):
+    client, store, _, runner, _ = env
+    ds = store.create_dataset("spk", "")
+    r = client.post(f"/api/datasets/{ds}/retry-llm")
+    assert r.status_code == 202 and r.json() == {"ok": True}
+    assert ("retry_llm", ds) in runner.calls
+    assert client.post("/api/datasets/nope/retry-llm").status_code == 404
 
 
 def test_stats(env):

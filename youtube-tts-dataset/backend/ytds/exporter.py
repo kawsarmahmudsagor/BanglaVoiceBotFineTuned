@@ -33,7 +33,9 @@ class UnreviewedTranslated(Exception):
         self.count = count
 
 
-def _select(store, dataset_id: str, include_unreviewed_translated: bool) -> tuple[list[dict], int, int]:
+def _select(store, dataset_id: str) -> tuple[list[dict], int, int]:
+    """(exportable clips, unreviewed translated clips, clips with empty text). Unreviewed translated clips
+    (needs_review + translated) are counted and never exported."""
     clips = store.clips(dataset_id, statuses=[*EXPORT_STATUSES, "needs_review"])
     kept: list[dict] = []
     unreviewed = empty = 0
@@ -46,15 +48,15 @@ def _select(store, dataset_id: str, include_unreviewed_translated: bool) -> tupl
             continue
         if is_unrev:
             unreviewed += 1
-            if not include_unreviewed_translated:
-                continue
+            continue
         kept.append(c)
     return kept, unreviewed, empty
 
 
-def exportable(store, dataset_id: str, include_unreviewed_translated: bool) -> tuple[list[dict], int]:
-    """(clips to export, number of unreviewed translated clips). Flagged-but-unapproved clips are excluded."""
-    kept, unreviewed, _ = _select(store, dataset_id, include_unreviewed_translated)
+def exportable(store, dataset_id: str) -> tuple[list[dict], int]:
+    """(clips to export, number of unreviewed translated clips). Flagged-but-unapproved and unreviewed
+    translated clips are excluded."""
+    kept, unreviewed, _ = _select(store, dataset_id)
     return kept, unreviewed
 
 
@@ -95,13 +97,13 @@ def _render(dataset_id: str, clip: dict, data_dir: Path):
 
 def export_dataset(
     store, dataset_id: str, out_dir: Path, on_progress: Callable[[int, int], None], *,
-    data_dir: Path, include_unreviewed_translated: bool = False,
+    data_dir: Path, skip_unreviewed_translated: bool = False,
 ) -> dict:
     from app.datasets.validate_audio import validate_audio
 
     out_dir = Path(out_dir)
-    clips, unreviewed, empty = _select(store, dataset_id, include_unreviewed_translated)
-    if unreviewed and not include_unreviewed_translated:
+    clips, unreviewed, empty = _select(store, dataset_id)
+    if unreviewed and not skip_unreviewed_translated:
         raise UnreviewedTranslated(unreviewed)
     ds = store.get_dataset(dataset_id)
     speaker = ds.get("speaker") or ds["name"]
@@ -183,7 +185,7 @@ def export_dataset(
             "hours": {k: round(h, 4) for k, h in hours.items()},
             "text_source": dict(Counter(c["text_source"] for c in final)),
             "no_punct": sum(1 for c in final if c["no_punct"]),
-            "unreviewed_translated": unreviewed if include_unreviewed_translated else 0,
+            "unreviewed_translated_skipped": unreviewed,
             "empty_text_excluded": empty,
             "process_error": process_errors,
         },
@@ -197,4 +199,4 @@ def export_dataset(
     tmp.rename(out_dir)
     return {"out_dir": str(out_dir), "clips": len(final), "hours": curation["counts"]["hours"],
             "process_error": process_errors, "empty_text_excluded": empty,
-            "validation_dropped": len(bad), "unreviewed_translated": unreviewed}
+            "validation_dropped": len(bad), "unreviewed_translated_skipped": unreviewed}

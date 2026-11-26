@@ -20,7 +20,7 @@ _exports_lock = threading.Lock()
 
 class ExportRequest(BaseModel):
     out_dir: str | None = None
-    include_unreviewed_translated: bool = False
+    skip_unreviewed_translated: bool = False  # export without unreviewed translated clips instead of 409
 
 
 def _hours(clips: list[dict]) -> float:
@@ -31,7 +31,7 @@ def _hours(clips: list[dict]) -> float:
 def stats(dataset_id: str, request: Request) -> dict:
     store = request.app.state.store
     dataset_or_404(request, dataset_id)
-    kept, _ = exportable(store, dataset_id, include_unreviewed_translated=False)
+    kept, _ = exportable(store, dataset_id)
     dropped = Counter(c["drop_reason"] or "other" for c in store.clips(dataset_id, statuses=["dropped"]))
     dropped["rejected"] = len(store.clips(dataset_id, statuses=["rejected"]))
     dropped["unreviewed"] = len(store.clips(dataset_id, statuses=QUEUE_STATUSES))
@@ -51,7 +51,7 @@ def stats(dataset_id: str, request: Request) -> dict:
             "videos": videos, "splits": splits}
 
 
-def _run_export(app, ds: dict, out_dir: Path, include: bool) -> None:
+def _run_export(app, ds: dict, out_dir: Path, skip: bool) -> None:
     bus, dataset_id = app.state.bus, ds["id"]
 
     def on_progress(done: int, total: int) -> None:
@@ -59,7 +59,7 @@ def _run_export(app, ds: dict, out_dir: Path, include: bool) -> None:
 
     try:
         summary = export_dataset(app.state.store, dataset_id, out_dir, on_progress,
-                                 data_dir=app.state.settings.data_dir, include_unreviewed_translated=include)
+                                 data_dir=app.state.settings.data_dir, skip_unreviewed_translated=skip)
     except Exception as e:
         bus.publish({"type": "stage_failed", "dataset_id": dataset_id, "stage": "export", "error": str(e)})
     else:
@@ -72,8 +72,8 @@ def _run_export(app, ds: dict, out_dir: Path, include: bool) -> None:
 def export(dataset_id: str, body: ExportRequest, request: Request):
     app = request.app
     ds = dataset_or_404(request, dataset_id)
-    kept, unreviewed = exportable(app.state.store, dataset_id, body.include_unreviewed_translated)
-    if unreviewed and not body.include_unreviewed_translated:
+    kept, unreviewed = exportable(app.state.store, dataset_id)
+    if unreviewed and not body.skip_unreviewed_translated:
         return JSONResponse({"unreviewed": unreviewed}, status_code=409)
     if not kept:
         return JSONResponse({"error": "nothing to export"}, status_code=409)
@@ -85,6 +85,14 @@ def export(dataset_id: str, body: ExportRequest, request: Request):
         if dataset_id in app.state.exports:
             return JSONResponse({"error": "export already running"}, status_code=409)
         app.state.exports.add(dataset_id)
-    threading.Thread(target=_run_export, args=(app, ds, out_dir, body.include_unreviewed_translated),
+    threading.Thread(target=_run_export, args=(app, ds, out_dir, body.skip_unreviewed_translated),
                      name=f"ytds-export-{dataset_id}", daemon=True).start()
     return {"out_dir": str(out_dir)}
+
+
+@router.post("/{dataset_id}/retry-llm", status_code=202)
+def retry_llm(dataset_id: str, request: Request) -> dict:
+    """Rerun punctuation and translation for clips that waited on the LLM (spec section 8)."""
+    dataset_or_404(request, dataset_id)
+    request.app.state.runner.retry_llm(dataset_id)
+    return {"ok": True}

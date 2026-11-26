@@ -45,7 +45,8 @@ function summaryText(s: ExportSummary): string[] {
     s.validation_dropped && `${s.validation_dropped} failed the audio checks`,
   ].filter(Boolean);
   if (left.length) lines.push(`Left out: ${left.join(", ")}.`);
-  if (s.unreviewed_translated) lines.push(`${plural(s.unreviewed_translated, "unreviewed translated clip")} included.`);
+  if (s.unreviewed_translated_skipped)
+    lines.push(`${plural(s.unreviewed_translated_skipped, "unreviewed translated clip")} left out.`);
   return lines;
 }
 
@@ -55,7 +56,7 @@ function unreviewedOf(e: unknown): number | null {
   return typeof n === "number" ? n : null;
 }
 
-function UnreviewedDialog({ count, onInclude, onClose }: { count: number; onInclude: () => void; onClose: () => void }) {
+function UnreviewedDialog({ count, onSkip, onClose }: { count: number; onSkip: () => void; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const d = ref.current;
@@ -71,14 +72,14 @@ function UnreviewedDialog({ count, onInclude, onClose }: { count: number; onIncl
       <h2 id="unrev-title">{plural(count, "translated clip")} not reviewed</h2>
       <p id="unrev-body">
         Their text is the LLM's translation of the English transcript, and nobody has checked it yet. Review them
-        first, or export now and include them as they are.
+        first, or export now without them.
       </p>
       <div className="dialog__actions">
         <a className="btn btn--primary" href="#/review" onClick={onClose}>
           Review clips
         </a>
-        <button type="button" className="btn" onClick={onInclude}>
-          Export including them
+        <button type="button" className="btn" onClick={onSkip}>
+          Export without them
         </button>
         <button type="button" className="btn" onClick={onClose} data-initial-focus>
           Cancel
@@ -116,13 +117,13 @@ export function DatasetPage({ dataset }: { dataset: DatasetSummary | null }) {
     if (exportState.status === "done") loadStats();
   }, [exportState.status, loadStats]);
 
-  async function startExport(include: boolean) {
+  async function startExport(skipUnreviewed: boolean) {
     if (!id) return;
     setUnreviewed(null);
     setExportError(null);
     setStarting(true);
     try {
-      await exportDataset(id, { out_dir: outDir.trim() || undefined, include_unreviewed_translated: include || undefined });
+      await exportDataset(id, { out_dir: outDir.trim() || undefined, skip_unreviewed_translated: skipUnreviewed || undefined });
       markExportStarted();
     } catch (e) {
       const n = unreviewedOf(e);
@@ -323,7 +324,7 @@ export function DatasetPage({ dataset }: { dataset: DatasetSummary | null }) {
       </div>
 
       {unreviewed !== null && (
-        <UnreviewedDialog count={unreviewed} onClose={closeDialog} onInclude={() => void startExport(true)} />
+        <UnreviewedDialog count={unreviewed} onClose={closeDialog} onSkip={() => void startExport(true)} />
       )}
     </>
   );
