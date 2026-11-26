@@ -62,8 +62,11 @@ def review_queue(dataset_id: str, request: Request, reason: Reason | None = None
 
 @router.patch("/{dataset_id}/clips/{clip_id}")
 def patch_clip(dataset_id: str, clip_id: str, body: ClipPatch, request: Request) -> dict:
-    _clip_or_404(request, dataset_id, clip_id)
+    clip = _clip_or_404(request, dataset_id, clip_id)
     fields = body.model_dump(exclude_none=True)
+    text = fields.get("text_final", clip["text_final"]) or ""
+    if fields.get("status") == "approved" and not text.strip():
+        raise HTTPException(422, "cannot approve a clip with empty text")
     request.app.state.store.update_clip(dataset_id, clip_id, **fields)
     clip = request.app.state.store.get_clip(dataset_id, clip_id)
     return {**clip, "reason": review_reason(clip)}

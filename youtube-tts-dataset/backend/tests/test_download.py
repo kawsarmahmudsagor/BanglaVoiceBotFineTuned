@@ -42,6 +42,13 @@ def test_expand_playlist_and_member_url_dedupe():
     assert [v for v, _ in out] == ["a", "b", "c"]
 
 
+def test_expand_rejects_unsafe_video_id():
+    with pytest.raises(ValueError, match="invalid video id"):
+        expand_urls("https://y/x", lambda u, download=False: {"id": "../x"})
+    with pytest.raises(ValueError):
+        expand_urls("https://y/p", lambda u, download=False: {"entries": [{"id": "ok"}, {"id": "a" * 65}]})
+
+
 class FakeYDL:
     info = {
         "id": "vid1",

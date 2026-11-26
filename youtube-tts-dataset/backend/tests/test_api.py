@@ -45,6 +45,8 @@ class FakeLlm:
 
 
 def fake_extract(url, download=False):
+    if "evil" in url:
+        return {"id": "../../etc"}
     if "bad" in url:
         raise RuntimeError("Unsupported URL: " + url)
     if "playlist" in url:
@@ -272,3 +274,62 @@ def test_default_runner_wiring_passes_cookies_and_store_llm(tmp_path, monkeypatc
     store.set_setting("cookies_path", str(tmp_path / "cookies.txt"))
     runner.stages.download("v", "u", tmp_path, lambda d, t: None)
     assert calls == [{"cookies": None}, {"cookies": tmp_path / "cookies.txt"}]
+
+
+@pytest.mark.parametrize("name", ["", "   ", "a/b", "a\\b", "..", "a\\..\\b", "a\tb", "C:x", "/abs", "a<b", 'a"b', "a|b", "a?", "a*", "x."])
+def test_create_dataset_rejects_unsafe_names(env, name):
+    client, store = env[0], env[1]
+    assert client.post("/api/datasets", json={"name": name, "urls": "https://y/vid1"}).status_code == 400
+    assert store.list_datasets() == []
+
+
+def test_invalid_video_id_is_a_per_line_error(env):
+    client, store = env[0], env[1]
+    body = client.post("/api/datasets", json={"name": "spk", "urls": "https://y/evil\nhttps://y/vid1"}).json()
+    assert body["added"] == 1 and [e["url"] for e in body["errors"]] == ["https://y/evil"]
+    assert [v["id"] for v in store.list_videos(body["dataset_id"])] == ["vid1"]
+
+
+def test_export_refuses_unrelated_existing_out_dir(env, monkeypatch):
+    client, store, _, _, settings = env
+    ds = _dataset_with_clips(store, [{"start_s": 0, "end_s": 3}])
+    monkeypatch.setattr("ytds.api.dataset.export_dataset", lambda *a, **k: {"clips": 1})
+    target = settings.export_dir / "spk"
+    target.mkdir(parents=True)
+    (target / "keep.txt").write_text("mine")
+    r = client.post(f"/api/datasets/{ds}/export", json={})
+    assert r.status_code == 409 and r.json() == {"error": "out_dir exists and is not a previous export"}
+    assert (target / "keep.txt").read_text() == "mine"
+
+    other = settings.export_dir / "previous"
+    other.mkdir()
+    (other / "metadata.csv").write_text("file,text,speaker,split\n")
+    assert client.post(f"/api/datasets/{ds}/export", json={"out_dir": str(other)}).status_code == 202
+
+
+def test_video_actions_409_while_exporting(env):
+    client, store = env[0], env[1]
+    ds = _dataset_with_clips(store, [{"start_s": 0, "end_s": 3}])
+    client.app.state.exports.add(ds)
+    assert client.post(f"/api/datasets/{ds}/videos/vid1/retry").status_code == 409
+    assert client.delete(f"/api/datasets/{ds}/videos/vid1").status_code == 409
+    assert [v["id"] for v in store.list_videos(ds)] == ["vid1"]
+
+
+def test_approve_with_empty_text_is_422(env):
+    client, store = env[0], env[1]
+    ds = _dataset_with_clips(store, [{"start_s": 0, "end_s": 3, "status": "pending_llm", "text_final": None}])
+    url = f"/api/datasets/{ds}/clips/vid1_0000"
+    assert client.patch(url, json={"status": "approved"}).status_code == 422
+    assert client.patch(url, json={"status": "approved", "text_final": "  "}).status_code == 422
+    assert store.get_clip(ds, "vid1_0000")["status"] == "pending_llm"
+    assert client.patch(url, json={"status": "approved", "text_final": "ক"}).status_code == 200
+
+
+def test_settings_lists_stage_models(env):
+    client = env[0]
+    client.put("/api/settings", json={"llm_model": "m3"})
+    models = client.get("/api/settings").json()["models"]
+    assert set(models) == {"separate", "vad", "dnsmos", "speaker", "model_a", "model_b", "translate", "llm"}
+    assert models["separate"] == "htdemucs" and models["llm"] == "m3"
+    assert models["model_a"] == "SayedShaun/Qwen3-ASR-0.6B-Bengali"

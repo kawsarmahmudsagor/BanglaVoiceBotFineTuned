@@ -1,7 +1,9 @@
 """Dataset (job) and per-video routes."""
 from __future__ import annotations
 
+import re
 import shutil
+from pathlib import PureWindowsPath
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
@@ -12,6 +14,7 @@ from ..pipeline.download import expand_urls
 from ..runner import video_dir
 
 router = APIRouter(prefix="/api/datasets")
+_BAD_NAME = re.compile(r'[<>:"|?*/\\\x00-\x1f]')
 
 
 class CreateDataset(BaseModel):
@@ -28,11 +31,22 @@ class UpdateDataset(BaseModel):
     speaker: str
 
 
+def valid_dataset_name(name: str) -> bool:
+    """The name becomes the default export folder, so it must be one plain Windows file name."""
+    return (bool(name) and name not in (".", "..") and not _BAD_NAME.search(name)
+            and not PureWindowsPath(name).anchor and not name.endswith((".", " ")))
+
+
 def dataset_or_404(request: Request, dataset_id: str) -> dict:
     ds = request.app.state.store.get_dataset(dataset_id)
     if ds is None:
         raise HTTPException(404, "dataset not found")
     return ds
+
+
+def _not_exporting(request: Request, dataset_id: str) -> None:
+    if dataset_id in request.app.state.exports:
+        raise HTTPException(409, "dataset is exporting")
 
 
 def _video_or_404(request: Request, dataset_id: str, video_id: str) -> dict:
@@ -70,8 +84,8 @@ def _add(request: Request, dataset_id: str, pairs: list[tuple[str, str]], errors
 async def create_dataset(body: CreateDataset, request: Request) -> dict:
     store = request.app.state.store
     name = body.name.strip()
-    if not name:
-        raise HTTPException(400, "name is required")
+    if not valid_dataset_name(name):
+        raise HTTPException(400, f"invalid dataset name {name!r}: use a plain folder name")
     if any(d["name"] == name for d in store.list_datasets()):
         raise HTTPException(409, f"dataset {name!r} already exists")
     pairs, errors = await run_in_threadpool(_expand, body.urls)
@@ -122,6 +136,7 @@ async def add_videos(dataset_id: str, body: AddVideos, request: Request) -> dict
 @router.post("/{dataset_id}/videos/{video_id}/retry")
 def retry_video(dataset_id: str, video_id: str, request: Request) -> dict:
     _video_or_404(request, dataset_id, video_id)
+    _not_exporting(request, dataset_id)
     request.app.state.runner.retry(dataset_id, video_id)
     return {"ok": True}
 
@@ -136,6 +151,7 @@ def skip_video(dataset_id: str, video_id: str, request: Request) -> dict:
 @router.delete("/{dataset_id}/videos/{video_id}")
 def delete_video(dataset_id: str, video_id: str, request: Request) -> dict:
     v = _video_or_404(request, dataset_id, video_id)
+    _not_exporting(request, dataset_id)
     if v["status"] == "running":
         raise HTTPException(409, "video is running; skip it first")
     request.app.state.store.delete_video(dataset_id, video_id)

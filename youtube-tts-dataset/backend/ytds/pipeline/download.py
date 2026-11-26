@@ -1,11 +1,15 @@
 """Download stage: URL expansion and yt-dlp audio fetch (48 kHz mono 16-bit WAV)."""
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 from typing import Callable
 
 import yt_dlp
+
+
+VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")  # ids name files and folders on disk
 
 
 class DownloadError(RuntimeError):
@@ -35,6 +39,9 @@ def expand_urls(text: str, extract=None) -> list[tuple[str, str]]:
             ]
         else:
             items = [(info["id"], url)]
+        bad = [vid for vid, _ in items if not VIDEO_ID.match(str(vid))]
+        if bad:
+            raise ValueError(f"invalid video id {bad[0]!r} from {url}")
         for vid, vurl in items:
             if vid not in seen:
                 seen.add(vid)

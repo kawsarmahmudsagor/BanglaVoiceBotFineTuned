@@ -15,6 +15,7 @@ from ..store import Store
 router = APIRouter(prefix="/api")
 
 CHECK_TIMEOUT_S = 5.0
+DNSMOS_MODEL = "DNSMOS P.835 OVRL (torchmetrics)"
 
 
 class SettingsUpdate(BaseModel):
@@ -35,11 +36,22 @@ def make_llm(store: Store, settings: Settings, timeout: float = 120.0) -> Ollama
     return OllamaClient(host, model, settings.ollama_api_key or None, timeout=timeout)
 
 
+def stage_models(llm_model: str) -> dict:
+    """Read-only list of the model behind each stage (spec section 4.4)."""
+    from dataprep.steps.speakers import MODEL as SPEAKER_MODEL
+
+    from ..exporter import _model_ids
+
+    ids = _model_ids()
+    return {"separate": ids["separation"], "vad": ids["vad"], "dnsmos": DNSMOS_MODEL, "speaker": SPEAKER_MODEL,
+            "model_a": ids["model_a"], "model_b": ids["model_b"], "translate": ids["fallback"], "llm": llm_model}
+
+
 def _settings_body(request: Request) -> dict:
     store, settings = request.app.state.store, request.app.state.settings
     host, model = llm_config(store, settings)
     return {"thresholds": store.get_thresholds().model_dump(), "cookies_path": store.get_setting("cookies_path") or "",
-            "llm_host": host, "llm_model": model}
+            "llm_host": host, "llm_model": model, "models": stage_models(model)}
 
 
 @router.get("/settings")
@@ -96,4 +108,5 @@ def _cuda() -> bool:
 @router.get("/health")
 async def health(request: Request) -> dict:
     llm_ok = await run_in_threadpool(_llm_ok, request.app.state.store, request.app.state.settings)
-    return {"llm_ok": llm_ok, "cuda": _cuda(), "ffmpeg": shutil.which("ffmpeg") is not None}
+    cuda = await run_in_threadpool(_cuda)
+    return {"llm_ok": llm_ok, "cuda": cuda, "ffmpeg": shutil.which("ffmpeg") is not None}

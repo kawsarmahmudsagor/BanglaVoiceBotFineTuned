@@ -77,11 +77,14 @@ def export(dataset_id: str, body: ExportRequest, request: Request):
         return JSONResponse({"unreviewed": unreviewed}, status_code=409)
     if not kept:
         return JSONResponse({"error": "nothing to export"}, status_code=409)
+    out_dir = Path(body.out_dir) if body.out_dir else Path(app.state.settings.export_dir) / ds["name"]
+    if out_dir.exists() and not any((out_dir / f).is_file() for f in ("metadata.csv", "curation.json")):
+        # export_dataset replaces out_dir wholesale: only ever replace a previous export
+        return JSONResponse({"error": "out_dir exists and is not a previous export"}, status_code=409)
     with _exports_lock:
         if dataset_id in app.state.exports:
             return JSONResponse({"error": "export already running"}, status_code=409)
         app.state.exports.add(dataset_id)
-    out_dir = Path(body.out_dir) if body.out_dir else Path(app.state.settings.export_dir) / ds["name"]
     threading.Thread(target=_run_export, args=(app, ds, out_dir, body.include_unreviewed_translated),
                      name=f"ytds-export-{dataset_id}", daemon=True).start()
     return {"out_dir": str(out_dir)}
