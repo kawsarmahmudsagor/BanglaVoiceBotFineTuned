@@ -21,6 +21,7 @@ dependencies = [
   "pyloudnorm",
   "soxr",
   "soundfile",
+  "scipy",
   "librosa",
   "fastapi>=0.110",
   "uvicorn[standard]",

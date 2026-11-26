@@ -1,6 +1,5 @@
 import pytest
 
-from ytds import gpu
 from ytds.gpu import GpuWorker, run_with_oom_retry
 
 
