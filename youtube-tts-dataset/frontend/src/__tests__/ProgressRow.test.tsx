@@ -27,7 +27,7 @@ function renderRow(video: VideoState) {
   return render(
     <table>
       <tbody>
-        <ProgressRow video={video} onRetry={() => {}} onSkip={() => {}} onDelete={() => {}} />
+        <ProgressRow video={video} onRetry={() => {}} onStop={() => {}} onDelete={() => {}} />
       </tbody>
     </table>,
   );

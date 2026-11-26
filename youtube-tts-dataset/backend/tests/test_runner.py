@@ -1,5 +1,6 @@
 import sqlite3
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -479,3 +480,49 @@ def test_busy_until_running_stage_ends_even_after_skip(env):
     assert runner.wait_idle(IDLE_S)
     assert runner.busy(ds, "v1") is False
     assert _video(store, ds, "v1")["status"] == "skipped"
+
+
+def test_skip_cancels_running_stage(env):
+    store, bus, settings, make = env
+    fakes = Fakes()
+    ds = _dataset(store, "v1", "v2")
+    entered = threading.Event()
+    orig = fakes.separate
+
+    def separate(audio_wav, out_wav, model, segment_s, on_progress):
+        if _vid(out_wav) != "v1":
+            return orig(audio_wav, out_wav, model, segment_s, on_progress)
+        entered.set()
+        for i in range(10_000):  # a long stage that reports progress; only a cancel ends it early
+            on_progress(i, 10_000)
+            time.sleep(0.01)
+        raise AssertionError("stage was not cancelled")
+
+    fakes.separate = separate
+    runner = make(fakes)
+    runner.start()
+    try:
+        runner.enqueue(ds)
+        assert entered.wait(IDLE_S)
+        runner.skip(ds, "v1")
+        assert runner.wait_idle(IDLE_S)
+        v1 = _video(store, ds, "v1")
+        assert v1["status"] == "skipped" and v1["error"] is None
+        assert not store.stage_done(ds, "v1", "separate")
+        assert "segment" not in [s for s, vid in fakes.log if vid == "v1"]
+        assert runner.busy(ds, "v1") is False
+        assert _video(store, ds, "v2")["status"] == "done"
+        assert not bus.of("stage_failed")
+    finally:
+        runner.stop()
+
+
+def test_retry_after_cancel_runs_the_stage_again(env):
+    store, bus, settings, make = env
+    fakes = Fakes()
+    ds = _dataset(store, "v1")
+    runner = make(fakes)
+    runner.skip(ds, "v1")  # not in flight: nothing to cancel, and no cancel left behind
+    runner.retry(ds, "v1")
+    _run(runner, ds)
+    assert _video(store, ds, "v1")["status"] == "done"

@@ -84,6 +84,10 @@ class StageFns:
                    transcribe=transcribe_clips, fallback=run_fallback, punctuate=punctuate)
 
 
+class StageCancelled(Exception):
+    """Raised from a progress callback when the user stopped the video while its stage was running."""
+
+
 class JobRunner:
     def __init__(self, store, bus, gpu, llm, settings, stages: StageFns | None = None):
         self.store, self.bus, self.gpu, self.llm, self.settings = store, bus, gpu, llm, settings
@@ -94,6 +98,7 @@ class JobRunner:
         self._tasks: queue.Queue = queue.Queue()
         self._active: set[str] = set()          # dataset ids being scheduled
         self._inflight: set[tuple] = set()      # (dataset_id, video_id[, PUNCT_RETRY | LLM_RETRY])
+        self._cancel: set[tuple[str, str]] = set()  # stopped videos whose running stage must end
         self._llm_retry: list[str] = []         # dataset ids waiting for the GPU thread
         self._llm_busy = 0
         self._t0: dict[tuple, float] = {}
@@ -130,6 +135,8 @@ class JobRunner:
         self._kick()
 
     def retry(self, dataset_id: str, video_id: str) -> None:
+        with self._lock:
+            self._cancel.discard((dataset_id, video_id))
         step = self._next_step(dataset_id, video_id)
         if step != FINALIZE:
             self.store.mark_stage(dataset_id, video_id, step, False)
@@ -142,7 +149,25 @@ class JobRunner:
             return any(k[:2] == (dataset_id, video_id) for k in self._inflight)
 
     def skip(self, dataset_id: str, video_id: str) -> None:
+        """Stop the video: no further stages, and a running stage ends at its next progress report
+        (stages without progress reports finish first, and their result is discarded)."""
         self.store.update_video(dataset_id, video_id, status="skipped")
+        with self._lock:
+            if any(k[:2] == (dataset_id, video_id) for k in self._inflight):
+                self._cancel.add((dataset_id, video_id))
+
+    def wait_free(self, dataset_id: str, video_id: str, timeout: float) -> bool:
+        """Wait until the video has nothing queued or running; True when it is free."""
+        deadline = time.monotonic() + timeout
+        while self.busy(dataset_id, video_id):
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
+        return True
+
+    def _cancelled(self, ds: str, vid: str) -> bool:
+        with self._lock:
+            return (ds, vid) in self._cancel
 
     def retry_llm(self, dataset_id: str) -> None:
         """Rerun fallback for pending_llm clips and punctuate for no_punct auto/flagged clips, in videos
@@ -265,17 +290,23 @@ class JobRunner:
                 self.store.update_video(ds, vid, status="running")
                 self._t0[(ds, vid, step)] = time.monotonic()
             fn(ds, vid)
+            if self._cancelled(ds, vid):
+                raise StageCancelled()
             if step != FINALIZE:
                 if self._status(ds, vid) is None:
                     return  # video deleted meanwhile: do not leave an orphan stage mark
                 self.store.mark_stage(ds, vid, step, True)
                 self._publish(type="stage_done", dataset_id=ds, video_id=vid, stage=step)
         except Exception as e:
-            self._fail(ds, vid, step, e)
+            if self._cancelled(ds, vid):  # stopped by the user: not a failure, whatever the stage raised
+                self._publish(type="stage_cancelled", dataset_id=ds, video_id=vid, stage=step)
+            else:
+                self._fail(ds, vid, step, e)
         finally:
             self._t0.pop((ds, vid, step), None)
             with self._lock:
                 self._inflight.discard((ds, vid))
+                self._cancel.discard((ds, vid))
             self._safe_kick()
 
     def _fail(self, ds: str, vid: str, step: str, err: Exception) -> None:
@@ -322,6 +353,8 @@ class JobRunner:
 
     def _progress(self, ds: str, vid: str, stage: str) -> Callable[[int, int], None]:
         def cb(done: int, total: int) -> None:
+            if self._cancelled(ds, vid):
+                raise StageCancelled()
             eta = None
             t0 = self._t0.get((ds, vid, stage))
             if t0 is not None and done > 0 and total > done:

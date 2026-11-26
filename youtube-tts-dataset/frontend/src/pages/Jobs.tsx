@@ -119,7 +119,7 @@ export function Jobs({ dataset, onDatasetCreated, onVideosChanged }: Props) {
 
   const id = dataset?.id ?? "";
   const onRetry = (v: string) => act(v, () => retryVideo(id, v));
-  const onSkip = (v: string) => act(v, () => skipVideo(id, v));
+  const onStop = (v: string) => act(v, () => skipVideo(id, v));
   const onDelete = (v: string) => {
     const title = videos.find((x) => x.id === v)?.title || v;
     if (!window.confirm(`Delete "${title}" and its clips from this dataset?`)) return;
@@ -266,7 +266,7 @@ export function Jobs({ dataset, onDatasetCreated, onVideosChanged }: Props) {
           </thead>
           <tbody>
             {videos.map((v) => (
-              <ProgressRow key={v.id} video={v} busy={busyVideo === v.id} onRetry={onRetry} onSkip={onSkip}
+              <ProgressRow key={v.id} video={v} busy={busyVideo === v.id} onRetry={onRetry} onStop={onStop}
                 onDelete={onDelete} />
             ))}
           </tbody>

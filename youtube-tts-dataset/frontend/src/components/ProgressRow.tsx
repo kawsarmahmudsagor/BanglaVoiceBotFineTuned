@@ -29,12 +29,12 @@ function stageMeasure(v: VideoState, s: Stage): string {
 interface Props {
   video: VideoState;
   onRetry: (videoId: string) => void;
-  onSkip: (videoId: string) => void;
+  onStop: (videoId: string) => void;
   onDelete: (videoId: string) => void;
   busy?: boolean;
 }
 
-export function ProgressRow({ video: v, onRetry, onSkip, onDelete, busy = false }: Props) {
+export function ProgressRow({ video: v, onRetry, onStop, onDelete, busy = false }: Props) {
   const title = v.title || v.id;
   const live = v.status === "running" || v.status === "queued";
   const current = live ? v.currentStage : null;
@@ -90,7 +90,7 @@ export function ProgressRow({ video: v, onRetry, onSkip, onDelete, busy = false 
       </td>
       <td className="num">{v.status === "running" && v.eta_s != null ? formatDuration(v.eta_s) : "–"}</td>
       <td>
-        <span className={`pill pill--${v.status}`}>{v.status}</span>
+        <span className={`pill pill--${v.status}`}>{v.status === "skipped" ? "stopped" : v.status}</span>
         {v.status === "failed" && v.error && <span className="prow__error">{v.error}</span>}
       </td>
       <td className="prow__actions">
@@ -100,18 +100,23 @@ export function ProgressRow({ video: v, onRetry, onSkip, onDelete, busy = false 
             Retry
           </button>
         )}
+        {v.status === "skipped" && (
+          <button type="button" className="btn btn--small" disabled={busy} aria-label={`Resume ${title}`}
+            onClick={() => onRetry(v.id)}>
+            Resume
+          </button>
+        )}
         {live && (
-          <button type="button" className="btn btn--small" disabled={busy} aria-label={`Skip ${title}`}
-            onClick={() => onSkip(v.id)}>
-            Skip
+          <button type="button" className="btn btn--small" disabled={busy} aria-label={`Stop ${title}`}
+            title="Stops the running stage now; Resume continues from the last finished stage"
+            onClick={() => onStop(v.id)}>
+            Stop
           </button>
         )}
-        {v.status !== "running" && (
-          <button type="button" className="btn btn--small btn--danger" disabled={busy} aria-label={`Delete ${title}`}
-            onClick={() => onDelete(v.id)}>
-            Delete
-          </button>
-        )}
+        <button type="button" className="btn btn--small btn--danger" disabled={busy} aria-label={`Delete ${title}`}
+          onClick={() => onDelete(v.id)}>
+          Delete
+        </button>
       </td>
     </tr>
   );

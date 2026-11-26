@@ -19,6 +19,7 @@ class FakeRunner:
     def __init__(self):
         self.calls, self.llm = [], None
         self.in_flight: set[tuple[str, str]] = set()
+        self.stop_on_skip = False  # True: Skip cancels the running stage at once
 
     def busy(self, dataset_id, video_id):
         return (dataset_id, video_id) in self.in_flight
@@ -37,6 +38,11 @@ class FakeRunner:
 
     def skip(self, dataset_id, video_id):
         self.calls.append(("skip", dataset_id, video_id))
+        if self.stop_on_skip:
+            self.in_flight.discard((dataset_id, video_id))
+
+    def wait_free(self, dataset_id, video_id, timeout):
+        return not self.busy(dataset_id, video_id)
 
     def retry_llm(self, dataset_id):
         self.calls.append(("retry_llm", dataset_id))
@@ -380,18 +386,26 @@ def test_settings_lists_stage_models(env):
 
 
 @pytest.mark.parametrize("status", ["queued", "running", "skipped", "failed"])
-def test_delete_refused_while_video_in_flight(env, status):
+def test_delete_refused_while_stage_will_not_stop(env, status):
     client, store, _, runner, _ = env
     ds = _dataset_with_clips(store, [{"start_s": 0, "end_s": 3}])
     store.update_video(ds, "vid1", status=status)
-    runner.in_flight.add((ds, "vid1"))  # a stage is still queued or running, even after Skip
+    runner.in_flight.add((ds, "vid1"))  # a stage that does not stop in time
     r = client.delete(f"/api/datasets/{ds}/videos/vid1")
     assert r.status_code == 409
-    assert r.json()["detail"] == "video is still processing; wait for it to finish or fail"
+    assert r.json()["detail"] == "video is still stopping; try again in a few seconds"
+    assert ("skip", ds, "vid1") in runner.calls  # delete asked the stage to stop
     assert [v["id"] for v in store.list_videos(ds)] == ["vid1"]
 
-    runner.in_flight.clear()  # the stage stopped
-    assert client.delete(f"/api/datasets/{ds}/videos/vid1").status_code == (409 if status == "running" else 200)
+
+def test_delete_stops_a_running_video_then_deletes(env):
+    client, store, _, runner, _ = env
+    ds = _dataset_with_clips(store, [{"start_s": 0, "end_s": 3}])
+    store.update_video(ds, "vid1", status="running")
+    runner.in_flight.add((ds, "vid1"))
+    runner.stop_on_skip = True
+    assert client.delete(f"/api/datasets/{ds}/videos/vid1").status_code == 200
+    assert ("skip", ds, "vid1") in runner.calls and store.list_videos(ds) == []
 
 
 def test_review_lists_auto_clips_on_request(env):

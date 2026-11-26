@@ -80,7 +80,7 @@ export interface JobEvents {
   videos: VideoState[];
   connected: boolean;
   log: string[];
-  /** Refetch the dataset (after actions that publish no event, such as skip or delete). */
+  /** Refetch the dataset (after actions that publish no event, such as stop or delete). */
   refresh: () => void;
   exportState: ExportState;
   /** Show the export as running as soon as the POST returns 202, before its first event. */
