@@ -23,6 +23,7 @@ At the same time, change clip segmentation for every video (Studio and dashboard
 | Review edits | Text edit and approve/reject. No boundary edits, merges or splits. |
 | Clip length | 15–30 s, ending on complete sentences (one or more). Applies to Studio and dashboard videos. Already-processed videos keep their clips. |
 | Sentence detection | Approach A: short VAD pieces, transcribe, LLM punctuate, group into clips at sentence ends, transcribe each clip again as a whole. |
+| Translation | Removed from the pipeline for every video. A clip whose transcript looks broken (the checks that used to send it to translation) is dropped with `drop_reason=bad_stt`. |
 | Export | Unchanged. Studio's Export button calls the existing per-dataset export. |
 
 ### 1.2 Out of scope
@@ -31,6 +32,7 @@ At the same time, change clip segmentation for every video (Studio and dashboard
 - Forced alignment or word timestamps.
 - Playlists in Studio (the dashboard still expands them).
 - Changing the export format.
+- The English STT + LLM translation path. It is removed (§4.5).
 
 ## 2. Worktree and runtime
 
@@ -84,7 +86,7 @@ Stored thresholds that still hold the old defaults (2.0 / 15.0) are moved to the
 
 ```
 download → cut → separate → pieces → transcribe_pieces → punctuate_pieces
-         → group → quality → transcribe → fallback → punctuate
+         → group → quality → transcribe → punctuate
 ```
 
 | Stage | Thread | Does |
@@ -93,12 +95,12 @@ download → cut → separate → pieces → transcribe_pieces → punctuate_pie
 | `cut` | pool | Writes `cut/audio.wav` and `cut/map.json` (§4.2). |
 | `separate` | GPU | Demucs on `cut/audio.wav` (was `download/audio.wav`). |
 | `pieces` | pool | Silero VAD on the vocals, per keep range, into pieces ≤ `piece_max_s`, split at pauses ≥ `piece_gap_s`. A piece longer than `piece_max_s` with no pause is split at the largest internal pause, or hard-split as the last resort. |
-| `transcribe_pieces` | GPU | Model A on every piece. |
+| `transcribe_pieces` | GPU | Model A on every piece. A piece whose transcript looks broken (§4.5) is marked `broken` and left out of grouping. |
 | `punctuate_pieces` | pool | LLM punctuation over each range's piece texts in order (words locked, as today). Returns the punctuated text per piece. |
 | `group` | pool | Builds clips (§4.3) and writes them with `replace_clips`. |
-| `quality`, `transcribe`, `fallback`, `punctuate` | as today | Run on the new 15–30 s clips. `transcribe` uses the whole clip audio. Model A already caps at 30 s. |
+| `quality`, `transcribe`, `punctuate` | as today | Run on the new 15–30 s clips. `transcribe` uses the whole clip audio. Model A already caps at 30 s. A broken transcript drops the clip (§4.5). |
 
-The old `segment` stage is replaced by `pieces` + `transcribe_pieces` + `punctuate_pieces` + `group`.
+The `fallback` stage is removed. The old `segment` stage is replaced by `pieces` + `transcribe_pieces` + `punctuate_pieces` + `group`.
 
 ### 4.2 Cut
 
@@ -119,8 +121,9 @@ Per keep range, walk the pieces in order and grow the current clip:
    - close at the last sentence-ending piece in the clip that leaves the clip ≥ `tail_min_s` (a complete but shorter clip; sentence completeness wins over the 15 s minimum), or
    - if there is none, close at the piece boundary with the largest pause in the 15–30 s window and set `flag=incomplete_sentence`.
    The remaining pieces start the next clip.
-5. At the end of a range, the leftover tail becomes a clip when it is ≥ `tail_min_s` and its last piece ends a sentence. Otherwise it is stored as a clip with `status=dropped`, `drop_reason=length`.
-6. A single piece longer than `clip_max_s` cannot occur (`piece_max_s` < `clip_max_s`).
+5. A `broken` piece acts like a range edge: the clip before it closes by these same rules (as at the end of a range), and the next clip starts after it. Its audio is in no clip.
+6. At the end of a range, the leftover tail becomes a clip when it is ≥ `tail_min_s` and its last piece ends a sentence. Otherwise it is stored as a clip with `status=dropped`, `drop_reason=length`.
+7. A single piece longer than `clip_max_s` cannot occur (`piece_max_s` < `clip_max_s`).
 
 Clip start/end are the first piece's start and the last piece's end, padded by 0.1 s on each side, but never into a neighbouring clip and never across a range edge.
 
@@ -129,7 +132,18 @@ Clip start/end are the first piece's start and the last piece's end, padded by 0
 - If `punctuate_pieces` cannot reach the LLM, piece texts stay unpunctuated and `group` falls back to pause-based grouping: close each clip at the largest pause in its 15–30 s window. Each such clip gets `flag=unsplit` and status `needs_review` once routed.
 - **Retry LLM** for a dataset reruns `punctuate_pieces` and `group` for videos with `unsplit` clips, but only when no clip of that video has been edited or approved/rejected. Otherwise those clips stay as they are.
 
-### 4.5 Migration of existing videos
+### 4.5 Broken transcripts (translation removed)
+
+- `route()` keeps its checks (empty text, Bangla-script share below `min_bn_ratio`, speaking rate outside `min/max_chars_per_s`, a word repeated `max_word_repeat` times). Its `fallback` result is renamed `broken`.
+- At `transcribe_pieces`, a broken piece is excluded from grouping (§4.3 rule 5).
+- At `transcribe` (whole clip), a broken clip gets `status=dropped`, `drop_reason=bad_stt`. It is shown under the Dropped filter and can still be played.
+- The `fallback` stage, its `whisper_translate` GPU model and the `pending_llm` status are no longer produced. The fallback module and loader are deleted.
+- The video warning "poor STT" now means more than half of the clips were dropped as `bad_stt`.
+- **Retry LLM** only reruns punctuation (and §4.4 regrouping). It no longer translates.
+- Settings hints for the three routing thresholds say "the clip is dropped" instead of "translated".
+- Old datasets: existing `translated` and `pending_llm` clips are left as they are. The dashboard Review page still shows and edits them, and export still treats them as today. Nothing new of that kind is created.
+
+### 4.6 Migration of existing videos
 
 On startup, every video whose `segment` stage is done gets `cut`, `pieces`, `transcribe_pieces`, `punctuate_pieces` and `group` marked done. Their existing clips stay. The old `segment` marks are left in place and ignored.
 
@@ -187,10 +201,11 @@ Preview proxy: if a local file is not `.mp4`/`.webm`, or ffprobe reports a video
 
 Backend (pytest, no GPU unless marked):
 
-- `group`: sentence end closes at ≥15 s; at the 30 s cap with only an earlier sentence end, closes there (clip 5–15 s, no flag); no sentence end gives `incomplete_sentence` at the largest pause; tails kept or dropped by §4.3 rule 5; no clip crosses a range; padding never overlaps.
+- `group`: sentence end closes at ≥15 s; at the 30 s cap with only an earlier sentence end, closes there (clip 5–15 s, no flag); no sentence end gives `incomplete_sentence` at the largest pause; tails kept or dropped by §4.3 rule 6; no clip crosses a range; padding never overlaps.
 - `pieces`: split at pauses, max length, hard split.
 - `cut`: range normalisation, silence gaps, time map round trip.
 - Store: column migration on an old DB, stage-mark migration, threshold migration keeps user values.
+- Routing: broken piece excluded from grouping and splits clips; broken clip dropped with `bad_stt`; no clip reaches `pending_llm`; `fallback` stage not in `STAGES`.
 - Runner: Studio video stops at `awaiting_cut`; `/start` resumes it; dashboard video runs straight through; LLM-down path flags `unsplit`.
 - API: upload id dedupe, playlist rejected, `/start` validation and 409, media Range response, clips listing with original times.
 - GPU smoke test (marked): one short video through the full new pipeline; every kept clip is 5–30 s, most are 15–30 s, and its final text ends in a sentence terminator, or the clip carries a `flag`.
