@@ -71,7 +71,8 @@ LOCAL_ID = "local_" + hashlib.sha1(DATA).hexdigest()[:11]
 
 
 def _upload(client, ds, data=DATA, name="My Talk.MP4"):
-    return client.post(f"/api/datasets/{ds}/studio/upload", files={"file": (name, data, "video/mp4")})
+    return client.post(f"/api/datasets/{ds}/studio/upload", params={"filename": name}, content=data,
+                       headers={"Content-Type": "application/octet-stream"})
 
 
 def test_upload_stores_file_and_dedupes(env):
@@ -112,14 +113,26 @@ def test_upload_failing_mid_stream_leaves_nothing(env, monkeypatch):
     assert not root.exists() or [p for p in root.rglob("*")] == []
 
 
-def test_upload_without_file_part_is_400(env):
-    client, store, _, _ = env
+def test_upload_needs_filename_and_bytes(env):
+    client, store, _, settings = env
     ds = _ds(store)
-    r = client.post(f"/api/datasets/{ds}/studio/upload", files={"other": ("x.mp4", b"abc", "video/mp4")})
-    assert r.status_code == 400
-    r = client.post(f"/api/datasets/{ds}/studio/upload", content=b"raw")
-    assert r.status_code == 400
+    assert client.post(f"/api/datasets/{ds}/studio/upload", content=b"abc").status_code == 400
+    assert _upload(client, ds, name="  ").status_code == 400
+    assert _upload(client, ds, data=b"").status_code == 400
     assert store.list_videos(ds) == []
+    root = settings.data_dir / "videos" / ds
+    assert not root.exists() or [p for p in root.rglob("*")] == []
+    assert _upload(client, "nope").status_code == 404
+
+
+def test_upload_name_and_suffix_from_filename(env):
+    client, store, _, settings = env
+    ds = _ds(store)
+    vid = _upload(client, ds, data=b"abc", name=r"C:\clips\Lecture One.WebM").json()["video_id"]
+    assert _video(store, ds, vid)["title"] == "Lecture One.WebM"
+    assert (video_dir(settings.data_dir, ds, vid) / "download" / "upload.webm").read_bytes() == b"abc"
+    vid = _upload(client, ds, data=b"def", name="noext").json()["video_id"]
+    assert (video_dir(settings.data_dir, ds, vid) / "download" / "upload").read_bytes() == b"def"
 
 
 # --- list
@@ -325,54 +338,29 @@ def test_studio_route_serves_index(tmp_path, monkeypatch):
 
 
 class _StreamRequest:
-    """Just enough of a Starlette request for the multipart parser: headers and a chunked body stream."""
+    """Just enough of a Starlette request for `_receive`: a chunked body stream that can disconnect."""
 
-    def __init__(self, body: bytes, ctype: str, step: int, fail_after: int | None = None):
-        self.headers = {"content-type": ctype}
+    def __init__(self, body: bytes, step: int, fail_after: int):
         self._body, self._step, self._fail_after = body, step, fail_after
 
     async def stream(self):
         from starlette.requests import ClientDisconnect
 
         for n, i in enumerate(range(0, len(self._body), self._step)):
-            if self._fail_after is not None and n >= self._fail_after:
+            if n >= self._fail_after:
                 raise ClientDisconnect()
             yield self._body[i:i + self._step]
 
 
-def _multipart(fields: dict, files: dict) -> tuple[bytes, str]:
-    import httpx
-
-    req = httpx.Request("POST", "http://x/", data=fields, files=files)
-    return req.read(), req.headers["content-type"]
-
-
-@pytest.mark.parametrize("step", [1, 7, 4096, 1 << 22])
-def test_multipart_parser_handles_any_chunking(tmp_path, step):
-    import asyncio
-
-    from ytds.api.studio import _receive_file
-
-    boundary_like = b"\r\n--\r\n-" * 50  # bytes that look like the start of a delimiter
-    data = boundary_like + DATA[:5000] + b"\r\n"
-    body, ctype = _multipart({"note": "hi"}, {"file": ('clip "1".WebM', data, "video/webm")})
-    sha1, path, name, size = asyncio.run(_receive_file(_StreamRequest(body, ctype, step), tmp_path / "dl"))
-    assert path == tmp_path / "dl" / "upload.webm"
-    assert path.read_bytes() == data and size == len(data)
-    assert sha1 == hashlib.sha1(data).hexdigest()
-    assert name == 'clip "1".WebM'
-
-
-def test_multipart_parser_closes_file_on_disconnect(tmp_path):
+def test_receive_closes_file_on_disconnect(tmp_path):
     import asyncio
     import shutil
 
     from starlette.requests import ClientDisconnect
 
-    from ytds.api.studio import _receive_file
+    from ytds.api.studio import _receive
 
-    body, ctype = _multipart({}, {"file": ("a.mp4", DATA, "video/mp4")})
     with pytest.raises(ClientDisconnect):
-        asyncio.run(_receive_file(_StreamRequest(body, ctype, 1 << 16, fail_after=20), tmp_path / "dl"))
-    shutil.rmtree(tmp_path / "dl")  # would fail on Windows if the file were still open
+        asyncio.run(_receive(_StreamRequest(DATA, 1 << 16, fail_after=20), tmp_path / "dl" / "upload.mp4"))
+    shutil.rmtree(tmp_path / "dl")  # fails on Windows if the file were still open
     assert not (tmp_path / "dl").exists()
