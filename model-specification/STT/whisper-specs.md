@@ -9,6 +9,53 @@ Tested 2026-11-27 on an RTX 5090, faster-whisper 1.2.1, CTranslate2 4.9.1, Realt
 fork. Models tested: our fine-tunes `r-854260e0` (bengaliai-200h) and `r-5af3e11f` (OpenSLR, continued from
 r-854260e0), `mozilla-ai/whisper-large-v3-turbo-bn`, and `openai/whisper-large-v3-turbo`.
 
+## Fine-tuned models
+
+Two fine-tunes, both full fine-tunes (all weights, no LoRA) on the `hf` backend. The second run starts from the
+final checkpoint of the first one, not from the base model.
+
+| | `r-854260e0` (fine-tune) | `r-5af3e11f` (continued from a checkpoint) |
+|---|---|---|
+| Recipe | `recipes/training-1-whisper-v3-turbo-bn.yaml` | `recipes/training-2-whisper-v3-turbo-bn-openslr53.yaml` |
+| Starts from | `mozilla-ai/whisper-large-v3-turbo-bn` | `r-854260e0`, checkpoint `final` (step 9168) |
+| Training data | `bengaliai-200h@v1` (hash `67621a32774fa14f`), random 90/5/5 split | `openslr-dataset-4-shards@v1` (OpenSLR 53, hash `9cb484b65e6728ba`), the dataset's own splits |
+| Learning rate, warmup | 1e-5, 500 steps | 5e-6, 300 steps |
+| Epochs | 2 | 3 |
+| Batch | 8 x grad_accum 4 = 32 | 16 x grad_accum 2 = 32 |
+| Optimizer steps | 9168 | 4359 |
+| Other | gradient checkpointing, seed 42 | gradient checkpointing, seed 42, `keep_checkpoints: 2` |
+| Eval set | bengaliai-200h test split, 2000 samples | OpenSLR test split, 3227 samples |
+| WER / CER, fine-tune | **32.6% / 17.2%** | **14.4% / 3.2%** |
+| WER / CER, starting model on the same set | 49.0% / 25.4% (mozilla-ai) | 22.9% / 9.2% (`r-854260e0`) |
+| RTF (eval, HF bf16) | 0.022 | 0.024 |
+| Export | CTranslate2, float16, 1.6 GB | CTranslate2, float16, 1.6 GB |
+
+The two WER rows are measured on different test sets, so do not compare `r-854260e0` with `r-5af3e11f` across
+columns. Within each column, the baseline row is the model the run started from, on the same samples. On OpenSLR,
+continuing from `r-854260e0` cut WER from 22.9% to 14.4%. Neither run has been evaluated on the other run's test set.
+
+**Files.** The runs root is `/srv/mlops/runs` (override with `STT_RUNS_ROOT`). Each run has:
+- `export/ct2/`: the model to deploy with faster-whisper (`model.bin`, `config.json`, `tokenizer.json`,
+  `vocabulary.json`, `preprocessor_config.json`). `export/manifest.json` records `"serve_with": "faster-whisper"`.
+- `checkpoints/final/`: the Hugging Face checkpoint (3.1 GB) that the export was converted from. Use it as
+  `init_from` for further training.
+- `checkpoints/checkpoint-N/`: the last two intermediate checkpoints with optimizer state (9.1 GB each), for resuming:
+  `checkpoint-8253` and `checkpoint-9168` for `r-854260e0`, `checkpoint-3924` and `checkpoint-4359` for `r-5af3e11f`.
+- `eval/results.json`: the metrics in the table above.
+
+`r-5af3e11f/init/` holds the copy of `r-854260e0` `final` that the run started from. Its `init_meta.json` records
+step 9168.
+
+Load either export with the P1 patch below in place:
+
+```python
+from faster_whisper import WhisperModel
+model = WhisperModel("/srv/mlops/runs/r-5af3e11f/export/ct2", device="cuda", compute_type="float16")
+```
+
+Both runs were trained with `<|notimestamps|>` on single-sentence clips of 2 to 6 s. P2 and the training notes at
+the end follow from that.
+
 ## Pipeline these rules apply to
 
 ```
@@ -31,6 +78,7 @@ and text that is not produced in that pass is lost.
 | Retry of a cut window | none | **re-decode as 5 s windows if it hit the token cap or < 12 tokens/s** | P4: remaining cut windows |
 | `ensure_sentence_ends_with_period` | `True` | `False` for Bangla, or log the raw text | P5: cuts look like finished sentences |
 | Per-turn audio and window log | none | **save the WAV and the window plan per turn** | P6: cuts cannot be diagnosed from text |
+| Streaming decode (optional) | decode whole turn at turn end | **chunks at 0.3 s pauses or every 10 s, flush rest at turn end** | P7: STT latency grows with turn length |
 | faster-whisper, ctranslate2 versions | any | **pin 1.2.1 and 4.9.1**; re-run the checks after any upgrade | P1 depends on internals |
 
 The environment variables in the playground are `WHISPER_MAX_LENGTH`, `WHISPER_WINDOW_S`, `WHISPER_RETRY_WINDOW_S`,
@@ -183,6 +231,49 @@ Text alone could not tell a cut audio buffer from a decoding problem. Log the fo
 
 With those, a cut is easy to classify. If the WAV holds the missing words, the problem is decoding (P1 to P4). If it
 doesn't, the problem is endpointing or the audio buffer.
+
+## P7. Optional: decode chunks while the speaker talks (streaming mode)
+
+**Problem.** RealtimeSTT decodes the whole turn after the turn-end silence. The STT time after the endpoint is the
+decode of the whole turn, about 0.35 s for a 15 to 18 s Bangla turn, and it grows with the turn length.
+
+**Fix (optional, a different design).** Keep the recorder for capture, VAD and turn end, so endpointing does not
+change. While a turn is recorded, a side thread reads the recorder's frame buffer every 100 ms
+(`RealtimeSTT.core.recording_buffers.snapshot_frames(recorder)`, int16) and commits a chunk when:
+1. the speaker paused for at least the **chunk pause (0.3 s)** after at least **1.5 s** of uncommitted audio. The
+   chunk ends in the pause. The pause is found with silero VAD (`min_silence_duration_ms` = chunk pause,
+   `speech_pad_ms=100`). The chunk pause must be shorter than the turn-end silence; the playground caps it at 75%;
+2. 10 s pass without such a pause. The chunk ends at the quietest 20 ms in the last 2 s, the next chunk starts 1 s
+   earlier, and the duplicated words are removed as in P3.
+
+Each chunk is decoded by the recorder's own engine, `recorder.perform_final_transcription(audio_bytes=chunk)`, so the
+same model in the same child process decodes it, and no second copy is loaded. At turn end the main loop calls
+`recorder.wait_audio()` instead of `recorder.text()`: it waits for the turn without decoding it. It then waits for a
+chunk decode still in flight and decodes only the uncommitted rest, skipping it when VAD finds no speech in it.
+`recorder.text()` is `wait_audio()` plus `transcribe()`, so a turn-end-mode turn can be decoded from the same loop
+with `recorder.transcribe()`.
+
+Joining the chunks:
+- Strip the period that `ensure_sentence_ends_with_period` adds to every chunk except the last (P5).
+- After a forced split, the overlap can start in the middle of a word (`করতেছিলাম` decodes as `আছিলাম`). The duplicate
+  removal must also compare the start of the next chunk with the same-length end of the previous text, not only
+  whole words.
+
+**Cost.** One silero VAD pass over at most 10 s of audio every 100 ms on the CPU, and the GPU decodes while the user
+speaks. Chunks are decoded without the text before them, so a word at a chunk edge can come out differently than in
+a whole-turn decode. In the tests the text matched the turn-end decode apart from such words.
+
+**Measured (RTX 5090, r-5af3e11f, beam 5, turn-end silence 0.6 s, real turns fed at real-time pace).**
+
+| Turn | Turn-end mode: STT, speech end to text | Streaming: chunks, STT, speech end to text |
+|---|---|---|
+| 18.4 s | 375 ms, 1081 ms | 3 chunks (all at pauses), 2 ms, 609 ms |
+| 14.8 s | 341 to 346 ms, 947 to 955 ms | 2 chunks (one forced split), 3 to 4 ms, 609 to 610 ms |
+| 21 s | 373 ms, 981 ms | 3 chunks, 2 ms, 607 ms |
+
+With streaming, almost all of the speech-end-to-text time is the turn-end silence wait. The playground's live tab has a
+toggle for this mode (applied per turn), and the log records `streaming`, `chunks` (start, end, reason, decode
+time and text of each chunk), `flush_wait_s` and `flush_decode_s`.
 
 ## Required checks after an upgrade or a model change
 

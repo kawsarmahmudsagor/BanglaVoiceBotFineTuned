@@ -57,3 +57,13 @@ via `feed_audio` (the reference's `AUDIO_IO=browser`). Whisper runs on its `fast
 then it transcribes automatically. Stage marks use the same callbacks as the reference's `timing_callbacks`:
 `silence wait` (speech_end -> endpoint) + `hand-off` (endpoint -> stt_start) + `STT` (stt_start -> text)
 = `speech end -> text`. Press Start (mic needs localhost or HTTPS, so use the SSH tunnel to localhost).
+
+**Streaming toggle** (`live_stream.py`, off by default, `STT_STREAM=1` to start with it on): the "Stream" checkbox
+switches between RealtimeSTT's turn-end decode and decoding chunks while the speaker talks. It applies from the next
+turn, with no restart. In streaming mode a chunk is committed at every pause of at least the chunk pause (slider,
+default 0.3 s, `STT_STREAM_PAUSE_S`, capped at 75% of the turn-end silence) after 1.5 s of audio, or forced after
+10 s with a 1 s overlap. Each chunk is decoded by the recorder's own engine. At turn end only the rest is decoded, so
+`STT` drops to the decode of the last few words, or to ~0 when the turn ended on a chunk. The turns table shows the
+mode and the chunk count. The log adds `streaming`, `chunks` (each chunk's span, reason, decode time and text),
+`flush_wait_s` and `flush_decode_s`. Chunks are decoded without the text before them, so a word at a chunk edge can
+come out differently. See `model-specification/STT/whisper-specs.md`, P7.

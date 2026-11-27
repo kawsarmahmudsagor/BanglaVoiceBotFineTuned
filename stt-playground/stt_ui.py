@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 
 import gradio as gr
@@ -26,6 +27,7 @@ from qwen_engine import ENGINE as QWEN_ENGINE, QwenAsr, is_qwen, register
 from registry import base_model_of, label_for, registry
 from runlog import LOG_PATH, log
 import whisper_chunking
+from live_stream import TurnStreamer
 
 register()  # module level: the recorder's spawned child re-imports this module and needs the engine too
 
@@ -233,6 +235,8 @@ def transcribe(audio_path, reference, runs, beam, vad):
 # stage marks from the same callbacks as LocalVoiceAgent's stt.timing_callbacks. ----
 SILENCE_SEC = float(os.environ.get("STT_SILENCE_SEC", "0.6"))  # LocalVoiceAgent default
 TURN_AUDIO_DIR = LOG_PATH.parent / "audio"  # one WAV per live turn, referenced by the log's audio_file
+STREAM_DEFAULT = os.environ.get("STT_STREAM", "0") == "1"  # live tab starts in streaming mode
+STREAM_PAUSE_S = float(os.environ.get("STT_STREAM_PAUSE_S", "0.3"))
 
 
 class Live:
@@ -248,6 +252,10 @@ class Live:
         self.resampler_sr = None
         self.label = None
         self.cfg: dict = {}
+        self.stream = STREAM_DEFAULT  # transcribe chunks while speaking (live_stream.py); read per turn
+        self.chunk_pause = STREAM_PAUSE_S
+        self.streamer = None
+        self.turn_gen = 0
 
     def _mark(self, k):
         with self.lock:
@@ -263,17 +271,28 @@ class Live:
                 if "endpoint" not in self.marks:  # user resumed speaking: not the end of the turn
                     self.marks.pop("speech_end", None)
 
+        def on_recording_start():
+            self.state = "speaking..."
+            self.turn_gen += 1
+            self.streamer = None
+            if self.stream and self.rec is not None:
+                gen = self.turn_gen
+                pause = min(float(self.chunk_pause), 0.75 * float(self.cfg.get("post_speech_silence_s", SILENCE_SEC)))
+                self.streamer = TurnStreamer(self.rec, pause, lambda: self.turn_gen == gen)
+
         return {
             "on_turn_detection_start": lambda: self._mark("speech_end"),
             "on_turn_detection_stop": on_turn_stop,
             "on_recording_stop": lambda: self._mark("endpoint"),
             "on_transcription_start": on_start,
-            "on_recording_start": lambda: setattr(self, "state", "speaking..."),
+            "on_recording_start": on_recording_start,
         }
 
-    def start(self, ckpt, compute_type, silence, beam) -> str:
+    def start(self, ckpt, compute_type, silence, beam, stream=None, chunk_pause=None) -> str:
         self.stop()
         from RealtimeSTT import AudioToTextRecorder
+
+        self.set_stream(stream, chunk_pause)
 
         ckpt = ckpt.strip()
         qwen = is_qwen(ckpt)
@@ -298,34 +317,81 @@ class Live:
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
         how = "Qwen3-ASR, bf16, greedy" if qwen else f"{compute_type}, beam {int(beam)}"
-        return f"Live recorder ready: {ckpt} ({how}), turn-end silence {float(silence):.2f}s."
+        return f"Live recorder ready: {ckpt} ({how}), turn-end silence {float(silence):.2f}s. {self._mode_text()}"
+
+    def set_stream(self, stream=None, chunk_pause=None) -> str:
+        """Toggle streaming decode; applies from the next turn, no restart."""
+        if stream is not None:
+            self.stream = bool(stream)
+        if chunk_pause is not None:
+            self.chunk_pause = float(chunk_pause)
+        if not self.stream and self.streamer:  # switched off mid-turn: this turn is decoded whole by text()
+            self.streamer.cancel()
+            self.streamer = None
+        if self.rec is not None:
+            log("live_mode", model=self.label, streaming=self.stream, chunk_pause_s=self.chunk_pause)
+        return self._mode_text()
+
+    def _mode_text(self) -> str:
+        return (f"Mode: **streaming** (chunks decoded while speaking at pauses >= {self.chunk_pause:.2f}s, "
+                f"rest flushed at turn end)." if self.stream else "Mode: **turn-end decode** (RealtimeSTT default).")
+
+    def _turn(self) -> tuple[str, np.ndarray | None, dict, float | None]:
+        """(text, turn audio, extra log fields, stt start) for one turn. Turn-end mode: the recorder's text(), which
+        decodes the whole turn after the endpoint. Streaming mode: wait_audio() (same endpointing, no decode), then
+        the TurnStreamer flushes whatever it has not decoded yet."""
+        rec = self.rec
+        rec.interrupt_stop_event.clear()  # what rec.text() does: wait_audio(), then transcribe()
+        rec.was_interrupted.clear()
+        rec.wait_audio()  # the loop waits here for the next turn, so the mode is decided after it (per turn)
+        streamer, self.streamer = self.streamer, None
+        if rec.is_shut_down or rec.interrupt_stop_event.is_set():
+            if streamer:
+                streamer.cancel()
+            return "", None, {}, None
+        if streamer is None:  # turn-end mode (or streaming switched on mid-turn): decode the whole turn
+            text = rec.transcribe()
+            return text or "", getattr(rec, "last_transcription_bytes", None), {"streaming": False}, None
+        st = time.perf_counter()
+        audio = getattr(rec, "audio", None)
+        if audio is None or not len(audio):
+            streamer.cancel()
+            return "", None, {}, st
+        text, extra = streamer.finish(audio)
+        return text, audio, extra, st
 
     def _loop(self):
         while self.running:
             try:
-                text = self.rec.text()
+                text, audio, extra, st0 = self._turn()
             except Exception:  # noqa: BLE001 - recorder shut down
-                break
+                if not self.running:
+                    break
+                traceback.print_exc()
+                continue
             done = time.perf_counter()
             with self.lock:
                 m, self.marks = self.marks, {}
             if not text or "speech_end" not in m:
                 self.state = "listening..."
                 continue
-            se, ep, st = m["speech_end"], m.get("endpoint", done), m.get("stt_start", m.get("endpoint", done))
-            self.turns.insert(0, {"silence_ms": (ep - se) * 1000, "gap_ms": (st - ep) * 1000,
+            se, ep = m["speech_end"], m.get("endpoint", done)
+            st = st0 or m.get("stt_start", ep)
+            mode = "stream" if extra.get("streaming") else "turn-end"
+            self.turns.insert(0, {"mode": mode, "chunks": len(extra.get("chunks", [])) or 1,
+                                  "silence_ms": (ep - se) * 1000, "gap_ms": (st - ep) * 1000,
                                   "stt_ms": (done - st) * 1000, "total_ms": (done - se) * 1000, "text": text.strip()})
-            wav_path, audio_s = self._save_turn_audio()
-            log("transcribe", mode="live", **self.cfg, silence_wait_s=round(ep - se, 4),
+            wav_path, audio_s = self._save_turn_audio(audio)
+            cfg = {**self.cfg, "streaming": False, **extra}
+            log("transcribe", mode="live", **cfg, silence_wait_s=round(ep - se, 4),
                 handoff_s=round(st - ep, 4), latency_s=round(done - st, 4),
                 speech_end_to_text_s=round(done - se, 4), audio_s=audio_s, audio_file=wav_path,
                 text=text.strip())
             self.state = "listening..."
 
-    def _save_turn_audio(self) -> tuple[str | None, float | None]:
-        """Save the exact audio the recorder sent to the engine (last_transcription_bytes, 16 kHz float32) as a
-        WAV next to the log, so a turn can be replayed in the file tab or offline."""
-        audio = getattr(self.rec, "last_transcription_bytes", None)
+    def _save_turn_audio(self, audio) -> tuple[str | None, float | None]:
+        """Save the turn's audio (16 kHz float32: what the recorder sent to the engine in turn-end mode, the whole
+        recorded turn in streaming mode) as a WAV next to the log, so a turn can be replayed in the file tab."""
         if audio is None or not len(audio):
             return None, None
         import soundfile as sf
@@ -371,9 +437,9 @@ class Live:
         return "Live recorder stopped."
 
     def view(self):
-        rows = [[f"{t['silence_ms']:.0f}", f"{t['gap_ms']:.0f}", f"{t['stt_ms']:.0f}", f"{t['total_ms']:.0f}", t["text"]]
+        rows = [[t["mode"], t["chunks"], f"{t['silence_ms']:.0f}", f"{t['gap_ms']:.0f}", f"{t['stt_ms']:.0f}", f"{t['total_ms']:.0f}", t["text"]]
                 for t in self.turns[:50]]
-        head = f"**{self.state}**"
+        head = f"**{self.state}** · {self._mode_text()}"
         if self.turns:
             t = self.turns[0]
             head += (f"\n\nLast turn: speech end \u2192 text = **{t['total_ms']:.0f} ms** "
@@ -409,14 +475,21 @@ def build():
                 lbeam = gr.Slider(1, 10, value=5, step=1, label="Beam size")
                 lstart = gr.Button("Start", variant="primary")
                 lstop = gr.Button("Stop")
+            with gr.Row():
+                lstream = gr.Checkbox(value=STREAM_DEFAULT, label="Stream: transcribe chunks while speaking, flush the "
+                                      "rest at turn end (applies from the next turn)")
+                lpause = gr.Slider(0.15, 1.0, value=STREAM_PAUSE_S, step=0.05,
+                                   label="Chunk pause (s): commit a chunk at a pause this long (capped at 75% of turn-end silence)")
             lmsg = gr.Markdown("")
             mic = gr.Audio(sources=["microphone"], streaming=True, type="numpy", label="Microphone")
             lstatus = gr.Markdown("**stopped**")
             ltext = gr.Textbox(label="Last transcript", lines=3, interactive=False)
-            lturns = gr.Dataframe(headers=["silence wait ms", "hand-off ms", "STT ms", "speech end \u2192 text ms", "text"],
+            lturns = gr.Dataframe(headers=["mode", "chunks", "silence wait ms", "hand-off ms", "STT ms", "speech end \u2192 text ms", "text"],
                                   label="Turns (speech end = VAD hears silence, as in the reference's TurnTimer)", interactive=False)
             mic.stream(live.feed, mic, None, stream_every=0.2, time_limit=None, concurrency_limit=1, show_progress="hidden")
-            lstart.click(live.start, [ckpt, ctype, lsil, lbeam], lmsg)
+            lstart.click(live.start, [ckpt, ctype, lsil, lbeam, lstream, lpause], lmsg)
+            lstream.change(live.set_stream, [lstream, lpause], lmsg)
+            lpause.release(live.set_stream, [lstream, lpause], lmsg)
             lstop.click(live.stop, None, lmsg)
             gr.Timer(0.3).tick(live.view, None, [lstatus, ltext, lturns])
         with gr.Tab("Record / upload"):

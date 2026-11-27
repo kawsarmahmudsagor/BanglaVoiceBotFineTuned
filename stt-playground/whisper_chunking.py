@@ -108,6 +108,10 @@ def join_overlap(prev: str, nxt: str, max_words: int = 8) -> str:
         y = "".join(_norm(w) for w in b[:k])
         if x and y and difflib.SequenceMatcher(None, x, y).ratio() >= 0.75:
             return " ".join(b[k:])
+        # The overlap can start mid-word: `nxt` then begins with the tail of a word (করতেছিলাম -> আছিলাম), so
+        # compare with the same-length end of `prev` instead.
+        if len(y) >= 4 and len(x) > len(y) and difflib.SequenceMatcher(None, x[-len(y):], y).ratio() >= 0.75:
+            return " ".join(b[k:])
     return nxt
 
 

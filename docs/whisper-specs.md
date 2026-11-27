@@ -31,6 +31,7 @@ and text that is not produced in that pass is lost.
 | Retry of a cut window | none | **re-decode as 5 s windows if it hit the token cap or < 12 tokens/s** | P4: remaining cut windows |
 | `ensure_sentence_ends_with_period` | `True` | `False` for Bangla, or log the raw text | P5: cuts look like finished sentences |
 | Per-turn audio and window log | none | **save the WAV and the window plan per turn** | P6: cuts cannot be diagnosed from text |
+| Streaming decode (optional) | decode whole turn at turn end | **chunks at 0.3 s pauses or every 10 s, flush rest at turn end** | P7: STT latency grows with turn length |
 | faster-whisper, ctranslate2 versions | any | **pin 1.2.1 and 4.9.1**; re-run the checks after any upgrade | P1 depends on internals |
 
 The environment variables in the playground are `WHISPER_MAX_LENGTH`, `WHISPER_WINDOW_S`, `WHISPER_RETRY_WINDOW_S`,
@@ -183,6 +184,49 @@ Text alone could not tell a cut audio buffer from a decoding problem. Log the fo
 
 With those, a cut is easy to classify. If the WAV holds the missing words, the problem is decoding (P1 to P4). If it
 doesn't, the problem is endpointing or the audio buffer.
+
+## P7. Optional: decode chunks while the speaker talks (streaming mode)
+
+**Problem.** RealtimeSTT decodes the whole turn after the turn-end silence. The STT time after the endpoint is the
+decode of the whole turn, about 0.35 s for a 15 to 18 s Bangla turn, and it grows with the turn length.
+
+**Fix (optional, a different design).** Keep the recorder for capture, VAD and turn end, so endpointing does not
+change. While a turn is recorded, a side thread reads the recorder's frame buffer every 100 ms
+(`RealtimeSTT.core.recording_buffers.snapshot_frames(recorder)`, int16) and commits a chunk when:
+1. the speaker paused for at least the **chunk pause (0.3 s)** after at least **1.5 s** of uncommitted audio. The
+   chunk ends in the pause. The pause is found with silero VAD (`min_silence_duration_ms` = chunk pause,
+   `speech_pad_ms=100`). The chunk pause must be shorter than the turn-end silence; the playground caps it at 75%;
+2. 10 s pass without such a pause. The chunk ends at the quietest 20 ms in the last 2 s, the next chunk starts 1 s
+   earlier, and the duplicated words are removed as in P3.
+
+Each chunk is decoded by the recorder's own engine, `recorder.perform_final_transcription(audio_bytes=chunk)`, so the
+same model in the same child process decodes it, and no second copy is loaded. At turn end the main loop calls
+`recorder.wait_audio()` instead of `recorder.text()`: it waits for the turn without decoding it. It then waits for a
+chunk decode still in flight and decodes only the uncommitted rest, skipping it when VAD finds no speech in it.
+`recorder.text()` is `wait_audio()` plus `transcribe()`, so a turn-end-mode turn can be decoded from the same loop
+with `recorder.transcribe()`.
+
+Joining the chunks:
+- Strip the period that `ensure_sentence_ends_with_period` adds to every chunk except the last (P5).
+- After a forced split, the overlap can start in the middle of a word (`করতেছিলাম` decodes as `আছিলাম`). The duplicate
+  removal must also compare the start of the next chunk with the same-length end of the previous text, not only
+  whole words.
+
+**Cost.** One silero VAD pass over at most 10 s of audio every 100 ms on the CPU, and the GPU decodes while the user
+speaks. Chunks are decoded without the text before them, so a word at a chunk edge can come out differently than in
+a whole-turn decode. In the tests the text matched the turn-end decode apart from such words.
+
+**Measured (RTX 5090, r-5af3e11f, beam 5, turn-end silence 0.6 s, real turns fed at real-time pace).**
+
+| Turn | Turn-end mode: STT, speech end to text | Streaming: chunks, STT, speech end to text |
+|---|---|---|
+| 18.4 s | 375 ms, 1081 ms | 3 chunks (all at pauses), 2 ms, 609 ms |
+| 14.8 s | 341 to 346 ms, 947 to 955 ms | 2 chunks (one forced split), 3 to 4 ms, 609 to 610 ms |
+| 21 s | 373 ms, 981 ms | 3 chunks, 2 ms, 607 ms |
+
+With streaming, almost all of the speech-end-to-text time is the turn-end silence wait. The playground's live tab has a
+toggle for this mode (applied per turn), and the log records `streaming`, `chunks` (start, end, reason, decode
+time and text of each chunk), `flush_wait_s` and `flush_decode_s`.
 
 ## Required checks after an upgrade or a model change
 
