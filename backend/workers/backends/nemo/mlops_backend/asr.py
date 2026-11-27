@@ -220,6 +220,64 @@ def has_val_manifest(prepared_dir: Path) -> bool:
     return val.is_file() and val.stat().st_size > 0
 
 
+def quiet_predictions(model) -> None:
+    """Stop NeMo printing a `WER reference:` / `WER predicted:` pair for every logged batch (checkpoints such as
+    SayedShaun/stt_bn_fastconformer_hybrid_large_v2 ship with `log_prediction: true`). Covers the RNNT `wer` and
+    the hybrid model's `ctc_wer`; change_decoding_strategy() copies these flags when it rebuilds the metrics."""
+    from omegaconf import open_dict
+
+    for name in ("wer", "ctc_wer"):
+        metric = getattr(model, name, None)
+        if metric is not None and hasattr(metric, "log_prediction"):
+            metric.log_prediction = False
+    cfg = getattr(model, "cfg", None)
+    if cfg is not None and "log_prediction" in cfg:
+        with open_dict(cfg):
+            cfg.log_prediction = False
+
+
+def step_line(step: int, total: int, metrics: dict, epoch: float | None) -> str:
+    """One readable progress line per optimizer step, in the style of the transformers backends' logs."""
+    parts = [f"'step': {step}/{total}"]
+    for key, label, fmt in (("train_loss", "loss", ".4g"), ("train_rnnt_loss", "rnnt_loss", ".4g"),
+                            ("train_ctc_loss", "ctc_loss", ".4g"), ("training_batch_wer", "batch_wer", ".3f"),
+                            ("learning_rate", "learning_rate", ".3e")):
+        v = _float(metrics.get(key))
+        if v is not None:
+            parts.append(f"'{label}': '{v:{fmt}}'")
+    if epoch is not None:
+        parts.append(f"'epoch': '{epoch:.3f}'")
+    return "{" + ", ".join(parts) + "}"
+
+
+def val_line(step: int, metrics: dict) -> str:
+    parts = [f"'step': {step}"]
+    for key, label, fmt in (("val_loss", "eval_loss", ".4g"), ("val_wer", "eval_wer", ".4f")):
+        v = _float(metrics.get(key))
+        if v is not None:
+            parts.append(f"'{label}': '{v:{fmt}}'")
+    return "{" + ", ".join(parts) + "}"
+
+
+def quiet_numba() -> None:
+    """The numba-cuda RNNT kernels warn about low GPU occupancy on every small launch (validation, transcribe).
+    Matched by message: numba-cuda raises its own NumbaPerformanceWarning class (numba.cuda.core.errors)."""
+    import warnings
+
+    warnings.filterwarnings("ignore", message=r".*will likely result in GPU under-utilization")
+
+
+def _float(v) -> float | None:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+# Training WER is a greedy decode of the batch; NeMo runs it on steps where (step + 1) % log_every_n_steps == 0.
+TRAIN_WER_EVERY = 100
+
+
 def hyp_texts(out) -> list[str]:
     """transcribe() returns strings, Hypothesis objects, n-best lists, or a (best, all) tuple for RNNT."""
     if isinstance(out, tuple):
@@ -280,16 +338,32 @@ def train(rd: RunDir, cfg: RunConfig, rep) -> int:
         def on_train_start(self, trainer, pl_module):
             stop.install()
 
+    class _StepLog(Callback):  # one line per optimizer step on stdout, plus one per validation
+        def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+            if (batch_idx + 1) % accum or not trainer.is_global_zero:
+                return
+            step = int(trainer.global_step)
+            print(step_line(step, total, trainer.callback_metrics, step / batches_per_step_epoch), flush=True)
+
+        def on_validation_end(self, trainer, pl_module):
+            if not trainer.sanity_checking and trainer.is_global_zero:
+                print(val_line(int(trainer.global_step), trainer.callback_metrics), flush=True)
+
+    batches_per_step_epoch = max(1.0, batches_per_epoch / accum)
+    quiet_numba()
     model = load_model(rd, cfg)
+    quiet_predictions(model)
     trainer = Trainer(
         devices=1, accelerator="gpu", precision="bf16-mixed", max_steps=total, max_epochs=-1,
         accumulate_grad_batches=accum, logger=False, enable_checkpointing=True,
-        callbacks=[_InstallStop(), ContractLightningCallback(rep, stop, NanGuard(), total),
+        callbacks=[_InstallStop(), _StepLog(), ContractLightningCallback(rep, stop, NanGuard(), total),
                    ContractCheckpoint(rd, cfg.base_model, every_n_train_steps=save_steps,
                                       keep=keep_checkpoints(hp))],
         check_val_every_n_epoch=None, val_check_interval=min(save_steps * accum, batches_per_epoch),
         num_sanity_val_steps=0, enable_progress_bar=False,
-        log_every_n_steps=1,  # keeps train_loss in callback_metrics at every optimizer step (the contract callback reads it)
+        # callback_metrics (read by the contract callback and _StepLog) update every step whatever this is set to;
+        # it only sets how often NeMo decodes the training batch for training_batch_wer, which costs step time.
+        log_every_n_steps=TRAIN_WER_EVERY,
         limit_val_batches=1.0 if has_val else 0)
     model.set_trainer(trainer)
     apply_data_config(model, prepared, batch_size=batch, val_cap=max_val_samples(hp), seed=cfg.seed,
@@ -338,6 +412,7 @@ def eval(rd: RunDir, cfg: RunConfig, rep) -> int:  # noqa: A001  (phase handler 
     rows = eval_rows(cfg)
     check_manifest_refs(SimpleNamespace(**{k: train_ref(rd)[k] for k in ("files", "path")}))
 
+    quiet_numba()
     model = restore_model(str(final / "model.nemo"))
     tuned = _eval_model(model, cfg, rd, rep, rows, "", max_samples)
     del model

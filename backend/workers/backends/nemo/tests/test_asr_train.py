@@ -210,3 +210,20 @@ def test_val_manifest_capped_to_seeded_subset(tmp_path):
     m3 = FakeModel()  # small val: the prepared manifest is used as is
     asr.apply_data_config(m3, prep, batch_size=2, val_cap=50, seed=3, work_dir=work)
     assert m3.calls[1][1]["manifest_filepath"] == str(prep / "val.jsonl")
+
+
+def test_step_line_formats_known_metrics():
+    line = asr.step_line(12, 100, {"train_loss": 46.04882, "train_ctc_loss": "x", "learning_rate": 2e-5}, 0.0052)
+    assert line == "{'step': 12/100, 'loss': '46.05', 'learning_rate': '2.000e-05', 'epoch': '0.005'}"
+    assert asr.val_line(1000, {"val_loss": 3.21, "val_wer": 0.1834}) == \
+        "{'step': 1000, 'eval_loss': '3.21', 'eval_wer': '0.1834'}"
+
+
+def test_quiet_predictions_turns_off_wer_logging():
+    from omegaconf import OmegaConf
+
+    m = SimpleNamespace(wer=SimpleNamespace(log_prediction=True), ctc_wer=SimpleNamespace(log_prediction=True),
+                        cfg=OmegaConf.create({"log_prediction": True}))
+    asr.quiet_predictions(m)
+    assert m.wer.log_prediction is False and m.ctc_wer.log_prediction is False and m.cfg.log_prediction is False
+    asr.quiet_predictions(SimpleNamespace(cfg=OmegaConf.create({})))  # CTC-only model without the key: no error
