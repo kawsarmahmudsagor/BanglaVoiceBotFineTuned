@@ -12,6 +12,12 @@ import yt_dlp
 VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")  # ids name files and folders on disk
 
 
+VIDEO_FORMAT = (
+    "bestvideo[height<=720][vcodec^=avc1]+bestaudio[acodec^=mp4a]"
+    "/best[height<=720][ext=mp4]/best[height<=720]"
+)
+
+
 class DownloadError(RuntimeError):
     """Wraps a yt-dlp / ffmpeg failure; message keeps the last error line."""
 
@@ -61,6 +67,8 @@ def download(
     on_progress: Callable[[int, int], None],
     cookies: Path | None = None,
     ydl_factory=None,
+    *,
+    keep_video: bool = False,
 ) -> dict:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -83,10 +91,15 @@ def download(
         "progress_hooks": [hook],
         "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "wav"}],
     }
+    if keep_video:
+        opts["format"] = VIDEO_FORMAT
+        opts["outtmpl"] = str(out_dir / "video.%(ext)s")
+        opts["merge_output_format"] = "mp4"
+        del opts["postprocessors"]
     if cookies:
         opts["cookiefile"] = str(cookies)
 
-    raw_wav = out_dir / "raw.wav"
+    raw_wav = out_dir / ("video.mp4" if keep_video else "raw.wav")
     final = out_dir / "audio.wav"
     try:
         with ydl_factory(opts) as ydl:
@@ -110,10 +123,13 @@ def download(
         for p in out_dir.glob("raw.*"):
             p.unlink(missing_ok=True)
 
-    return {
+    meta = {
         "title": info.get("title"),
         "channel": info.get("channel") or info.get("uploader"),
         "upload_date": info.get("upload_date"),
         "duration_s": info.get("duration"),
         "license": info.get("license"),
     }
+    if keep_video:
+        meta["media"] = "download/video.mp4"
+    return meta
