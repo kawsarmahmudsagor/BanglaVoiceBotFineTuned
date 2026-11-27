@@ -7,11 +7,19 @@ Gradio UI to check Bangla STT quality and latency for the two model families the
 - **Qwen3-ASR**: transformers, bf16, greedy, with the same prompt as the qwen-asr backend's eval
   (`language Bengali<asr_text>`, read from `backend/workers/backends/qwen-asr/mlops_backend/prompt.py`).
 
-The model family is detected from the checkpoint (its `config.json` `model_type`), so one box takes either.
+- **NeMo** (FastConformer / Conformer, RNN-T, CTC or hybrid, e.g. `SayedShaun/stt_bn_fastconformer_hybrid_large_v2`):
+  loaded with the nemo training backend's own `restore_model` (`nemo_engine.py`), fp32, greedy. The **Decoder**
+  dropdown picks the RNN-T or CTC head of a hybrid model (reloads; `STT_NEMO_DECODER` sets the default). Audio goes
+  through the encoder and decoder directly, not NeMo's `transcribe()`, which also leaves the encoder in training
+  mode (dropout on) after it returns.
+
+The model family is detected from the checkpoint (a `.nemo` file or a dir holding one, or a known NeMo repo id, is
+NeMo; otherwise its `config.json` `model_type`), so one box takes any of them.
 
 **Model dropdown** (`registry.py`): the base models (`openai/whisper-large-v3-turbo`,
-`mozilla-ai/whisper-large-v3-turbo-bn`, `SayedShaun/Qwen3-ASR-0.6B-Bengali`) plus every ASR run under
-`/srv/mlops/runs` (override: `STT_RUNS_ROOT`), one entry each: its export (`ct2` / `safetensors`, written after
+`mozilla-ai/whisper-large-v3-turbo-bn`, `SayedShaun/Qwen3-ASR-0.6B-Bengali`,
+`SayedShaun/stt_bn_fastconformer_hybrid_large_v2`) plus every ASR run under
+`/srv/mlops/runs` (override: `STT_RUNS_ROOT`), one entry each: its export (`ct2` / `safetensors` / `nemo`, written after
 the run finished, labelled with the run's eval WER on its own eval set), or its `final` checkpoint when it has no
 export. Selecting an entry loads it; "Rescan runs" picks up new runs. Whisper `checkpoint-N` dirs hold no tokenizer, so the base model's tokenizer is staged next to
 links to the checkpoint (`~/.cache/stt-playground/staged`) before the CT2 conversion. The checkpoint box still

@@ -1,10 +1,12 @@
-"""Gradio UI: test Bangla STT quality (optional WER/CER vs reference) and latency, Whisper or Qwen3-ASR.
+"""Gradio UI: test Bangla STT quality (optional WER/CER vs reference) and latency: Whisper, Qwen3-ASR or NeMo.
 
 Mirrors the LocalVoiceAgent STT pipeline: RealtimeSTT's `faster_whisper` engine = faster-whisper on a
 CTranslate2 model, language forced to Bangla, silero VAD, beam 5. A HF-format checkpoint (what the fine-tune
 produces, or mozilla-ai/whisper-large-v3-turbo-bn) is converted to CT2 once and cached; a CT2 dir
 (the `ct2` export) is used as is. Qwen3-ASR checkpoints (repo id, training checkpoint or `safetensors` export)
-run with transformers, bf16, greedy, through qwen_engine.py (also a RealtimeSTT engine for the live tab).
+run with transformers, bf16, greedy, through qwen_engine.py (also a RealtimeSTT engine for the live tab). NeMo
+checkpoints (FastConformer / Conformer: repo id with a .nemo file, a .nemo file, or the `nemo` export dir) run with
+NeMo, fp32, greedy RNN-T or CTC, through nemo_engine.py (also a live-tab engine).
 
 Run: ./run.sh
 """
@@ -23,6 +25,7 @@ import numpy as np
 
 from app.core.backend_kit.audio import load_audio
 from app.core.text import bn_normalize
+from nemo_engine import ENGINE as NEMO_ENGINE, NemoAsr, is_nemo, register as register_nemo
 from qwen_engine import ENGINE as QWEN_ENGINE, QwenAsr, is_qwen, register
 from registry import base_model_of, label_for, registry
 from runlog import LOG_PATH, log
@@ -30,6 +33,7 @@ import whisper_chunking
 from live_stream import TurnStreamer
 
 register()  # module level: the recorder's spawned child re-imports this module and needs the engine too
+register_nemo()
 
 
 def _raise_whisper_token_cap() -> None:
@@ -63,7 +67,16 @@ CT2_CACHE = Path(os.environ.get("CT2_CACHE", Path.home() / ".cache" / "stt-playg
 DEVICE = os.environ.get("STT_DEVICE", "cuda")
 LANG = "bn"
 
-_state: dict = {"model": None, "label": None, "qwen": False, "ckpt": None, "compute_type": None}
+_state: dict = {"model": None, "label": None, "qwen": False, "family": None, "ckpt": None, "compute_type": None,
+                "decoder": None}
+NEMO_DECODERS = ["rnnt", "ctc"]
+
+
+def family_of(ckpt: str) -> str:
+    """Whisper, Qwen3-ASR or NeMo. NeMo first: its repos have no config.json for the Qwen check."""
+    if is_nemo(ckpt):
+        return "NeMo"
+    return "Qwen3-ASR" if is_qwen(ckpt) else "Whisper"
 _history: list[list] = []
 
 
@@ -107,13 +120,16 @@ def resolve_ct2(ckpt: str, compute_type: str) -> tuple[str, str]:
     return str(out), f"converted to CT2 ({compute_type}) at {out}"
 
 
-def load_model(ckpt: str, compute_type: str) -> str:
+def load_model(ckpt: str, compute_type: str, decoder: str = "rnnt") -> str:
     ckpt = ckpt.strip()
     if not ckpt:
-        return "Enter a checkpoint (HF repo id, HF-format dir, or CT2 dir)."
+        return "Enter a checkpoint (HF repo id, HF-format dir, CT2 dir, Qwen3-ASR dir or .nemo)."
     t0 = time.perf_counter()
-    _state.update(model=None, qwen=False, ckpt=None, label=None)
-    if is_qwen(ckpt):
+    _state.update(model=None, qwen=False, family=None, ckpt=None, label=None, decoder=None)
+    family = family_of(ckpt)
+    if family == "NeMo":
+        return _load_nemo(ckpt, decoder)
+    if family == "Qwen3-ASR":
         return _load_qwen(ckpt)
     try:
         from faster_whisper import WhisperModel
@@ -132,7 +148,7 @@ def load_model(ckpt: str, compute_type: str) -> str:
         log("load", ok=False, model=label_for(ckpt), checkpoint=ckpt, family="Whisper", device=DEVICE,
             compute_type=compute_type, error=f"{type(e).__name__}: {e}")
         return f"Load failed: {type(e).__name__}: {e}"
-    _state.update(model=model, label=label_for(ckpt), ckpt=ckpt, compute_type=compute_type)
+    _state.update(model=model, label=label_for(ckpt), family="Whisper", ckpt=ckpt, compute_type=compute_type)
     log("load", ok=True, model=_state["label"], checkpoint=ckpt, family="Whisper",
         engine="faster-whisper (CTranslate2)", ct2_path=path, device=DEVICE, compute_type=compute_type,
         convert_s=round(convert_s, 3), load_s=round(load_s, 3), warmup_s=round(warm_s, 3))
@@ -152,11 +168,34 @@ def _load_qwen(ckpt: str) -> str:
         log("load", ok=False, model=label_for(ckpt), checkpoint=ckpt, family="Qwen3-ASR", device=DEVICE,
             compute_type="bfloat16", error=f"{type(e).__name__}: {e}")
         return f"Load failed: {type(e).__name__}: {e}"
-    _state.update(model=model, label=label_for(ckpt), qwen=True, ckpt=ckpt, compute_type="bfloat16")
+    _state.update(model=model, label=label_for(ckpt), qwen=True, family="Qwen3-ASR", ckpt=ckpt,
+                  compute_type="bfloat16")
     log("load", ok=True, model=_state["label"], checkpoint=ckpt, family="Qwen3-ASR", engine="transformers",
         device=DEVICE, compute_type="bfloat16", load_s=round(load_s, 3), warmup_s=round(warm_s, 3))
     return (f"Loaded **{ckpt}** (Qwen3-ASR, transformers) on {DEVICE}/bf16, greedy; compute type, beam and VAD "
             f"do not apply. load {load_s:.1f}s, warm-up {warm_s:.1f}s.")
+
+
+def _load_nemo(ckpt: str, decoder: str) -> str:
+    t0 = time.perf_counter()
+    try:
+        model = NemoAsr(ckpt, DEVICE, decoder)
+        load_s = time.perf_counter() - t0
+        t1 = time.perf_counter()
+        model.transcribe(np.zeros(16000, dtype="float32"))  # warm-up (CUDA init)
+        warm_s = time.perf_counter() - t1
+    except Exception as e:  # noqa: BLE001 - show any load error in the UI
+        log("load", ok=False, model=label_for(ckpt), checkpoint=ckpt, family="NeMo", device=DEVICE,
+            compute_type="float32", decoder=decoder, error=f"{type(e).__name__}: {e}")
+        return f"Load failed: {type(e).__name__}: {e}"
+    _state.update(model=model, label=label_for(ckpt), family="NeMo", ckpt=ckpt, compute_type="float32",
+                  decoder=model.decoder)
+    log("load", ok=True, model=_state["label"], checkpoint=ckpt, family="NeMo", engine=f"nemo ({model.kind})",
+        device=DEVICE, compute_type="float32", decoder=model.decoder, load_s=round(load_s, 3),
+        warmup_s=round(warm_s, 3))
+    note = "" if model.decoder == decoder else f" ({decoder} not available: this model has only {model.decoder})"
+    return (f"Loaded **{ckpt}** (NeMo {model.kind}) on {DEVICE}/fp32, greedy **{model.decoder.upper()}**{note}; "
+            f"compute type, beam and VAD do not apply. load {load_s:.1f}s, warm-up {warm_s:.1f}s.")
 
 
 def _edit_distance(a, b) -> int:
@@ -192,7 +231,7 @@ def transcribe(audio_path, reference, runs, beam, vad):
     lat, text, audio_s = [], "", len(wav) / 16000
     for _ in range(max(1, int(runs))):
         t0 = time.perf_counter()
-        if _state["qwen"]:
+        if _state["family"] != "Whisper":  # Qwen3-ASR / NeMo: whole clip, greedy
             text = model.transcribe(wav)
         else:
             if vad:  # same path as the live recorder: batched pipeline, windowed by whisper_chunking
@@ -210,13 +249,14 @@ def transcribe(audio_path, reference, runs, beam, vad):
     lines = [f"audio {audio_s:.2f}s",
              f"latency {mean:.3f} s mean, {min(lat):.3f} s best (n={len(lat)})",
              f"RTF {rtf:.3f}  " + ("(Qwen3-ASR, greedy)" if _state["qwen"]
+                                     else f"(NeMo, greedy {_state['decoder'].upper()})" if _state["family"] == "NeMo"
                                      else f"(beam {int(beam)}, VAD {'on, ' + f'{WHISPER_WINDOW_S:g} s windows' if vad else 'off'})")]
     score = _score(text, reference) if reference.strip() else None
     if score:
         lines.append(f"WER {score[0]:.1%} | CER {score[1]:.1%} (bn_normalize, asr mode)")
-    qwen = _state["qwen"]
+    qwen = _state["family"] != "Whisper"  # greedy, whole clip: no beam / VAD / window settings
     log("transcribe", mode="file", model=_state["label"], checkpoint=_state["ckpt"],
-        family="Qwen3-ASR" if qwen else "Whisper", device=DEVICE, compute_type=_state["compute_type"],
+        family=_state["family"], device=DEVICE, compute_type=_state["compute_type"], decoder=_state["decoder"],
         decoding="greedy" if qwen else "beam", beam_size=None if qwen else int(beam),
         vad_filter=None if qwen else bool(vad), window_s=None if qwen or not vad else WHISPER_WINDOW_S,
         whisper_max_length=None if qwen else int(os.environ.get("WHISPER_MAX_LENGTH", "880")),
@@ -288,24 +328,29 @@ class Live:
             "on_recording_start": on_recording_start,
         }
 
-    def start(self, ckpt, compute_type, silence, beam, stream=None, chunk_pause=None) -> str:
+    def start(self, ckpt, compute_type, silence, beam, stream=None, chunk_pause=None, decoder="rnnt") -> str:
         self.stop()
         from RealtimeSTT import AudioToTextRecorder
 
         self.set_stream(stream, chunk_pause)
 
         ckpt = ckpt.strip()
-        qwen = is_qwen(ckpt)
+        family = family_of(ckpt)
+        qwen = family != "Whisper"  # Qwen3-ASR / NeMo: greedy, no CT2 conversion, no beam
+        engine = {"NeMo": NEMO_ENGINE, "Qwen3-ASR": QWEN_ENGINE}.get(family, "faster_whisper")
+        ctype = {"NeMo": "float32", "Qwen3-ASR": "bfloat16"}.get(family, compute_type)
         path = ckpt if qwen else resolve_ct2(ckpt, compute_type)[0]
+        if family == "NeMo":  # read by the engine in the recorder's spawned process (it inherits the environment)
+            os.environ["STT_NEMO_DECODER"] = decoder
         self.state = "loading model in recorder process..."
         self.rec = AudioToTextRecorder(
-            model=path, transcription_engine=QWEN_ENGINE if qwen else "faster_whisper", device=DEVICE,
-            compute_type="bfloat16" if qwen else compute_type, language=LANG, use_microphone=False, spinner=False, enable_realtime_transcription=False,
+            model=path, transcription_engine=engine, device=DEVICE,
+            compute_type=ctype, language=LANG, use_microphone=False, spinner=False, enable_realtime_transcription=False,
             post_speech_silence_duration=float(silence), beam_size=int(beam), **self._callbacks())
         self.label = label_for(ckpt)
-        self.cfg = {"model": self.label, "checkpoint": ckpt, "family": "Qwen3-ASR" if qwen else "Whisper",
-                    "engine": QWEN_ENGINE if qwen else "faster_whisper", "device": DEVICE,
-                    "compute_type": "bfloat16" if qwen else compute_type, "decoding": "greedy" if qwen else "beam",
+        self.cfg = {"model": self.label, "checkpoint": ckpt, "family": family,
+                    "engine": engine, "device": DEVICE, "decoder": decoder if family == "NeMo" else None,
+                    "compute_type": ctype, "decoding": "greedy" if qwen else "beam",
                     "beam_size": None if qwen else int(beam), "language": LANG,
                     "post_speech_silence_s": float(silence),
                     "window_s": None if qwen else WHISPER_WINDOW_S,
@@ -316,7 +361,8 @@ class Live:
         self.state = "listening..."
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
-        how = "Qwen3-ASR, bf16, greedy" if qwen else f"{compute_type}, beam {int(beam)}"
+        how = {"NeMo": f"NeMo, fp32, greedy {decoder.upper()}", "Qwen3-ASR": "Qwen3-ASR, bf16, greedy"}.get(
+            family, f"{compute_type}, beam {int(beam)}")
         return f"Live recorder ready: {ckpt} ({how}), turn-end silence {float(silence):.2f}s. {self._mode_text()}"
 
     def set_stream(self, stream=None, chunk_pause=None) -> str:
@@ -453,15 +499,18 @@ live = Live()
 def build():
     with gr.Blocks(title="Bangla STT playground") as demo:
         gr.Markdown("## Bangla STT playground: quality & latency\nWhisper via faster-whisper (CT2), the engine "
-                    "RealtimeSTT uses; Qwen3-ASR via transformers (bf16, greedy).")
+                    "RealtimeSTT uses; Qwen3-ASR via transformers (bf16, greedy); NeMo FastConformer / Conformer "
+                    "(fp32, greedy RNN-T or CTC).")
         reg = registry()
         with gr.Row():
             preset = gr.Dropdown(list(reg), value=label_for(DEFAULT_CKPT, reg) if DEFAULT_CKPT in reg.values() else None,
                                  label="Model (base + fine-tuned runs; selecting loads it)", scale=4)
             refresh = gr.Button("\u21bb Rescan runs", scale=0, min_width=120)
         with gr.Row():
-            ckpt = gr.Textbox(value=DEFAULT_CKPT, label="Checkpoint (HF repo id, HF-format dir, CT2 dir, or Qwen3-ASR dir)", scale=3)
+            ckpt = gr.Textbox(value=DEFAULT_CKPT, label="Checkpoint (HF repo id, HF-format dir, CT2 dir, Qwen3-ASR dir, or .nemo / nemo export dir)", scale=3)
             ctype = gr.Dropdown(["float16", "int8_float16", "int8", "float32"], value="float16", label="Compute type (Whisper)", scale=1)
+            dec = gr.Dropdown(NEMO_DECODERS, value=os.environ.get("STT_NEMO_DECODER", "rnnt"),
+                              label="Decoder (NeMo hybrid; reloads)", scale=1)
             load_btn = gr.Button("Load", variant="primary", scale=1)
         status = gr.Markdown("Not loaded.")
         gr.Markdown(f"Every load, transcription and live turn is appended to `{LOG_PATH}` (JSONL, seconds).")
@@ -487,7 +536,7 @@ def build():
             lturns = gr.Dataframe(headers=["mode", "chunks", "silence wait ms", "hand-off ms", "STT ms", "speech end \u2192 text ms", "text"],
                                   label="Turns (speech end = VAD hears silence, as in the reference's TurnTimer)", interactive=False)
             mic.stream(live.feed, mic, None, stream_every=0.2, time_limit=None, concurrency_limit=1, show_progress="hidden")
-            lstart.click(live.start, [ckpt, ctype, lsil, lbeam, lstream, lpause], lmsg)
+            lstart.click(live.start, [ckpt, ctype, lsil, lbeam, lstream, lpause, dec], lmsg)
             lstream.change(live.set_stream, [lstream, lpause], lmsg)
             lpause.release(live.set_stream, [lstream, lpause], lmsg)
             lstop.click(live.stop, None, lmsg)
@@ -507,15 +556,19 @@ def build():
                     metrics = gr.Textbox(label="Metrics", lines=4, interactive=False)
             hist = gr.Dataframe(headers=["model", "audio s", "latency ms", "RTF", "text"], value=_history,
                                 label="History", interactive=False)
-        def pick(name, compute_type):
+        def pick(name, compute_type, decoder):
             path = registry().get(name)
-            return (gr.skip(), gr.skip()) if not path else (path, load_model(path, compute_type))
+            return (gr.skip(), gr.skip()) if not path else (path, load_model(path, compute_type, decoder))
 
-        preset.input(pick, [preset, ctype], [ckpt, status])
+        def switch_decoder(path, compute_type, decoder):
+            return load_model(path, compute_type, decoder) if family_of(path) == "NeMo" else gr.skip()
+
+        preset.input(pick, [preset, ctype, dec], [ckpt, status])
         refresh.click(lambda: gr.update(choices=list(registry())), None, preset)
-        load_btn.click(load_model, [ckpt, ctype], status)
+        load_btn.click(load_model, [ckpt, ctype, dec], status)
+        dec.input(switch_decoder, [ckpt, ctype, dec], status)
         go.click(transcribe, [audio, ref, runs, beam, vad], [out, metrics, hist])
-        demo.load(load_model, [ckpt, ctype], status)
+        demo.load(load_model, [ckpt, ctype, dec], status)
     return demo
 
 

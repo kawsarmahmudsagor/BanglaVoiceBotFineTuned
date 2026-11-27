@@ -12,6 +12,8 @@ dependencies = [
   "ctranslate2",
   "gradio>=5",
   "RealtimeSTT[faster-whisper]",
+  "nemo-toolkit[asr]>=3.0.0",
+  "numpy<2.4",
 ]
 
 [tool.uv]
