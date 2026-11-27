@@ -58,6 +58,10 @@ def vocals_path(data_dir: Path, dataset_id: str, video_id: str) -> Path:
     return video_dir(data_dir, dataset_id, video_id) / "separate" / "vocals.wav"
 
 
+def _segment_removed(*args, **kwargs):
+    raise NotImplementedError("segment stage replaced by pieces; the runner is rewritten in Task 8")
+
+
 @dataclass
 class StageFns:
     """The stage callables, with the real stage modules' signatures (injectable for tests)."""
@@ -76,11 +80,10 @@ class StageFns:
         from .pipeline.fallback import run_fallback
         from .pipeline.punct import punctuate
         from .pipeline.quality import quality
-        from .pipeline.segment import segment
         from .pipeline.separate import separate
         from .pipeline.transcribe import transcribe_clips
 
-        return cls(download=download, separate=separate, segment=segment, quality=quality,
+        return cls(download=download, separate=separate, segment=_segment_removed, quality=quality,
                    transcribe=transcribe_clips, fallback=run_fallback, punctuate=punctuate)
 
 
