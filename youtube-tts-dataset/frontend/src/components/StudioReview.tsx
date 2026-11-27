@@ -212,7 +212,7 @@ export function StudioReview({ datasetId, videoId }: { datasetId: string; videoI
           onReject={async () =>
             replace(merge(current, await patchClip(datasetId, current.id, { status: "rejected" })))}
           onEdit={async (text) => {
-            await patchClip(datasetId, current.id, { text_final: text });
+            replace(merge(current, await patchClip(datasetId, current.id, { text_final: text })));
           }}
           onSwapped={(r) => replace(merge(current, r))}
           onNext={() => step(1)} onPrev={() => step(-1)} />

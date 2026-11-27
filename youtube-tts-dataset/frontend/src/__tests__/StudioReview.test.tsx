@@ -68,3 +68,22 @@ test("Export calls exportDataset", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Export dataset" }));
   await waitFor(() => expect(api.exportDataset).toHaveBeenCalledWith("d1", {}));
 });
+
+test("an edit survives navigating away and back, and Approve sends it", async () => {
+  vi.mocked(api.patchClip).mockImplementation(async (_d, id, patch) => {
+    const c = clips.find((x) => x.id === id)!;
+    return { ...c, ...patch } as never;
+  });
+  render(<StudioReview datasetId="d1" videoId="v1" />);
+  const box = (await screen.findByRole("textbox")) as HTMLTextAreaElement;
+  fireEvent.change(box, { target: { value: "edited text" } });
+  fireEvent.click(screen.getByRole("button", { name: /Next/ }));
+  await waitFor(() => expect(api.patchClip).toHaveBeenCalledWith("d1", "v1_1", { text_final: "edited text" }));
+  await waitFor(() => expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("final5"));
+  fireEvent.click(screen.getByRole("button", { name: /Previous/ }));
+  await waitFor(() => expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("edited text"));
+  fireEvent.click(screen.getByRole("button", { name: /^Approve/ }));
+  await waitFor(() =>
+    expect(api.patchClip).toHaveBeenCalledWith("d1", "v1_1", { text_final: "edited text", status: "approved" }),
+  );
+});

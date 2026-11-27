@@ -335,10 +335,10 @@ export function ReviewCard({ clip, onApprove, onReject, onNext, onPrev, onEdit, 
 
       {clip.text_pick != null && (
         <div className="rcard__swap">
-          <button type="button" className="btn btn--small" disabled={busy} onClick={() => void swap("a")}>
+          <button type="button" className="btn btn--small" disabled={busy || !clip.text_a} onClick={() => void swap("a")}>
             Use model A
           </button>
-          <button type="button" className="btn btn--small" disabled={busy} onClick={() => void swap("b")}>
+          <button type="button" className="btn btn--small" disabled={busy || !clip.text_b} onClick={() => void swap("b")}>
             Use model B
           </button>
           <p className="field__hint">Punctuation is not re-applied to the swapped text.</p>

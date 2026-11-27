@@ -134,3 +134,16 @@ test("word diff marks tokens only in A and only in B", () => {
   ]);
   expect(b.filter((t) => t.changed).map((t) => t.text)).toEqual(["খেয়েছি"]);
 });
+
+test("a clip without text_pick shows no swap buttons and no kept pill", () => {
+  setup();
+  expect(screen.queryByRole("button", { name: "Use model A" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Use model B" })).toBeNull();
+  expect(screen.queryByText("kept")).toBeNull();
+});
+
+test("Use model B is disabled when model B has no text", () => {
+  setup({ ...base, text_pick: "a", text_b: null });
+  expect((screen.getByRole("button", { name: "Use model B" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Use model A" }) as HTMLButtonElement).disabled).toBe(false);
+});
