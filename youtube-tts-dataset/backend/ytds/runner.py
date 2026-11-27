@@ -91,6 +91,19 @@ def _transcribe_b(pieces: list[dict], vocals_wav: Path, model, on_progress: Call
     return out
 
 
+def _ingest_local(src: Path, out_dir: Path, on_progress: Callable[[int, int], None]) -> dict:
+    """Default ingest: probe the uploaded file, extract 48 kHz mono audio and make the preview if needed."""
+    from .pipeline.media import ingest_local
+
+    return ingest_local(src, out_dir, on_progress)
+
+
+def upload_file(download_dir: Path) -> Path | None:
+    """The uploaded file of a local Studio video: `download/upload<ext>` (written by the upload route)."""
+    found = sorted(p for p in Path(download_dir).glob("upload*") if p.is_file() and p.stem == "upload")
+    return found[0] if found else None
+
+
 def _llm_unload(llm) -> None:
     """Default llm_unload: ask the LLM client to free its VRAM (OllamaClient.unload); other clients: nothing."""
     unload = getattr(llm, "unload", None)
@@ -102,7 +115,7 @@ def _llm_unload(llm) -> None:
 class StageFns:
     """The stage callables, with the real stage modules' signatures (injectable for tests)."""
 
-    download: Callable[..., dict]       # (video_id, url, out_dir, on_progress) -> metadata
+    download: Callable[..., dict]       # (video_id, url, out_dir, on_progress, *, keep_video=) -> metadata
     cut: Callable[..., list]            # (audio_wav, out_dir, cuts) -> time map
     separate: Callable[..., None]       # (audio_wav, out_wav, model, segment_s, on_progress)
     pieces: Callable[..., list]         # (vocals_wav, cmap, th) -> [{idx, range_idx, start_s, end_s}]
@@ -111,6 +124,7 @@ class StageFns:
     quality: Callable[..., list]        # (vocals_wav, clips, th, embedder=) -> clips
     punctuate: Callable[..., tuple]     # (text, llm) -> (text, no_punct)
     llm_unload: Callable[[Any], None] = field(default=_llm_unload)  # (llm): free the LLM's VRAM
+    ingest: Callable[..., dict] = field(default=_ingest_local)  # (src, out_dir, on_progress) -> metadata
 
     @classmethod
     def default(cls) -> StageFns:
@@ -124,7 +138,7 @@ class StageFns:
 
         return cls(download=download, cut=cut_audio, separate=separate, pieces=pieces,
                    transcribe_a=transcribe_pieces_a, transcribe_b=_transcribe_b, quality=quality,
-                   punctuate=punctuate, llm_unload=_llm_unload)
+                   punctuate=punctuate, llm_unload=_llm_unload, ingest=_ingest_local)
 
 
 class StageCancelled(Exception):
@@ -474,9 +488,21 @@ class JobRunner:
 
     # --- stages
     def _stage_download(self, ds: str, vid: str) -> None:
-        url = self._video(ds, vid)["url"]
-        audio = audio_path(self.settings.data_dir, ds, vid)
-        meta = self.stages.download(vid, url, audio.parent, self._progress(ds, vid, "download"))
+        """Dashboard: YouTube audio only. Studio YouTube: also keeps the video for the preview (`media`).
+        Studio local: ingests the file the upload route wrote; the title stays the uploaded file name."""
+        v = self._video(ds, vid)
+        out = audio_path(self.settings.data_dir, ds, vid).parent
+        cb = self._progress(ds, vid, "download")
+        if v.get("source") == "local":
+            src = upload_file(out)
+            if src is None:
+                raise RuntimeError("the uploaded file is missing; delete the video and upload it again")
+            meta = dict(self.stages.ingest(src, out, cb))
+            meta.pop("title", None)
+        elif v.get("origin") == "studio":
+            meta = self.stages.download(vid, v["url"], out, cb, keep_video=True)
+        else:
+            meta = self.stages.download(vid, v["url"], out, cb)
         self.store.update_video(ds, vid, **meta)
 
     def _stage_cut(self, ds: str, vid: str) -> None:

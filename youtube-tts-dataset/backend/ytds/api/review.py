@@ -24,6 +24,7 @@ _slice_lock = threading.Lock()  # a browser fires parallel Range requests for th
 class ClipPatch(BaseModel):
     text_final: str | None = None
     status: Literal["approved", "rejected"] | None = None
+    text_pick: Literal["a", "b"] | None = None  # swap to this model's text (text_final follows unless given)
 
 
 def review_reason(clip: dict) -> Reason:
@@ -67,6 +68,8 @@ def review_queue(dataset_id: str, request: Request, reason: Reason | None = None
 def patch_clip(dataset_id: str, clip_id: str, body: ClipPatch, request: Request) -> dict:
     clip = _clip_or_404(request, dataset_id, clip_id)
     fields = body.model_dump(exclude_none=True)
+    if "text_pick" in fields and "text_final" not in fields:
+        fields["text_final"] = clip[f"text_{fields['text_pick']}"] or ""
     text = fields.get("text_final", clip["text_final"]) or ""
     if fields.get("status") == "approved" and not text.strip():
         raise HTTPException(422, "cannot approve a clip with empty text")

@@ -45,6 +45,9 @@ class FakeRunner:
     def retry(self, dataset_id, video_id):
         self.calls.append(("retry", dataset_id, video_id))
 
+    def start_video(self, dataset_id, video_id, cuts):
+        self.calls.append(("start_video", dataset_id, video_id, cuts))
+
     def skip(self, dataset_id, video_id):
         self.calls.append(("skip", dataset_id, video_id))
         if self.stop_on_skip:
@@ -484,3 +487,15 @@ def test_settings_resending_current_unavailable_model_is_accepted(tmp_path, monk
         assert store.get_thresholds().clip_min_s == 14.0
         assert runner.gpu.unloaded == []
         assert client.put("/api/settings", json={"model_a": "whisper-bn-ft1"}).status_code == 422
+
+
+def test_create_empty_dataset_needs_allow_empty(env):
+    client, store, _, runner, _ = env
+    assert client.post("/api/datasets", json={"name": "spk", "urls": ""}).status_code == 400
+    r = client.post("/api/datasets", json={"name": "spk", "urls": "", "allow_empty": True})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["added"] == 0 and body["duplicates"] == 0 and body["errors"] == []
+    assert store.get_dataset(body["dataset_id"])["name"] == "spk"
+    assert store.list_videos(body["dataset_id"]) == []
+    assert ("enqueue", body["dataset_id"]) not in runner.calls

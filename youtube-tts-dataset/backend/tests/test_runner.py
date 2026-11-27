@@ -91,6 +91,7 @@ class Fakes:
         self.llm_up = True
         self.llm_down_if = None  # text -> bool: the LLM fails for these texts
         self.cuts_seen = {}
+        self.download_kw, self.ingested = {}, {}
         self.order = []  # shared with the FakeGpu: use / release / llm / llm_unload in call order
 
     def _rec(self, stage, vid):
@@ -104,11 +105,22 @@ class Fakes:
         with self._lock:
             return [s for s, v in self.log if v == vid]
 
-    def download(self, video_id, url, out_dir, on_progress):
+    def download(self, video_id, url, out_dir, on_progress, **kw):
         self._rec("download", video_id)
+        self.download_kw[video_id] = kw
         on_progress(50, 100)
         on_progress(100, 100)
-        return {"title": f"title {video_id}", "duration_s": 60.0}
+        meta = {"title": f"title {video_id}", "duration_s": 60.0}
+        if kw.get("keep_video"):
+            meta["media"] = "download/video.mp4"
+        return meta
+
+    def ingest(self, src, out_dir, on_progress):
+        vid = Path(out_dir).parent.name
+        self._rec("ingest", vid)
+        self.ingested[vid] = (Path(src), Path(out_dir))
+        on_progress(100, 100)
+        return {"title": "upload", "duration_s": 42.0, "media": f"download/{Path(src).name}"}
 
     def cut(self, audio_wav, out_dir, cuts):
         vid = Path(out_dir).parent.name
@@ -163,7 +175,7 @@ class Fakes:
     def stage_fns(self):
         return StageFns(download=self.download, cut=self.cut, separate=self.separate, pieces=self.pieces,
                         transcribe_a=self.transcribe_a, transcribe_b=self.transcribe_b, quality=self.quality,
-                        punctuate=self.punctuate, llm_unload=self.llm_unload)
+                        punctuate=self.punctuate, llm_unload=self.llm_unload, ingest=self.ingest)
 
 
 @pytest.fixture
@@ -268,9 +280,9 @@ def test_studio_video_stops_at_awaiting_cut(env):
     seen = []
     orig = fakes.download
 
-    def download(video_id, url, out_dir, on_progress):
+    def download(video_id, url, out_dir, on_progress, **kw):
         seen.append(_video(store, ds, video_id)["status"])
-        return orig(video_id, url, out_dir, on_progress)
+        return orig(video_id, url, out_dir, on_progress, **kw)
 
     fakes.download = download
     runner = make(fakes)
@@ -319,9 +331,9 @@ def test_retry_studio_download_returns_to_fetching(env):
     seen = []
     orig = fakes.download
 
-    def download(video_id, url, out_dir, on_progress):
+    def download(video_id, url, out_dir, on_progress, **kw):
         seen.append(_video(store, ds, video_id)["status"])
-        return orig(video_id, url, out_dir, on_progress)
+        return orig(video_id, url, out_dir, on_progress, **kw)
 
     runner.stages.download = download
     runner.retry(ds, "v1")
@@ -735,9 +747,9 @@ def test_store_error_in_scheduling_keeps_workers_alive(tmp_path):
     ds = _dataset(store, "v1", "v2")
     orig = fakes.download
 
-    def download(video_id, url, out_dir, on_progress):
+    def download(video_id, url, out_dir, on_progress, **kw):
         store.fail_stage_done = 3  # the next scheduling reads in runner threads fail
-        return orig(video_id, url, out_dir, on_progress)
+        return orig(video_id, url, out_dir, on_progress, **kw)
 
     runner.stages.download = download
     try:
@@ -926,3 +938,36 @@ def test_retry_of_started_studio_video_failed_at_cut_runs(env, cuts):
     assert runner.wait_idle(IDLE_S)
     assert _video(store, ds, "v1")["status"] == "done"
     assert fakes.cuts_seen["v1"] == (cuts or [])
+
+
+def test_download_dispatch_by_origin_and_source(env):
+    store, bus, settings, make = env
+    fakes = Fakes()
+    ds = _dataset(store, "dash")
+    store.add_video(ds, "yt", "https://youtu.be/yt", origin="studio", status="fetching")
+    store.add_video(ds, "local_abc", "local:talk.mkv", origin="studio", source="local", status="fetching")
+    store.update_video(ds, "local_abc", title="talk.mkv")
+    upload = settings.data_dir / "videos" / ds / "local_abc" / "download" / "upload.mkv"
+    upload.parent.mkdir(parents=True)
+    upload.write_bytes(b"x")
+    _run(make(fakes), ds)
+
+    assert fakes.download_kw == {"dash": {}, "yt": {"keep_video": True}}
+    assert fakes.ingested == {"local_abc": (upload, upload.parent)}
+    assert "download" not in fakes.calls_for("local_abc")
+    yt, local = _video(store, ds, "yt"), _video(store, ds, "local_abc")
+    assert (yt["status"], yt["media"], yt["duration_s"]) == ("awaiting_cut", "download/video.mp4", 60.0)
+    assert (local["status"], local["media"], local["duration_s"]) == ("awaiting_cut", "download/upload.mkv", 42.0)
+    assert local["title"] == "talk.mkv"  # the uploaded file name, not the "upload" stem
+    assert _video(store, ds, "dash")["media"] is None
+
+
+def test_local_download_without_upload_fails(env):
+    store, bus, settings, make = env
+    fakes = Fakes()
+    ds = _dataset(store)
+    store.add_video(ds, "local_abc", "local:talk.mkv", origin="studio", source="local", status="fetching")
+    _run(make(fakes), ds)
+    v = _video(store, ds, "local_abc")
+    assert v["status"] == "failed" and "upload" in v["error"]
+    assert fakes.ingested == {}
