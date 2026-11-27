@@ -1,11 +1,12 @@
 [project]
-name = "whisper-stt-playground"
+name = "stt-playground"
 version = "0.1.0"
-description = "Gradio UI to test Whisper large-v3-turbo Bangla STT quality and latency"
+description = "Gradio UI to test Bangla STT quality and latency: Whisper large-v3-turbo and Qwen3-ASR"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "bangla-voice-backend[audio]",
   "torch==2.7.1",
+  "torchaudio==2.7.1",  # transformers imports it; RealtimeSTT alone pulls a CUDA 13 build that fails to load
   "transformers",
   "faster-whisper",
   "ctranslate2",
@@ -20,6 +21,7 @@ environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 RealtimeSTT = { git = "https://github.com/kawsarmahmudsagor/LocalVoiceAgent", subdirectory = "RealtimeSTT" }
 bangla-voice-backend = { path = "../backend", editable = true }
 torch = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
 
 [[tool.uv.index]]
 name = "pytorch-cu128"

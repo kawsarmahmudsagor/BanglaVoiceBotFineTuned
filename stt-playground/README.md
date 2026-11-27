@@ -1,0 +1,35 @@
+# stt-playground
+
+Gradio UI to check Bangla STT quality and latency for the two model families the platform fine-tunes:
+
+- **Whisper large-v3-turbo**: the same engine as LocalVoiceAgent's RealtimeSTT pipeline (faster-whisper on
+  CTranslate2, language forced to `bn`, silero VAD, beam 5).
+- **Qwen3-ASR**: transformers, bf16, greedy, with the same prompt as the qwen-asr backend's eval
+  (`language Bengali<asr_text>`, read from `backend/workers/backends/qwen-asr/mlops_backend/prompt.py`).
+
+The model family is detected from the checkpoint (its `config.json` `model_type`), so one box takes either.
+Presets: `openai/whisper-large-v3-turbo` (default), `mozilla-ai/whisper-large-v3-turbo-bn`,
+`SayedShaun/Qwen3-ASR-0.6B-Bengali`. Point the box at your own checkpoint after training.
+
+    ./run.sh                                       # http://localhost:7860
+    STT_CHECKPOINT=/srv/mlops/.../ckpt ./run.sh    # your fine-tuned checkpoint
+    PORT=7861 ./run.sh
+
+- Whisper: an HF repo id, an HF-format dir (converted to CT2 once, cached in `~/.cache/stt-playground/ct2`), or a
+  CT2 dir (the training platform's `ct2` export).
+- Qwen3-ASR: an HF repo id, a training checkpoint dir, or the platform's `safetensors` export dir. Compute type,
+  beam and VAD do not apply.
+- Mic or file upload; paste a reference transcript to get WER/CER (`bn_normalize`, asr mode).
+- Latency = full transcription incl. VAD and decoding, mean of N runs after warm-up.
+  RTF = latency / audio length. It excludes RealtimeSTT's endpointing wait (silence timeout).
+- Latency rises while a training run shares the GPU.
+
+## Live tab (turn-end timing)
+
+Uses LocalVoiceAgent's own recorder: RealtimeSTT `AudioToTextRecorder` (`language=bn`), fed from the browser mic
+via `feed_audio` (the reference's `AUDIO_IO=browser`). Whisper runs on its `faster_whisper` engine; Qwen3-ASR runs on
+`playground_qwen3_asr`, an engine `qwen_engine.py` adds to RealtimeSTT's registry. Turn ends after
+`post_speech_silence_duration` (default 0.6 s = the reference's `STT_SILENCE_SEC`; override with env or slider),
+then it transcribes automatically. Stage marks use the same callbacks as the reference's `timing_callbacks`:
+`silence wait` (speech_end -> endpoint) + `hand-off` (endpoint -> stt_start) + `STT` (stt_start -> text)
+= `speech end -> text`. Press Start (mic needs localhost or HTTPS, so use the SSH tunnel to localhost).

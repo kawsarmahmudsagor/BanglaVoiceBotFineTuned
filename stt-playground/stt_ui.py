@@ -1,9 +1,10 @@
-"""Gradio UI: test Whisper large-v3-turbo Bangla STT quality (optional WER/CER vs reference) and latency.
+"""Gradio UI: test Bangla STT quality (optional WER/CER vs reference) and latency, Whisper or Qwen3-ASR.
 
 Mirrors the LocalVoiceAgent STT pipeline: RealtimeSTT's `faster_whisper` engine = faster-whisper on a
 CTranslate2 model, language forced to Bangla, silero VAD, beam 5. A HF-format checkpoint (what the fine-tune
 produces, or mozilla-ai/whisper-large-v3-turbo-bn) is converted to CT2 once and cached; a CT2 dir
-(the `ct2` export) is used as is.
+(the `ct2` export) is used as is. Qwen3-ASR checkpoints (repo id, training checkpoint or `safetensors` export)
+run with transformers, bf16, greedy, through qwen_engine.py (also a RealtimeSTT engine for the live tab).
 
 Run: ./run.sh
 """
@@ -21,17 +22,21 @@ import numpy as np
 
 from app.core.backend_kit.audio import load_audio
 from app.core.text import bn_normalize
+from qwen_engine import ENGINE as QWEN_ENGINE, QwenAsr, is_qwen, register
+
+register()  # module level: the recorder's spawned child re-imports this module and needs the engine too
 
 PRESETS = {
     "Whisper large-v3-turbo (base, to be fine-tuned)": "openai/whisper-large-v3-turbo",
     "Whisper large-v3-turbo Bengali (mozilla-ai)": "mozilla-ai/whisper-large-v3-turbo-bn",
+    "Qwen3-ASR 0.6B Bengali (SayedShaun, to be fine-tuned)": "SayedShaun/Qwen3-ASR-0.6B-Bengali",
 }
 DEFAULT_CKPT = os.environ.get("STT_CHECKPOINT", "openai/whisper-large-v3-turbo")
-CT2_CACHE = Path(os.environ.get("CT2_CACHE", Path.home() / ".cache" / "whisper-stt-playground" / "ct2"))
+CT2_CACHE = Path(os.environ.get("CT2_CACHE", Path.home() / ".cache" / "stt-playground" / "ct2"))
 DEVICE = os.environ.get("STT_DEVICE", "cuda")
 LANG = "bn"
 
-_state: dict = {"model": None, "label": None}
+_state: dict = {"model": None, "label": None, "qwen": False}
 _history: list[list] = []
 
 
@@ -60,10 +65,12 @@ def load_model(ckpt: str, compute_type: str) -> str:
     if not ckpt:
         return "Enter a checkpoint (HF repo id, HF-format dir, or CT2 dir)."
     t0 = time.perf_counter()
+    _state.update(model=None, qwen=False)
+    if is_qwen(ckpt):
+        return _load_qwen(ckpt)
     try:
         from faster_whisper import WhisperModel
 
-        _state["model"] = None
         path, note = resolve_ct2(ckpt, compute_type)
         convert_s = time.perf_counter() - t0
         t1 = time.perf_counter()
@@ -79,6 +86,21 @@ def load_model(ckpt: str, compute_type: str) -> str:
     _state.update(model=model, label=ckpt.rstrip("/").split("/")[-1])
     return (f"Loaded **{ckpt}** on {DEVICE}/{compute_type}. {note}. "
             f"convert {convert_s:.1f}s, load {load_s:.1f}s, warm-up {warm_s:.1f}s.")
+
+
+def _load_qwen(ckpt: str) -> str:
+    t0 = time.perf_counter()
+    try:
+        model = QwenAsr(ckpt, DEVICE)
+        load_s = time.perf_counter() - t0
+        t1 = time.perf_counter()
+        model.transcribe(np.zeros(16000, dtype="float32"))  # warm-up (CUDA init)
+        warm_s = time.perf_counter() - t1
+    except Exception as e:  # noqa: BLE001 - show any load error in the UI
+        return f"Load failed: {type(e).__name__}: {e}"
+    _state.update(model=model, label=ckpt.rstrip("/").split("/")[-1], qwen=True)
+    return (f"Loaded **{ckpt}** (Qwen3-ASR, transformers) on {DEVICE}/bf16, greedy; compute type, beam and VAD "
+            f"do not apply. load {load_s:.1f}s, warm-up {warm_s:.1f}s.")
 
 
 def _edit_distance(a, b) -> int:
@@ -113,15 +135,19 @@ def transcribe(audio_path, reference, runs, beam, vad):
     lat, text, audio_s = [], "", len(wav) / 16000
     for _ in range(max(1, int(runs))):
         t0 = time.perf_counter()
-        segs, _info = model.transcribe(wav, language=LANG, task="transcribe", beam_size=int(beam),
-                                      vad_filter=bool(vad), condition_on_previous_text=False)
-        text = " ".join(s.text.strip() for s in segs).strip()  # generator: decoding happens here
+        if _state["qwen"]:
+            text = model.transcribe(wav)
+        else:
+            segs, _info = model.transcribe(wav, language=LANG, task="transcribe", beam_size=int(beam),
+                                          vad_filter=bool(vad), condition_on_previous_text=False)
+            text = " ".join(s.text.strip() for s in segs).strip()  # generator: decoding happens here
         lat.append(time.perf_counter() - t0)
     mean = sum(lat) / len(lat)
     rtf = mean / audio_s if audio_s else 0.0
     lines = [f"audio {audio_s:.2f}s",
              f"latency {mean * 1000:.0f} ms mean, {min(lat) * 1000:.0f} ms best (n={len(lat)})",
-             f"RTF {rtf:.3f}  (beam {int(beam)}, VAD {'on' if vad else 'off'})"]
+             f"RTF {rtf:.3f}  " + ("(Qwen3-ASR, greedy)" if _state["qwen"]
+                                     else f"(beam {int(beam)}, VAD {'on' if vad else 'off'})")]
     if reference.strip():
         lines.append(_score(text, reference))
     _history.insert(0, [_state["label"], f"{audio_s:.2f}", f"{mean * 1000:.0f}", f"{rtf:.3f}", text[:80]])
@@ -173,11 +199,13 @@ class Live:
         self.stop()
         from RealtimeSTT import AudioToTextRecorder
 
-        path, note = resolve_ct2(ckpt.strip(), compute_type)
+        ckpt = ckpt.strip()
+        qwen = is_qwen(ckpt)
+        path = ckpt if qwen else resolve_ct2(ckpt, compute_type)[0]
         self.state = "loading model in recorder process..."
         self.rec = AudioToTextRecorder(
-            model=path, transcription_engine="faster_whisper", device=DEVICE, compute_type=compute_type,
-            language=LANG, use_microphone=False, spinner=False, enable_realtime_transcription=False,
+            model=path, transcription_engine=QWEN_ENGINE if qwen else "faster_whisper", device=DEVICE,
+            compute_type="bfloat16" if qwen else compute_type, language=LANG, use_microphone=False, spinner=False, enable_realtime_transcription=False,
             post_speech_silence_duration=float(silence), beam_size=int(beam), **self._callbacks())
         self.label = ckpt.rstrip("/").split("/")[-1]
         self.resampler = None
@@ -185,7 +213,8 @@ class Live:
         self.state = "listening..."
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
-        return f"Live recorder ready: {ckpt} ({compute_type}), turn-end silence {float(silence):.2f}s, beam {int(beam)}."
+        how = "Qwen3-ASR, bf16, greedy" if qwen else f"{compute_type}, beam {int(beam)}"
+        return f"Live recorder ready: {ckpt} ({how}), turn-end silence {float(silence):.2f}s."
 
     def _loop(self):
         while self.running:
@@ -249,16 +278,18 @@ live = Live()
 
 
 def build():
-    with gr.Blocks(title="Whisper Bangla STT playground") as demo:
-        gr.Markdown("## Whisper large-v3-turbo Bangla STT: quality & latency\nfaster-whisper (CT2), same engine as RealtimeSTT.")
+    with gr.Blocks(title="Bangla STT playground") as demo:
+        gr.Markdown("## Bangla STT playground: quality & latency\nWhisper via faster-whisper (CT2), the engine "
+                    "RealtimeSTT uses; Qwen3-ASR via transformers (bf16, greedy).")
         with gr.Row():
             preset = gr.Dropdown(list(PRESETS), value=None, label="Preset", scale=2)
-            ckpt = gr.Textbox(value=DEFAULT_CKPT, label="Checkpoint (HF repo id, HF-format dir, or CT2 dir)", scale=3)
+            ckpt = gr.Textbox(value=DEFAULT_CKPT, label="Checkpoint (HF repo id, HF-format dir, CT2 dir, or Qwen3-ASR dir)", scale=3)
             ctype = gr.Dropdown(["float16", "int8_float16", "int8", "float32"], value="float16", label="Compute type", scale=1)
             load_btn = gr.Button("Load", variant="primary", scale=1)
         status = gr.Markdown("Not loaded.")
         with gr.Tab("Live (auto turn-end)"):
-            gr.Markdown("Same pipeline as LocalVoiceAgent: RealtimeSTT recorder (faster-whisper). Press **Start**, allow the mic "
+            gr.Markdown("Same pipeline as LocalVoiceAgent: RealtimeSTT recorder (faster-whisper, or the Qwen3-ASR engine "
+                        "for a Qwen checkpoint). Press **Start**, allow the mic "
                         "(localhost or HTTPS), speak. When you pause for the silence threshold the turn ends and is transcribed "
                         "automatically. Changing settings needs a restart (Start again).")
             with gr.Row():
