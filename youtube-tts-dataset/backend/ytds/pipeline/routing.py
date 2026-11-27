@@ -1,6 +1,6 @@
-"""Routing of a model A transcript: kept as is ("auto") or sent to the English + LLM fallback.
+"""Routing of a transcript: usable ("auto") or "broken" (spec 4.7).
 
-There is one STT model, so the checks look at the transcript alone: empty output, too little Bangla script,
+The checks look at the transcript alone: empty output, too little Bangla script,
 a speaking rate no person has, or a word repeated in a loop (a typical ASR hallucination).
 """
 from __future__ import annotations

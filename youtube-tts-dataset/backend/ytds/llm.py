@@ -1,6 +1,7 @@
 """Minimal Ollama client (local daemon or ollama.com cloud) with retry/backoff and a circuit breaker."""
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import Callable
@@ -12,10 +13,10 @@ PUNCT_SYSTEM = (
     "Only add or change punctuation marks (। ? , ! and quotes). Do not fix spelling, do not translate, "
     "do not add or remove words. Output only the text."
 )
-TRANSLATE_SYSTEM = (
-    "Translate the English sentence into natural spoken Bangla, as a Bangladeshi speaker would say it. "
-    "Keep English product and brand names in Latin script. Output only the Bangla text."
-)
+
+UNLOAD_TIMEOUT_S = 5.0
+
+log = logging.getLogger(__name__)
 
 BACKOFF = (1, 2, 4)
 BREAKER_THRESHOLD = 3      # consecutive LlmUnavailable calls that open the circuit
@@ -45,6 +46,19 @@ class OllamaClient:
             return self._http.post("/api/show", json={"model": self.model}).status_code == 200
         except httpx.HTTPError:
             return False
+
+    def unload(self) -> None:
+        """Ask a local Ollama to drop the model from VRAM now (keep_alive 0), so a torch/CT2 model can load next.
+        Cloud models (`*-cloud`) run remotely and are skipped. Errors are logged and ignored."""
+        if self.model.endswith("-cloud"):
+            return
+        try:
+            r = self._http.post("/api/generate", json={"model": self.model, "keep_alive": 0},
+                                timeout=UNLOAD_TIMEOUT_S)
+            if r.status_code != 200:
+                log.warning("ollama unload of %s: HTTP %s", self.model, r.status_code)
+        except httpx.HTTPError as exc:
+            log.warning("ollama unload of %s failed: %r", self.model, exc)
 
     def chat(self, system: str, user: str) -> str:
         """After BREAKER_THRESHOLD consecutive failures the circuit opens: for BREAKER_COOLDOWN_S every call

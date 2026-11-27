@@ -5,7 +5,7 @@ import re
 
 from app.core.text import bn_normalize
 
-from ..llm import PUNCT_SYSTEM, TRANSLATE_SYSTEM, LlmUnavailable
+from ..llm import PUNCT_SYSTEM, LlmUnavailable
 
 _PUNCT = re.compile(r"[।?!,;:\"'“”‘’()\-—.]")
 
@@ -31,6 +31,3 @@ def punctuate(text: str, llm) -> tuple[str, bool]:
         return text, True
     return out, False
 
-
-def translate_en_to_bn(en: str, llm) -> str:
-    return llm.chat(TRANSLATE_SYSTEM, en)

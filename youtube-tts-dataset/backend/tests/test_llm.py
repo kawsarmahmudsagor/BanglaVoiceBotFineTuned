@@ -1,3 +1,4 @@
+import json
 import httpx
 import pytest
 
@@ -182,3 +183,28 @@ def test_success_resets_failure_count():
             with pytest.raises(LlmUnavailable):
                 c.chat("s", "u")
         assert c.chat("s", "u") == "hi"  # never reached the threshold in a row
+
+
+def test_unload_posts_keep_alive_zero():
+    seen = []
+
+    def handler(request):
+        seen.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={})
+
+    _client(handler).unload()
+    assert seen == [("/api/generate", {"model": "m", "keep_alive": 0})]
+
+
+def test_unload_skips_cloud_models_and_ignores_errors():
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.path)
+        raise httpx.ConnectError("down")
+
+    c = OllamaClient("http://x", "gemma4:31b-cloud", None, transport=httpx.MockTransport(handler))
+    c.unload()
+    assert seen == []
+    _client(handler).unload()  # a local model with Ollama down: logged, not raised
+    assert seen == ["/api/generate"]
