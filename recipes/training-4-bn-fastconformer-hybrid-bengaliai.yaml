@@ -1,0 +1,35 @@
+# Generated from the platform database. Edit in the UI.
+name: training-4-bn-fastconformer-hybrid-bengaliai
+task: asr
+backend: nemo
+base_model: SayedShaun/stt_bn_fastconformer_hybrid_large_v2
+base_model_meta:
+  license: cc-by-4.0
+  commercial_ok: true
+datasets:
+  train: bengaliai-200h@v1
+  eval: bengaliai-200h@v1
+  split:
+    use_dataset_splits: false
+    ratios:
+      train: 0.9
+      val: 0.05
+      test: 0.05
+method:
+  type: full
+hparams:
+  learning_rate: 2.0e-05
+  epochs: 5
+  batch_size: 32
+  grad_accum: 2
+  warmup_steps: 500
+  save_steps: 1000
+  keep_checkpoints: 2
+  seed: 42
+  eval:
+    baseline: true
+    max_samples: 2000
+    max_val_samples: 1000
+export:
+- nemo
+init_from: null
