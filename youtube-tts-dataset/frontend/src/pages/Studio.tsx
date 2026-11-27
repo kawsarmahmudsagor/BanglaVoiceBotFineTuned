@@ -12,6 +12,7 @@ import {
   uploadStudioFile,
 } from "../api";
 import { formatDuration } from "../components/ProgressRow";
+import { StudioReview } from "../components/StudioReview";
 import { RangeEditor, mergeRanges } from "../components/RangeEditor";
 import { STAGES, type DatasetSummary, type Stage, type StudioVideo, type VideoState } from "../types";
 import { useJobEvents } from "../useJobEvents";
@@ -57,15 +58,6 @@ function Progress({ done, total, label }: { done?: number; total?: number; label
   return (
     <div className="bar" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
       <span className="bar__fill" style={{ width: `${pct ?? 5}%` }} />
-    </div>
-  );
-}
-
-/** Slot for the review panel of a finished video (filled in by the review task). */
-function ReviewSlot({ video }: { video: StudioVideo }) {
-  return (
-    <div className="studio-review" data-video-id={video.id}>
-      <p className="muted">Processing finished: {video.clips.total} clips. The review panel appears here.</p>
     </div>
   );
 }
@@ -334,7 +326,7 @@ export function Studio({ dataset, datasets, onSelectDataset, onDatasetCreated }:
           </div>
         )}
         {current.status === "skipped" && <p className="muted">Stopped.</p>}
-        {current.status === "done" && <ReviewSlot video={current} />}
+        {current.status === "done" && <StudioReview datasetId={dataset.id} videoId={current.id} />}
         {actionError && (
           <p className="notice notice--error" role="alert">
             {actionError}

@@ -26,7 +26,7 @@ export function formatHours(h: number): string {
   return h < 1 ? `${(h * 60).toFixed(1)} min` : `${h.toFixed(2)} h`;
 }
 
-function plural(n: number, word: string): string {
+export function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
@@ -37,7 +37,7 @@ function dropText(dropped: Record<string, number>): string {
   return parts.length ? parts.join(", ") : "none";
 }
 
-function summaryText(s: ExportSummary): string[] {
+export function summaryText(s: ExportSummary): string[] {
   const lines = [`Exported ${plural(s.clips, "clip")}${s.hours > 0 ? ` (${formatHours(s.hours)})` : ""} to:`];
   const left = [
     s.process_error && `${s.process_error} could not be processed`,
@@ -50,13 +50,13 @@ function summaryText(s: ExportSummary): string[] {
   return lines;
 }
 
-function unreviewedOf(e: unknown): number | null {
+export function unreviewedOf(e: unknown): number | null {
   if (!(e instanceof ApiError) || e.status !== 409) return null;
   const n = (e.body as { unreviewed?: unknown } | null)?.unreviewed;
   return typeof n === "number" ? n : null;
 }
 
-function UnreviewedDialog({ count, onSkip, onClose }: { count: number; onSkip: () => void; onClose: () => void }) {
+export function UnreviewedDialog({ count, onSkip, onClose }: { count: number; onSkip: () => void; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const d = ref.current;

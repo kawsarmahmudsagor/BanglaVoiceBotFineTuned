@@ -32,7 +32,7 @@ export type ClipStatus =
   | "approved"
   | "rejected";
 export type TextSource = "stt" | "translated";
-export type DropReason = "length" | "dnsmos" | "other_speaker";
+export type DropReason = "length" | "dnsmos" | "other_speaker" | "bad_stt";
 export type ClipFlag = "incomplete_sentence" | "unsplit" | "disagree";
 export type ReviewReason = "cer" | "translated" | "pending_llm" | "auto" | "disagree";
 
