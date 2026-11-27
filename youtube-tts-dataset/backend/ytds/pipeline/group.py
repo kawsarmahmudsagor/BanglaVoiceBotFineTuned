@@ -63,6 +63,13 @@ def _group_segment(seg: list[dict], th, punctuated: bool) -> list[dict]:
         if punctuated:
             keep = span >= th.tail_min_s and ends_sentence(seg[last]["text"])
             flag = None
+            if not keep:
+                ends = [k for k in range(i, last)
+                        if ends_sentence(seg[k]["text"])
+                        and _span(seg, i, k) >= th.tail_min_s]
+                if ends:
+                    emit(i, ends[-1])
+                    i = ends[-1] + 1
         else:
             keep = span >= th.clip_min_s
             flag = "unsplit"
@@ -113,7 +120,7 @@ def group_pieces(pieces: list[dict], th, punctuated: bool) -> list[dict]:
             lower = max(lower, (raw[n - 1][1] + s0) / 2)
         if n + 1 < len(clips) and raw[n + 1][0] >= e0 - 1e-9:
             upper = min(upper, (e0 + raw[n + 1][0]) / 2)
-        c["start_s"] = max(s0 - PAD_S, min(lower, s0))
+        c["start_s"] = max(0.0, s0 - PAD_S, min(lower, s0))
         c["end_s"] = min(e0 + PAD_S, max(upper, e0))
         c["idx"] = n
     return [{k: c[k] for k in ("idx", "range_idx", "start_s", "end_s",

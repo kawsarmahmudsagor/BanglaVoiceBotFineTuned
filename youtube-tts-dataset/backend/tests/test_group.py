@@ -49,7 +49,6 @@ def test_early_sentence_end_used_when_cap_hit():
 def test_no_sentence_end_closes_at_largest_gap():
     ps = [P(0, 0, 9, MID), P(1, 9.2, 17, MID), P(2, 18.5, 24, MID), P(3, 24.1, 30, MID)]
     clips = group_pieces(ps, TH, True)
-    assert clips[0]["piece_idxs"] == [0, 1, 2][:len(clips[0]["piece_idxs"])]
     assert clips[0]["piece_idxs"] == [0, 1]  # gap 1.5 after piece 1, span 17 in window
     assert clips[0]["flag"] == "incomplete_sentence"
 
@@ -119,7 +118,7 @@ def test_ranges_never_share_clip():
 def test_padding_and_no_overlap():
     ps = [P(0, 0, 8, MID), P(1, 8, 16.05, END), P(2, 16.1, 24, MID), P(3, 24, 32, END)]
     clips = group_pieces(ps, TH, True)
-    assert clips[0]["start_s"] == 0 - PAD_S
+    assert clips[0]["start_s"] == 0.0
     for a, b in zip(clips, clips[1:]):
         assert a["end_s"] <= b["start_s"] + 1e-9
     assert abs(clips[0]["end_s"] - 16.075) < 1e-9  # midpoint of the 0.05 gap
@@ -142,3 +141,26 @@ def test_no_terminators_80s_gives_flagged_clips():
     assert 3 <= len(kept) <= 5
     assert all(c["flag"] == "incomplete_sentence" for c in kept)
     assert len(dropped) <= 1 and all(d is clips[-1] for d in dropped)
+
+
+def test_tail_closes_at_last_sentence_end_then_drops_rest():
+    ps = [P(0, 0, 8, MID), P(1, 8, 12, END), P(2, 12, 20, MID)]
+    clips = group_pieces(ps, TH, True)
+    assert clips[0]["piece_idxs"] == [0, 1] and clips[0]["status"] is None
+    assert clips[0]["flag"] is None
+    assert clips[1]["piece_idxs"] == [2]
+    assert clips[1]["status"] == "dropped" and clips[1]["drop_reason"] == "length"
+
+
+def test_tail_split_before_broken_piece():
+    ps = [P(0, 0, 8, MID), P(1, 8, 12, END), P(2, 12, 20, MID),
+          P(3, 20, 21, MID, broken=1), P(4, 21, 41, END)]
+    clips = group_pieces(ps, TH, True)
+    assert clips[0]["piece_idxs"] == [0, 1] and clips[0]["status"] is None
+    assert clips[1]["piece_idxs"] == [2] and clips[1]["status"] == "dropped"
+    assert clips[2]["piece_idxs"] == [4] and clips[2]["status"] is None
+
+
+def test_start_never_negative():
+    clips = group_pieces([P(0, 0, 20, END)], TH, True)
+    assert clips[0]["start_s"] == 0.0
