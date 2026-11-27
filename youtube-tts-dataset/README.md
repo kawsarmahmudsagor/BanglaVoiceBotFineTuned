@@ -3,7 +3,8 @@
 Turns YouTube videos or local video files of **one Bangla speaker** into a TTS voice dataset in the platform's
 `tts` layout (`wavs/` + `metadata.csv` + `curation.json`). It downloads the audio, removes music, cuts
 15–25 s clips that end on complete sentences, drops noisy clips and other voices, transcribes with two Bangla
-STT models and keeps the better text, lets you review doubtful clips in a web UI, and exports. Progress for
+STT models and keeps the better text, lets you review and approve every clip in a web UI, and exports
+the approved ones. Progress for
 every stage is shown live.
 
 Two ways in: the **dashboard** pages (Jobs, Review, Dataset, Settings: paste URLs, playlists allowed, every
@@ -88,7 +89,9 @@ its server (http://127.0.0.1:8766) runs next to the main checkout's server on 87
 
 Workflow (dashboard): **Jobs** — paste URLs (one per line, playlists allowed), name the dataset, Start; watch
 per-stage progress. **Review** — `Space` play/pause, `Enter` approve, `R` reject, `J`/`K` next/previous; edits
-save automatically; a `disagree` clip shows both transcripts with **Use model A** / **Use model B**.
+save automatically; a `disagree` clip shows both transcripts with **Use model A** / **Use model B**. Clips of
+the current pipeline are never auto-accepted: every one waits in the queue (reason "Needs review" or "Models
+disagree") until you approve it.
 **Dataset** — kept/dropped hours, split preview, Export. **Settings** — thresholds, LLM, transcription models,
 cookies file for age-gated videos, read-only model list.
 
@@ -130,7 +133,7 @@ outputs are written, so a restart resumes where it stopped.
 | 7 | punctuate_pieces | Per piece keep the better of the A/B texts; LLM punctuation, rejected if any word changes | GPU thread + LLM |
 | 8 | group | Builds 15–25 s clips that end on a sentence (rules below) | CPU |
 | 9 | quality | DNSMOS P.835 OVRL (drop < 3.0); ECAPA speaker similarity to the video centroid (drop < 0.60) | CPU / GPU |
-| 10 | select | Clip texts from its pieces' A and B texts; score both, keep the better (ties: B); CER > `disagree_cer` → `flag=disagree`, to review; both broken → dropped `bad_stt` | CPU |
+| 10 | select | Clip texts from its pieces' A and B texts; score both, keep the better (ties: B); every clip not dropped goes to review (`needs_review`, never auto-accepted); CER > `disagree_cer` → `flag=disagree`; both broken → dropped `bad_stt` | CPU |
 | 11 | punctuate | LLM punctuation of the kept clip text, words locked (`no_punct` when rejected) | GPU thread + LLM |
 | — | review | manual, in the UI | — |
 | — | export | per dataset, on demand | CPU |
@@ -204,7 +207,9 @@ Export writes to `<YTDS_EXPORT_DIR>/<dataset name>/` (default `<repo>/var/import
   curation.json               provenance: tool, git commit, thresholds, models, per-video source and kept/dropped seconds, counts, commercial_use
 ```
 
-- Exported clips: `auto` plus approved clips. Flagged clips you have not approved are left out.
+- Exported clips: **approved clips only** for everything the current pipeline makes; nothing is auto-accepted.
+  Export refuses with a count of unapproved clips, or you can export without them. Clips of datasets made
+  before this change export as before: `auto` plus approved, flagged clips you have not approved left out.
 - Translated clips (old datasets only) are never exported unreviewed: Export refuses with a count, or you can
   export without them.
 - Splits are 90/5/5 train/val/test by duration, contiguous runs per video, fixed seed; a video with < 60 s
@@ -256,8 +261,8 @@ Run the GPU tests one at a time. Both need network (YouTube) and the local Ollam
 | Measure | Value |
 |---|---|
 | Model B token cap, 18 s window | 224 tokens at `max_length=448`, 264 at 880; load + 2 decodes 4.0 s; ~2.2 GB VRAM |
-| Smoke clips, dashboard video | 7 clips, all kept, 15.2–17.8 s, all `auto`, all end on `।`/`?` |
-| Smoke clips, Studio video | 4 clips: 3 kept (16.0, 16.3, 12.2 s, `auto`), 1 tail dropped (`length`) |
+| Smoke clips, dashboard video | 7 clips, all kept, 15.2–17.8 s, no flags, all end on `।`/`?` |
+| Smoke clips, Studio video | 4 clips: 3 kept (16.0, 16.3, 12.2 s), 1 tail dropped (`length`) |
 | Pipeline wall time (both videos, download → punctuate) | 272.8 s, models cached (the LLM, `gemma4:e4b`, runs partly on the CPU) |
 | Export | 0.4 s, 7 clips, 0 validation drops |
 | Peak VRAM, `torch.cuda.max_memory_allocated()` | 1789 MiB (torch models in the test process) |

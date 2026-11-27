@@ -17,6 +17,7 @@ from .runner import vocals_path
 from .splits import assign_splits
 
 EXPORT_STATUSES = ("auto", "approved")
+_UNREVIEWED_NEW = ("needs_review", "flagged", "pending_llm")  # with auto: a new clip not yet approved
 PAD_S = 0.15
 OUT_SR = 24000
 HEADER = ["file", "text", "speaker", "split"]
@@ -29,21 +30,33 @@ class NothingToExport(Exception):
 
 
 class UnreviewedTranslated(Exception):
+    """Unreviewed clips that would need a reviewer's approval: legacy translated clips, and every clip of the
+    new pipeline that is not approved (the name is kept for the API's skip_unreviewed_translated flag)."""
+
     def __init__(self, count: int):
-        super().__init__(f"{count} translated clip(s) have not been reviewed")
+        super().__init__(f"{count} clip(s) have not been reviewed")
         self.count = count
 
 
 def _select(store, dataset_id: str) -> tuple[list[dict], int, int]:
-    """(exportable clips, unreviewed translated clips, clips with empty text). Unreviewed translated clips
-    (needs_review + translated) are counted and never exported."""
-    clips = store.clips(dataset_id, statuses=[*EXPORT_STATUSES, "needs_review"])
+    """(exportable clips, unreviewed clips, clips with empty text). Counted as unreviewed and never exported:
+    legacy translated clips in needs_review, and new-pipeline clips (text_pick set) that are not approved,
+    since nothing of the new pipeline is auto-accepted. Legacy auto clips export as before."""
+    clips = store.clips(dataset_id, statuses=[*EXPORT_STATUSES, *_UNREVIEWED_NEW])
     kept: list[dict] = []
     unreviewed = empty = 0
     for c in clips:
-        is_unrev = c["status"] == "needs_review"
-        if is_unrev and c["text_source"] != "translated":
-            continue
+        if c.get("text_pick") is not None:  # new pipeline: only approved clips export
+            if c["status"] != "approved":
+                unreviewed += 1
+                continue
+            is_unrev = False
+        else:  # legacy: as before
+            if c["status"] not in (*EXPORT_STATUSES, "needs_review"):
+                continue
+            is_unrev = c["status"] == "needs_review"
+            if is_unrev and c["text_source"] != "translated":
+                continue
         if not (c["text_final"] or "").strip():
             empty += 1
             continue
@@ -55,8 +68,8 @@ def _select(store, dataset_id: str) -> tuple[list[dict], int, int]:
 
 
 def exportable(store, dataset_id: str) -> tuple[list[dict], int]:
-    """(clips to export, number of unreviewed translated clips). Flagged-but-unapproved and unreviewed
-    translated clips are excluded."""
+    """(clips to export, number of unreviewed clips: legacy translated ones and unapproved new-pipeline ones).
+    Legacy flagged-but-unapproved clips are excluded without being counted."""
     kept, unreviewed, _ = _select(store, dataset_id)
     return kept, unreviewed
 

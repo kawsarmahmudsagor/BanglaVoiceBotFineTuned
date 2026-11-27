@@ -666,6 +666,10 @@ kbd {
   background: var(--danger-soft);
   color: var(--danger);
 }
+.pill--reason-review {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 .pill--reason-pending_llm {
   background: var(--surface-2);
   color: var(--muted);
@@ -688,6 +692,9 @@ kbd {
 }
 .dot--disagree {
   background: var(--danger);
+}
+.dot--review {
+  background: var(--accent);
 }
 .dot--pending_llm {
   box-shadow: inset 0 0 0 2px var(--muted);

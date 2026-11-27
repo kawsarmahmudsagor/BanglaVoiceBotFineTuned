@@ -48,6 +48,8 @@ def ab_cer(text_a: str, text_b: str) -> float:
 
 
 def select_clip(piece_rows: list[dict], duration_s: float, th: Thresholds) -> dict:
+    """Nothing is auto-accepted: every clip that is not dropped goes to review (`needs_review`), and only a
+    reviewer's approval exports it. A CER above `disagree_cer` sets `flag=disagree`."""
     text_a = " ".join(t for t in ((p.get("text_a") or "").strip() for p in piece_rows) if t)
     text_b = " ".join(t for t in ((p.get("text_b") or "").strip() for p in piece_rows) if t)
     comps = [p["b_compression"] for p in piece_rows if p.get("b_compression") is not None]
@@ -57,9 +59,9 @@ def select_clip(piece_rows: list[dict], duration_s: float, th: Thresholds) -> di
     sb = score(text_b, duration_s, th, b_stats)
     cer = ab_cer(text_a, text_b)
     out = {"text_a": text_a, "text_b": text_b, "score_a": sa, "score_b": sb,
-           "text_pick": pick(sa, sb, th), "cer": cer, "flag": None, "status": "auto", "drop_reason": None}
+           "text_pick": pick(sa, sb, th), "cer": cer, "flag": None, "status": "needs_review", "drop_reason": None}
     if sa == 0.0 and sb == 0.0:
         out.update(status="dropped", drop_reason="bad_stt")
     elif cer > th.disagree_cer:
-        out.update(flag="disagree", status="flagged")
+        out["flag"] = "disagree"
     return out

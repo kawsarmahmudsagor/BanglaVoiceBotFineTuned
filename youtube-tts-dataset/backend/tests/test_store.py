@@ -183,6 +183,20 @@ def test_stage_migration_keeps_existing_marks(tmp_path):
     assert not s2.stage_done("ds", "v1", "cut")
 
 
+def test_new_pipeline_auto_clips_move_to_review_on_open(tmp_path):
+    s = Store(tmp_path / "db.sqlite")
+    ds = s.create_dataset("d", "spk")
+    s.add_video(ds, "v1", "u")
+    s.replace_clips(ds, "v1", [
+        {"id": f"v1_{i:04d}", "idx": i, "start_s": i, "end_s": i + 1, "status": st, "text_pick": pick}
+        for i, (st, pick) in enumerate([("auto", "b"), ("flagged", "a"), ("approved", "b"), ("dropped", "b"),
+                                        ("auto", None), ("flagged", None)])
+    ])
+    s2 = Store(tmp_path / "db.sqlite")
+    assert [c["status"] for c in s2.clips(ds)] == ["needs_review", "needs_review", "approved", "dropped",
+                                                   "auto", "flagged"]  # legacy clips (no pick) unchanged
+
+
 def test_threshold_migration_keeps_user_values(tmp_path):
     path = tmp_path / "old.db"
     _old_db(path, '{"clip_min_s": 2.0, "clip_max_s": 15.0, "dnsmos_min": 3.4, "merge_gap_s": 0.3}')

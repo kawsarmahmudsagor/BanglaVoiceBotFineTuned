@@ -190,6 +190,7 @@ def test_smoke_dashboard_and_studio(tmp_path):
             _say(f"  {c['id']} {c['end_s'] - c['start_s']:.1f}s {c['status']} flag={c['flag']} "
                  f"pick={c['text_pick']} cer={c['cer']:.2f}: {c['text_final']}")
         assert kept, f"{name}: no kept clips"
+        assert all(c["status"] == "needs_review" for c in kept), "nothing of the new pipeline is auto-accepted"
         hi = th.clip_max_s + PAD_TOL  # clip edges are padded by PAD_S on each side
         assert all(th.tail_min_s - 0.01 <= d <= hi for d in durs), durs
         assert sum(th.clip_min_s - 0.01 <= d <= hi for d in durs) * 2 >= len(durs), durs
@@ -221,9 +222,12 @@ def test_smoke_dashboard_and_studio(tmp_path):
     _say(f"mean CER {np.mean([r[1] for r in rows]):.3f} over {len(rows)} clips; whole-clip text > 10 % longer: "
          f"{len(longer)} {longer}; wall time {compare_s:.1f} s; peak torch {compare_torch / 1024**2:.0f} MiB")
 
-    # --- export of the dashboard dataset after approving every reviewable clip
+    # --- export of the dashboard dataset: unapproved clips block it, then every reviewable clip is approved
+    from ytds.exporter import exportable
+
+    assert exportable(store, dash) == ([], len(stats["dashboard"][1]))
     for c in store.clips(dash):
-        if c["status"] == "flagged" or (c["status"] == "needs_review" and (c["text_final"] or "").strip()):
+        if c["status"] == "needs_review" and (c["text_final"] or "").strip():
             store.update_clip(dash, c["id"], status="approved")
     out_dir = tmp_path / "export" / "smoke"
     t1 = time.monotonic()

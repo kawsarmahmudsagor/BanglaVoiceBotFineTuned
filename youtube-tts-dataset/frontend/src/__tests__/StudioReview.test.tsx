@@ -26,11 +26,11 @@ function mk(i: number, o: Partial<StudioClip>): StudioClip {
 }
 const clips = [
   mk(0, {}),
-  mk(1, { status: "flagged", flag: "disagree", reason: "disagree" }),
+  mk(1, { status: "needs_review", flag: "disagree", reason: "disagree" }),
   mk(2, { status: "dropped", drop_reason: "bad_stt", reason: null }),
   mk(3, { status: "approved" }),
   mk(4, { status: "rejected" }),
-  mk(5, { status: "flagged", flag: "incomplete_sentence", reason: "auto" }),
+  mk(5, { status: "needs_review", flag: "incomplete_sentence", reason: "review" }),
 ];
 
 beforeEach(() => {
@@ -49,6 +49,20 @@ test("filters count clips and default to Needs attention", async () => {
   expect(screen.getAllByText("1:05.2–1:21.0").length).toBeGreaterThan(0);
   fireEvent.click(screen.getByRole("button", { name: "Dropped (1)" }));
   expect(screen.getByText("Broken transcript")).toBeTruthy();
+});
+
+test("a new-pipeline clip waiting for review shows Needs review and counts as attention", async () => {
+  vi.mocked(api.getVideoClips).mockResolvedValue([mk(0, { status: "needs_review", reason: "review" }), clips[3]]);
+  render(<StudioReview datasetId="d1" videoId="v1" />);
+  await screen.findByRole("button", { name: "Needs attention (1)" });
+  expect(screen.getAllByText("Needs review").length).toBeGreaterThan(0);
+});
+
+test("export refused for unreviewed clips shows the dialog", async () => {
+  vi.mocked(api.exportDataset).mockRejectedValue(new api.ApiError(409, { unreviewed: 3 }));
+  render(<StudioReview datasetId="d1" videoId="v1" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Export dataset" }));
+  expect(await screen.findByText("3 clips not reviewed")).toBeTruthy();
 });
 
 test("Use model A calls patchClip and updates the text box", async () => {

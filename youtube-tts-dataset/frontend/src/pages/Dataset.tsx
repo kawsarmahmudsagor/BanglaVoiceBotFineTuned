@@ -46,7 +46,7 @@ export function summaryText(s: ExportSummary): string[] {
   ].filter(Boolean);
   if (left.length) lines.push(`Left out: ${left.join(", ")}.`);
   if (s.unreviewed_translated_skipped)
-    lines.push(`${plural(s.unreviewed_translated_skipped, "unreviewed translated clip")} left out.`);
+    lines.push(`${plural(s.unreviewed_translated_skipped, "unreviewed clip")} left out.`);
   return lines;
 }
 
@@ -69,10 +69,10 @@ export function UnreviewedDialog({ count, onSkip, onClose }: { count: number; on
         e.preventDefault();
         onClose();
       }}>
-      <h2 id="unrev-title">{plural(count, "translated clip")} not reviewed</h2>
+      <h2 id="unrev-title">{plural(count, "clip")} not reviewed</h2>
       <p id="unrev-body">
-        Their text is the LLM's translation of the English transcript, and nobody has checked it yet. Review them
-        first, or export now without them.
+        Clips are exported only after you approve them (and translated clips of older datasets only after
+        review). Review them first, or export now without them.
       </p>
       <div className="dialog__actions">
         <a className="btn btn--primary" href="#/review" onClick={onClose}>

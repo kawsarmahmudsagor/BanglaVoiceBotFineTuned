@@ -51,7 +51,7 @@ def _rows(a, b):
 
 def test_select_clip_disagree_flag():
     r = select_clip(_rows(GOOD, OTHER), 3.0, TH)
-    assert r["flag"] == "disagree" and r["status"] == "flagged" and r["drop_reason"] is None
+    assert r["flag"] == "disagree" and r["status"] == "needs_review" and r["drop_reason"] is None
     assert r["cer"] > 0.25
 
 
@@ -60,7 +60,7 @@ def test_select_clip_both_broken_dropped():
     assert r["status"] == "dropped" and r["drop_reason"] == "bad_stt" and r["flag"] is None
 
 
-def test_select_clip_agree_auto():
+def test_select_clip_agree_still_needs_review():
     r = select_clip(_rows(GOOD, GOOD) + _rows(OTHER, OTHER), 6.0, TH)
-    assert r["status"] == "auto" and r["text_pick"] == "b" and r["flag"] is None
+    assert r["status"] == "needs_review" and r["text_pick"] == "b" and r["flag"] is None
     assert r["text_a"] == GOOD + " " + OTHER

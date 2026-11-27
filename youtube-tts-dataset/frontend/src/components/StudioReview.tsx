@@ -45,7 +45,7 @@ export function formatOrig(s: number): string {
 
 function toReviewClip(c: StudioClip): ReviewClip | null {
   if (c.status == null) return null;
-  return { ...c, status: c.status, reason: c.reason ?? (c.flag === "disagree" ? "disagree" : "auto") };
+  return { ...c, status: c.status, reason: c.reason ?? (c.flag === "disagree" ? "disagree" : "review") };
 }
 
 function errText(e: unknown) {

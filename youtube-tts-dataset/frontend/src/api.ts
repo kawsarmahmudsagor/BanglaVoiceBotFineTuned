@@ -147,8 +147,10 @@ export function uploadStudioFile(
 // dataset stats and export
 export const getStats = (id: string) => request<DatasetStats>("GET", `${ds(id)}/stats`);
 /**
- * Starts an export (202). A 409 throws ApiError whose body is `{unreviewed: n}` when translated clips
- * are still unreviewed (retry with `skip_unreviewed_translated` to export without them), or `{error}` otherwise. Progress arrives on the WebSocket with stage "export".
+ * Starts an export (202). A 409 throws ApiError whose body is `{unreviewed: n}` when clips are still
+ * unreviewed: unapproved clips of the new pipeline, or legacy translated clips (retry with
+ * `skip_unreviewed_translated` to export without them), or `{error}` otherwise. Progress arrives on the
+ * WebSocket with stage "export".
  */
 export const exportDataset = (id: string, body: ExportBody = {}) =>
   request<ExportStarted>("POST", `${ds(id)}/export`, body);

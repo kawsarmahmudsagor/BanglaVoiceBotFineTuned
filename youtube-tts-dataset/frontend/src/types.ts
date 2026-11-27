@@ -34,7 +34,8 @@ export type ClipStatus =
 export type TextSource = "stt" | "translated";
 export type DropReason = "length" | "dnsmos" | "other_speaker" | "bad_stt";
 export type ClipFlag = "incomplete_sentence" | "unsplit" | "disagree";
-export type ReviewReason = "cer" | "translated" | "pending_llm" | "auto" | "disagree";
+/** "review": a clip of the new pipeline (nothing is auto-accepted); "cer"/"auto": legacy clips. */
+export type ReviewReason = "cer" | "translated" | "pending_llm" | "auto" | "disagree" | "review";
 
 export interface Dataset {
   id: string;

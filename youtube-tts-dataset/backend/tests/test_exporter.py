@@ -74,6 +74,24 @@ def test_refuses_unreviewed_translated(env):
     assert curation["counts"]["unreviewed_translated_skipped"] == 1
 
 
+def test_new_pipeline_clips_export_only_when_approved(env):
+    store, ds, _ = env
+    _add(store, ds, [("auto", "stt", "এক"), ("needs_review", "stt", "দুই"), ("approved", "stt", "তিন"),
+                     ("auto", "stt", "চার"), ("flagged", "stt", "পাঁচ"), ("rejected", "stt", "ছয়"),
+                     ("dropped", "stt", "সাত")])
+    for i in range(1, 7):  # clips 1-6 come from the new pipeline (a model pick); clip 0 is a legacy auto clip
+        store.update_clip(ds, f"vid1_{i:04d}", text_pick="b")
+    clips, n = exportable(store, ds)
+    assert [c["id"] for c in clips] == ["vid1_0000", "vid1_0002"] and n == 3  # needs_review, auto, flagged
+    with pytest.raises(UnreviewedTranslated) as e:
+        _run(env)
+    assert e.value.count == 3
+    s, _, out = _run(env, skip_unreviewed_translated=True)
+    assert s["clips"] == 2 and s["unreviewed_translated_skipped"] == 3
+    with open(out / "metadata.csv", encoding="utf-8", newline="") as fh:
+        assert sorted(r["text"] for r in csv.DictReader(fh)) == sorted(["এক", "তিন"])
+
+
 def test_flagged_unapproved_excluded(env):
     store, ds, _ = env
     _add(store, ds, [("auto", "stt", "এক"), ("flagged", "stt", "দুই"), ("rejected", "stt", "তিন"),

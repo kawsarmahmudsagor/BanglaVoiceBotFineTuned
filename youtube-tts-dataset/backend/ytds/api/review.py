@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/datasets")
 
 QUEUE_STATUSES = ["flagged", "needs_review", "pending_llm"]
 REVIEWED_STATUSES = ["approved", "rejected"]
-Reason = Literal["cer", "translated", "pending_llm", "auto", "disagree"]
+Reason = Literal["cer", "translated", "pending_llm", "auto", "disagree", "review"]
 _slice_lock = threading.Lock()  # a browser fires parallel Range requests for the same clip
 
 
@@ -31,15 +31,17 @@ def review_reason(clip: dict) -> Reason:
     """Why a clip is (or was) in review: LLM down, translated text, flagged by the A/B check (only datasets
     transcribed before model B was removed have a CER), or accepted automatically.
 
-    New-pipeline clips (text_pick set) always have a CER; their A/B check is `flag=disagree`, so the legacy
-    CER reason applies only to clips without a pick."""
+    New-pipeline clips (text_pick set) are never auto-accepted: "disagree" when the models disagree, otherwise
+    "review". The legacy reasons below apply only to clips without a pick."""
     if clip.get("flag") == "disagree":
         return "disagree"
+    if clip.get("text_pick") is not None:
+        return "review"
     if clip["status"] == "pending_llm":
         return "pending_llm"
     if clip["text_source"] == "translated":
         return "translated"
-    if clip.get("cer") is not None and clip.get("text_pick") is None:
+    if clip.get("cer") is not None:
         return "cer"
     return "auto"
 

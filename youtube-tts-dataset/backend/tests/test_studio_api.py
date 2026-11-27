@@ -308,13 +308,13 @@ def test_clips_reason_of_new_pipeline_clip_ignores_its_cer(env):
     _awaiting(store, ds)
     base = {"video_id": "vid1", "text_source": "stt", "start_s": 0.0, "end_s": 16.0, "text_final": "ক।"}
     store.replace_clips(ds, "vid1", [
-        {**base, "id": "vid1_0000", "idx": 0, "status": "auto", "cer": 0.04, "text_pick": "b"},
+        {**base, "id": "vid1_0000", "idx": 0, "status": "needs_review", "cer": 0.04, "text_pick": "b"},
         {**base, "id": "vid1_0001", "idx": 1, "status": "flagged", "cer": 0.5, "text_pick": "a",
          "flag": "disagree"},
         {**base, "id": "vid1_0002", "idx": 2, "status": "flagged", "cer": 0.2},  # legacy clip: no pick
     ])
     reasons = {c["id"]: c["reason"] for c in client.get(f"/api/datasets/{ds}/videos/vid1/clips").json()}
-    assert reasons == {"vid1_0000": "auto", "vid1_0001": "disagree", "vid1_0002": "cer"}
+    assert reasons == {"vid1_0000": "review", "vid1_0001": "disagree", "vid1_0002": "cer"}
 
 
 # --- review swap

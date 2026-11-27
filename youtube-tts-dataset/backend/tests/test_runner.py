@@ -252,7 +252,7 @@ def test_runs_all_stages_in_order(env):
         dur = c["end_s"] - c["start_s"]
         assert dur <= th.clip_max_s + 0.2
         assert dur >= th.clip_min_s or (dur >= th.tail_min_s and c["text_final"].endswith("।"))
-        assert c["range_idx"] == 0 and c["flag"] is None and c["status"] == "auto"
+        assert c["range_idx"] == 0 and c["flag"] is None and c["status"] == "needs_review"
         assert c["text_pick"] == "b" and c["cer"] == 0.0 and c["text_source"] == "stt"
         assert c["text_final"] == _kept(c) + "।" and c["no_punct"] == 0
         assert c["dnsmos"] == 3.5
@@ -455,7 +455,7 @@ def test_running_reset_on_start(env):
 
     assert stages_for(bus, "v1") == ["group", "quality", "select", "punctuate"]
     assert _video(store, ds, "v1")["status"] == "done"
-    assert len([c for c in store.clips(ds, video_id="v1") if c["status"] == "auto"]) == 4
+    assert len([c for c in store.clips(ds, video_id="v1") if c["status"] == "needs_review"]) == 4
 
 
 def _english_a_repeat_b(vid, i):
@@ -500,7 +500,7 @@ def test_llm_down_flags_unsplit_and_retry_regroups(env):
     clips = store.clips(ds, video_id="v1")
     live = [c for c in clips if c["status"] != "dropped"]
     assert len(live) == 4
-    assert all(c["flag"] is None and c["status"] == "auto" for c in live)
+    assert all(c["flag"] is None and c["status"] == "needs_review" for c in live)
     assert all(c["no_punct"] == 0 and c["text_final"] == _kept(c) + "।" for c in live)
     assert all(p["no_punct"] == 0 for p in store.pieces(ds, "v1"))
     assert _video(store, ds, "v1")["status"] == "done"
@@ -520,7 +520,7 @@ def test_one_rejected_piece_keeps_sentence_grouping(env):
     assert [p["no_punct"] for p in pieces] == [int(i == 4) for i in range(12)]
     live = [c for c in store.clips(ds, video_id="v1") if c["status"] != "dropped"]
     assert len(live) == 4
-    assert all(c["flag"] is None and c["status"] == "auto" for c in live)
+    assert all(c["flag"] is None and c["status"] == "needs_review" for c in live)
     th = store.get_thresholds()
     assert all(c["end_s"] - c["start_s"] >= th.tail_min_s for c in live)
 
@@ -640,7 +640,7 @@ def test_review_edit_during_punctuate_survives(env):
     fakes.punctuate = punctuate
     _run(make(fakes), ds)
     clips = {c["id"]: c for c in store.clips(ds, video_id="v1")}
-    assert (clips["v1_0002"]["status"], clips["v1_0002"]["text_final"]) == ("auto", "edited")
+    assert (clips["v1_0002"]["status"], clips["v1_0002"]["text_final"]) == ("needs_review", "edited")
     assert (clips["v1_0003"]["status"], clips["v1_0003"]["text_final"]) == ("approved", "human")
     assert clips["v1_0000"]["text_final"] == _kept(clips["v1_0000"]) + "।"
     assert _video(store, ds, "v1")["status"] == "done"
@@ -871,7 +871,7 @@ def test_regroup_failure_marks_video_failed_and_retry_recovers(env):
     assert runner.wait_idle(IDLE_S)
     assert _video(store, ds, "v1")["status"] == "done"
     live = [c for c in store.clips(ds, video_id="v1") if c["status"] != "dropped"]
-    assert len(live) == 4 and all(c["flag"] is None and c["status"] == "auto" for c in live)
+    assert len(live) == 4 and all(c["flag"] is None and c["status"] == "needs_review" for c in live)
     assert all(c["text_final"] == _kept(c) + "।" for c in live)
 
 
@@ -895,7 +895,7 @@ def test_restart_mid_regroup_resumes(env):
     assert second.wait_idle(IDLE_S)
     assert _video(store, ds, "v1")["status"] == "done"
     live = [c for c in store.clips(ds, video_id="v1") if c["status"] != "dropped"]
-    assert len(live) == 4 and all(c["flag"] is None and c["status"] == "auto" for c in live)
+    assert len(live) == 4 and all(c["flag"] is None and c["status"] == "needs_review" for c in live)
 
 
 def test_review_before_regroup_group_keeps_clips(env):

@@ -178,7 +178,7 @@ def test_review_disagree_reason_and_filter(env):
 def test_review_reason_new_pipeline_clips_ignore_legacy_cer(env):
     client, store, _, _, _ = env
     ds = _dataset_with_clips(store, [
-        {"start_s": 0, "end_s": 3, "status": "auto", "cer": 0.03, "text_pick": "b"},
+        {"start_s": 0, "end_s": 3, "status": "needs_review", "cer": 0.03, "text_pick": "b"},
         {"start_s": 3, "end_s": 6, "status": "flagged", "cer": 0.4, "text_pick": "a", "flag": "disagree"},
         {"start_s": 6, "end_s": 9, "status": "needs_review", "cer": 0.02, "text_pick": "b", "flag": "unsplit"},
         {"start_s": 9, "end_s": 12, "status": "flagged", "cer": 0.2},                  # legacy: no pick
@@ -187,13 +187,28 @@ def test_review_reason_new_pipeline_clips_ignore_legacy_cer(env):
     from ytds.api.review import review_reason
 
     rows = {c["id"]: review_reason(c) for c in store.clips(ds)}
-    assert rows == {"vid1_0000": "auto", "vid1_0001": "disagree", "vid1_0002": "auto",
+    assert rows == {"vid1_0000": "review", "vid1_0001": "disagree", "vid1_0002": "review",
                     "vid1_0003": "cer", "vid1_0004": "auto"}
-    queue = client.get(f"/api/datasets/{ds}/review").json()["clips"]
-    assert [(c["id"], c["reason"]) for c in queue] == [("vid1_0001", "disagree"), ("vid1_0002", "auto"),
-                                                       ("vid1_0003", "cer")]
+    queue = client.get(f"/api/datasets/{ds}/review").json()["clips"]  # every new clip is in the queue
+    assert [(c["id"], c["reason"]) for c in queue] == [("vid1_0000", "review"), ("vid1_0001", "disagree"),
+                                                       ("vid1_0002", "review"), ("vid1_0003", "cer")]
+    r = client.get(f"/api/datasets/{ds}/review", params={"reason": "review"})
+    assert [c["id"] for c in r.json()["clips"]] == ["vid1_0000", "vid1_0002"]
     auto = client.get(f"/api/datasets/{ds}/review", params={"status": "auto"}).json()["clips"]
-    assert [(c["id"], c["reason"]) for c in auto] == [("vid1_0000", "auto"), ("vid1_0004", "auto")]
+    assert [(c["id"], c["reason"]) for c in auto] == [("vid1_0004", "auto")]
+    r = client.patch(f"/api/datasets/{ds}/clips/vid1_0000", json={"status": "approved"})
+    assert r.json()["status"] == "approved" and r.json()["reason"] == "review"
+
+
+def test_export_counts_unapproved_new_clips_as_unreviewed(env):
+    client, store, _, _, _ = env
+    ds = _dataset_with_clips(store, [
+        {"start_s": 0, "end_s": 3},                                                   # legacy auto: exports
+        {"start_s": 3, "end_s": 6, "status": "needs_review", "text_pick": "b", "cer": 0.01},
+        {"start_s": 6, "end_s": 9, "status": "approved", "text_pick": "a", "cer": 0.01},
+    ])
+    r = client.post(f"/api/datasets/{ds}/export", json={})
+    assert r.status_code == 409 and r.json() == {"unreviewed": 1}
 
 
 def test_export_409_with_unreviewed(env):

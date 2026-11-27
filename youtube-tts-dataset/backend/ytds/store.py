@@ -110,6 +110,9 @@ class Store:
                     "SELECT dataset_id, video_id, ?, 1, ? FROM stages WHERE stage=? AND done=1",
                     (new, now, old),
                 )
+        # new-pipeline clips (text_pick set) are never auto-accepted: ones made before that rule go to review
+        self._db.execute("UPDATE clips SET status='needs_review' "
+                         "WHERE text_pick IS NOT NULL AND status IN ('auto', 'flagged')")
         # thresholds: values still at the old defaults move to the new ones
         # (once only: a persisted marker stops a later user-saved 2.0/15.0 being rewritten on restart)
         done = self._db.execute("SELECT 1 FROM settings WHERE key='thresholds_migrated'").fetchone()
