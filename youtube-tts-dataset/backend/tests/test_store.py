@@ -112,3 +112,108 @@ def test_update_clip_if_applies_only_when_unchanged(store):
     assert (c["status"], c["text_final"]) == ("approved", "human")
     with pytest.raises(ValueError):
         store.update_clip_if(ds, "v1_0000", {"bogus": 1}, text_final="x")
+
+
+_OLD_SCHEMA = """
+CREATE TABLE datasets(
+  id TEXT PRIMARY KEY, name TEXT UNIQUE, speaker TEXT, created REAL);
+CREATE TABLE videos(
+  dataset_id TEXT, id TEXT, url TEXT, title TEXT, channel TEXT, upload_date TEXT,
+  duration_s REAL, license TEXT, status TEXT DEFAULT 'queued', error TEXT, warning TEXT,
+  PRIMARY KEY(dataset_id, id));
+CREATE TABLE stages(
+  dataset_id TEXT, video_id TEXT, stage TEXT, done INTEGER, updated REAL,
+  PRIMARY KEY(dataset_id, video_id, stage));
+CREATE TABLE clips(
+  dataset_id TEXT, id TEXT, video_id TEXT, idx INTEGER, start_s REAL, end_s REAL,
+  dnsmos REAL, speaker_sim REAL, drop_reason TEXT, text_a TEXT, text_b TEXT, cer REAL,
+  text_en TEXT, text_translated TEXT, text_final TEXT, text_source TEXT, status TEXT,
+  no_punct INTEGER DEFAULT 0,
+  PRIMARY KEY(dataset_id, id));
+CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT);
+"""
+
+
+def _old_db(path, thresholds=None):
+    import sqlite3
+
+    db = sqlite3.connect(str(path))
+    db.executescript(_OLD_SCHEMA)
+    db.execute("INSERT INTO datasets VALUES ('ds','d','spk',1.0)")
+    db.execute("INSERT INTO videos(dataset_id, id, url, status) VALUES ('ds','v1','u','done')")
+    db.execute(
+        "INSERT INTO clips(dataset_id, id, video_id, idx, start_s, end_s, text_a, status) "
+        "VALUES ('ds','v1_0000','v1',0,0,3,'x','auto')"
+    )
+    for st in ("segment", "transcribe"):
+        db.execute("INSERT INTO stages VALUES ('ds','v1',?,1,1.0)", (st,))
+    if thresholds is not None:
+        db.execute("INSERT INTO settings VALUES ('thresholds', ?)", (thresholds,))
+    db.commit()
+    db.close()
+
+
+def test_old_db_gains_columns_and_keeps_rows(tmp_path):
+    path = tmp_path / "old.db"
+    _old_db(path)
+    s = Store(path)
+    v = s.list_videos("ds")[0]
+    assert v["origin"] is None or v["origin"] == "dashboard"
+    assert s.get_clip("ds", "v1_0000")["text_a"] == "x"
+    s.update_clip("ds", "v1_0000", flag="disagree", text_pick="b", score_a=0.5, score_b=0.9, range_idx=1)
+    assert s.get_clip("ds", "v1_0000")["text_pick"] == "b"
+    s.update_video("ds", "v1", origin="studio", source="local", cuts="[[0,1]]", media="m", model_a="a", model_b="b")
+
+
+def test_stage_marks_migrated(tmp_path):
+    path = tmp_path / "old.db"
+    _old_db(path)
+    s = Store(path)
+    for st in ("cut", "pieces", "transcribe_a", "transcribe_b", "punctuate_pieces", "group", "select"):
+        assert s.stage_done("ds", "v1", st)
+    assert s.stage_done("ds", "v1", "segment")
+
+
+def test_stage_migration_keeps_existing_marks(tmp_path):
+    path = tmp_path / "old.db"
+    _old_db(path)
+    s = Store(path)
+    s.mark_stage("ds", "v1", "cut", False)
+    s2 = Store(path)
+    assert not s2.stage_done("ds", "v1", "cut")
+
+
+def test_threshold_migration_keeps_user_values(tmp_path):
+    path = tmp_path / "old.db"
+    _old_db(path, '{"clip_min_s": 2.0, "clip_max_s": 15.0, "dnsmos_min": 3.4, "merge_gap_s": 0.3}')
+    t = Store(path).get_thresholds()
+    assert (t.clip_min_s, t.clip_max_s, t.dnsmos_min) == (15.0, 25.0, 3.4)
+    path2 = tmp_path / "old2.db"
+    _old_db(path2, '{"clip_min_s": 2.0, "clip_max_s": 20.0}')
+    t2 = Store(path2).get_thresholds()
+    assert (t2.clip_min_s, t2.clip_max_s) == (15.0, 20.0)
+
+
+def test_pieces_roundtrip_and_delete(store):
+    ds = store.create_dataset("d", "spk")
+    store.add_video(ds, "v1", "u")
+    store.replace_pieces(ds, "v1", [
+        {"idx": 1, "range_idx": 0, "start_s": 4.0, "end_s": 6.0},
+        {"idx": 0, "range_idx": 0, "start_s": 0.0, "end_s": 4.0},
+    ])
+    store.update_piece(ds, "v1", 0, text_a="ক", broken=0)
+    ps = store.pieces(ds, "v1")
+    assert [p["idx"] for p in ps] == [0, 1]
+    assert ps[0]["text_a"] == "ক"
+    with pytest.raises(ValueError):
+        store.update_piece(ds, "v1", 0, nope=1)
+    store.delete_video(ds, "v1")
+    assert store.pieces(ds, "v1") == []
+
+
+def test_add_video_studio(store):
+    ds = store.create_dataset("d", "spk")
+    assert store.add_video(ds, "local_abc", "file", origin="studio", source="local", status="fetching")
+    v = store.list_videos(ds)[0]
+    assert v["status"] == "fetching"
+    assert (v["origin"], v["source"]) == ("studio", "local")

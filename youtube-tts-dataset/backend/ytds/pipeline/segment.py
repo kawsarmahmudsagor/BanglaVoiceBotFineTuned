@@ -91,5 +91,5 @@ def plan_clips(
 
 def segment(vocals_wav: Path, th: Thresholds) -> list[dict]:
     regions = vad_regions(load_16k(vocals_wav))
-    spans = plan_clips(regions, merge_gap_s=th.merge_gap_s, min_s=th.clip_min_s, max_s=th.clip_max_s)
+    spans = plan_clips(regions, merge_gap_s=th.piece_gap_s, min_s=th.clip_min_s, max_s=th.clip_max_s)
     return [{"idx": i, "start_s": s, "end_s": e} for i, (s, e) in enumerate(spans)]

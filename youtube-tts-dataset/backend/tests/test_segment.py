@@ -99,7 +99,7 @@ def test_segment_builds_clip_dicts(tmp_path, monkeypatch):
     wav = tmp_path / "vocals.wav"
     sf.write(str(wav), np.zeros(44100 * 12, dtype="float32"), 44100, subtype="PCM_16")
     monkeypatch.setattr(seg, "vad_regions", lambda y: [(0.5, 3.0), (6.0, 9.0)])
-    clips = seg.segment(wav, Thresholds())
+    clips = seg.segment(wav, Thresholds(clip_min_s=2.0, clip_max_s=15.0))
     assert clips == [
         {"idx": 0, "start_s": 0.5, "end_s": 3.0},
         {"idx": 1, "start_s": 6.0, "end_s": 9.0},

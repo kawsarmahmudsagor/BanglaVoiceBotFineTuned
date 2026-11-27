@@ -41,7 +41,9 @@ def test_defaults(tmp_path):
     assert (t.min_chars_per_s, t.max_chars_per_s, t.max_word_repeat) == (3.0, 30.0, 6)
     assert t.dnsmos_min == 3.0
     assert t.speaker_sim_min == 0.60
-    assert (t.clip_min_s, t.clip_max_s, t.merge_gap_s, t.demucs_segment_s) == (2.0, 15.0, 0.30, 7.0)
+    assert (t.clip_min_s, t.clip_max_s, t.demucs_segment_s) == (15.0, 25.0, 7.0)
+    assert (t.piece_max_s, t.piece_gap_s, t.tail_min_s, t.disagree_cer, t.tie_margin) == (10.0, 0.3, 5.0, 0.25, 0.05)
+    assert not hasattr(t, "merge_gap_s")
 
 
 def test_export_hf_token_sets_only_when_missing(tmp_path):
@@ -70,3 +72,12 @@ def test_create_app_exports_hf_token(tmp_path, monkeypatch):
     monkeypatch.delenv("HF_TOKEN", raising=False)
     create_app(Settings(data_dir=tmp_path, hf_token="tok"), runner=object(), store=Store(tmp_path / "db"))
     assert os.environ["HF_TOKEN"] == "tok"
+
+
+def test_model_paths_env_and_defaults(tmp_path):
+    none = tmp_path / "none.env"
+    s = load_settings(env={"MODEL_A_PATH": "x", "MODEL_B_PATH": "y"}, sub_env=none, root_env=none)
+    assert (s.model_a_path, s.model_b_path) == ("x", "y")
+    d = load_settings(env={}, sub_env=none, root_env=none)
+    assert d.model_a_path == r"C:\Users\BS23-DESKTOP-00038\Downloads\qwen-3-asr-finetune-1\safetensors"
+    assert d.model_b_path == r"C:\Users\BS23-DESKTOP-00038\Downloads\whisper-finetune-1\modelswhisper-v3-bn-version1"
