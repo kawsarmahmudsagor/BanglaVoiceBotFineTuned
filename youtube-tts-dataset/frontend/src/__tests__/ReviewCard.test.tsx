@@ -24,6 +24,10 @@ const base: ReviewClip = {
   text_source: "stt",
   status: "flagged",
   no_punct: 0,
+  flag: null,
+  text_pick: null,
+  score_a: null,
+  score_b: null,
   reason: "cer",
 };
 

@@ -1,16 +1,16 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { getSettings, putSettings, testLlm, updateDataset } from "../api";
-import type { AppSettings, DatasetSummary, StageModels, Thresholds } from "../types";
+import type { AppSettings, DatasetSummary, ModelSlotInfo, StageModels, Thresholds } from "../types";
 
 type Draft = Record<keyof Thresholds, string>;
 
 const FIELDS: { key: keyof Thresholds; label: string; unit?: string; step: string; hint: string }[] = [
   { key: "min_bn_ratio", label: "Minimum Bangla script share", step: "0.05",
-    hint: "Transcripts with less Bangla script than this are transcribed in English and translated by the LLM." },
+    hint: "Transcripts with less Bangla script than this are broken, so the clip is dropped." },
   { key: "min_chars_per_s", label: "Slowest speaking rate", unit: "chars/s", step: "0.5",
-    hint: "Fewer characters per second than this means words were missed, so the clip is translated instead." },
+    hint: "Fewer characters per second than this means words were missed, so the clip is dropped." },
   { key: "max_chars_per_s", label: "Fastest speaking rate", unit: "chars/s", step: "0.5",
-    hint: "More than this means the model made text up, so the clip is translated instead." },
+    hint: "More than this means the model made text up, so the clip is dropped." },
   { key: "max_word_repeat", label: "Repeated word limit", step: "1",
     hint: "One word repeated this many times in a row is treated as a transcription loop." },
   { key: "dnsmos_min", label: "Minimum DNSMOS", step: "0.1", hint: "Overall quality score, 1 to 5." },
@@ -18,7 +18,12 @@ const FIELDS: { key: keyof Thresholds; label: string; unit?: string; step: strin
     hint: "Clips less like the main speaker than this are dropped." },
   { key: "clip_min_s", label: "Shortest clip", unit: "s", step: "0.1", hint: "" },
   { key: "clip_max_s", label: "Longest clip", unit: "s", step: "0.1", hint: "" },
-  { key: "merge_gap_s", label: "Merge pauses shorter than", unit: "s", step: "0.05", hint: "" },
+  { key: "piece_max_s", label: "Longest piece", unit: "s", step: "0.5", hint: "Audio is transcribed in pieces up to this long." },
+  { key: "piece_gap_s", label: "Shortest pause that splits pieces", unit: "s", step: "0.05", hint: "" },
+  { key: "tail_min_s", label: "Shortest leftover clip", unit: "s", step: "0.5", hint: "Must not be longer than the shortest clip." },
+  { key: "disagree_cer", label: "Model disagreement", step: "0.05",
+    hint: "Models A and B differing by more than this flag the clip for review." },
+  { key: "tie_margin", label: "Tie margin", step: "0.01", hint: "Score gap under this counts as a tie; model B wins." },
   { key: "demucs_segment_s", label: "Demucs segment", unit: "s", step: "0.5",
     hint: "Shorter segments use less GPU memory." },
 ];
@@ -28,9 +33,9 @@ const MODEL_LABEL: Record<keyof StageModels, string> = {
   vad: "Speech detection",
   dnsmos: "Audio quality",
   speaker: "Speaker check",
-  model_a: "Transcription",
-  translate: "English transcription",
-  llm: "Punctuation and translation",
+  model_a: "Transcription (model A)",
+  model_b: "Transcription (model B)",
+  llm: "Punctuation",
 };
 
 const toDraft = (t: Thresholds) =>
@@ -47,6 +52,8 @@ export function validateThresholds(d: Draft): Partial<Record<keyof Thresholds, s
     err.max_chars_per_s = "Must be faster than the slowest rate.";
   if (!err.clip_min_s && !err.clip_max_s && n("clip_min_s") >= n("clip_max_s"))
     err.clip_max_s = "Must be longer than the shortest clip.";
+  if (!err.tail_min_s && !err.clip_min_s && n("tail_min_s") > n("clip_min_s"))
+    err.tail_min_s = "Must not be longer than the shortest clip.";
   if (!err.demucs_segment_s && n("demucs_segment_s") <= 0) err.demucs_segment_s = "Must be more than 0.";
   return err;
 }
@@ -99,6 +106,38 @@ function SpeakerForm({ dataset, onSaved }: { dataset: DatasetSummary; onSaved: (
         </p>
       )}
     </section>
+  );
+}
+
+function ModelSelect({ slot, label, info, onSaved, onError }: {
+  slot: "model_a" | "model_b";
+  label: string;
+  info: ModelSlotInfo;
+  onSaved: (s: AppSettings) => void;
+  onError: (text: string) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  async function change(value: string) {
+    setSaving(true);
+    try {
+      onSaved(await putSettings({ [slot]: value }));
+    } catch (err) {
+      onError(message(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <label className="field">
+      {label}
+      <select className="input" value={info.current} disabled={saving} onChange={(e) => void change(e.target.value)}>
+        {info.options.map((o) => (
+          <option key={o.id} value={o.id} disabled={!o.available}>
+            {o.available ? o.label : `${o.label} (missing: ${o.expected})`}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -228,6 +267,19 @@ export function Settings({ dataset, onDatasetChanged }: Props) {
               );
             })}
           </div>
+        </section>
+
+        <section className="panel" aria-labelledby="tm-title">
+          <h2 id="tm-title">Transcription models</h2>
+          <div className="settings-pair">
+            <ModelSelect slot="model_a" label="Model A" info={loaded.transcription.a} onSaved={setLoaded}
+              onError={(text) => setSaveStatus({ text, error: true })} />
+            <ModelSelect slot="model_b" label="Model B" info={loaded.transcription.b} onSaved={setLoaded}
+              onError={(text) => setSaveStatus({ text, error: true })} />
+          </div>
+          <p className="field__hint settings-hint">
+            Takes effect from the next transcription run. Clips already transcribed keep their text.
+          </p>
         </section>
 
         <section className="panel" aria-labelledby="llm-title">

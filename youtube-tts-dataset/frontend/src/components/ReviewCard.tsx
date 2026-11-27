@@ -11,6 +11,7 @@ export const REASON_LABEL: Record<ReviewReason, string> = {
   translated: "Translated",
   pending_llm: "Waiting for LLM",
   auto: "Auto-accepted",
+  disagree: "Models disagree",
 };
 
 export interface DiffToken {

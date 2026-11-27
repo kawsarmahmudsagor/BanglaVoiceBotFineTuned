@@ -2,16 +2,27 @@
 
 export const STAGES = [
   "download",
+  "cut",
   "separate",
-  "segment",
+  "pieces",
+  "transcribe_a",
+  "transcribe_b",
+  "punctuate_pieces",
+  "group",
   "quality",
-  "transcribe",
-  "fallback",
+  "select",
   "punctuate",
 ] as const;
 export type Stage = (typeof STAGES)[number];
 
-export type VideoStatus = "queued" | "running" | "done" | "failed" | "skipped";
+export type VideoStatus =
+  | "fetching"
+  | "awaiting_cut"
+  | "queued"
+  | "running"
+  | "done"
+  | "failed"
+  | "skipped";
 export type ClipStatus =
   | "dropped"
   | "auto"
@@ -22,7 +33,8 @@ export type ClipStatus =
   | "rejected";
 export type TextSource = "stt" | "translated";
 export type DropReason = "length" | "dnsmos" | "other_speaker";
-export type ReviewReason = "cer" | "translated" | "pending_llm" | "auto";
+export type ClipFlag = "incomplete_sentence" | "unsplit" | "disagree";
+export type ReviewReason = "cer" | "translated" | "pending_llm" | "auto" | "disagree";
 
 export interface Dataset {
   id: string;
@@ -99,10 +111,17 @@ export interface Clip {
   text_source: TextSource | null;
   status: ClipStatus;
   no_punct: number;
+  flag: ClipFlag | null;
+  text_pick: "a" | "b" | null;
+  score_a: number | null;
+  score_b: number | null;
 }
 
 export interface ReviewClip extends Clip {
   reason: ReviewReason;
+  /** Position in the original video (Studio clips are cut from kept ranges). */
+  orig_start_s?: number;
+  orig_end_s?: number;
 }
 
 export interface ReviewFilters {
@@ -120,6 +139,8 @@ export interface ReviewQueue {
 export interface ClipPatch {
   text_final?: string;
   status?: "approved" | "rejected";
+  /** Swap to this model text (text_final follows unless given). */
+  text_pick?: "a" | "b";
 }
 
 export interface SplitStats {
@@ -183,7 +204,11 @@ export interface Thresholds {
   speaker_sim_min: number;
   clip_min_s: number;
   clip_max_s: number;
-  merge_gap_s: number;
+  piece_max_s: number;
+  piece_gap_s: number;
+  tail_min_s: number;
+  disagree_cer: number;
+  tie_margin: number;
   demucs_segment_s: number;
 }
 
@@ -193,8 +218,20 @@ export interface StageModels {
   dnsmos: string;
   speaker: string;
   model_a: string;
-  translate: string;
+  model_b: string;
   llm: string;
+}
+
+export interface ModelOption {
+  id: string;
+  label: string;
+  available: boolean;
+  expected: string;
+}
+
+export interface ModelSlotInfo {
+  current: string;
+  options: ModelOption[];
 }
 
 export interface AppSettings {
@@ -203,6 +240,7 @@ export interface AppSettings {
   llm_host: string;
   llm_model: string;
   models: StageModels;
+  transcription: { a: ModelSlotInfo; b: ModelSlotInfo };
 }
 
 export interface SettingsUpdate {
@@ -211,6 +249,8 @@ export interface SettingsUpdate {
   cookies_path?: string;
   llm_host?: string;
   llm_model?: string;
+  model_a?: string;
+  model_b?: string;
 }
 
 export interface LlmTestResult {
@@ -256,4 +296,20 @@ export interface VideoState extends VideoDetail {
   progress: Partial<Record<Stage, StageProgress>>;
   currentStage: Stage | null;
   eta_s: number | null;
+}
+
+/** A video in GET /api/datasets/{id}/studio/videos. */
+export interface StudioVideo {
+  id: string;
+  title: string | null;
+  url: string;
+  source: "youtube" | "local";
+  status: VideoStatus;
+  error: string | null;
+  warning: string | null;
+  duration_s: number | null;
+  media_ready: boolean;
+  cuts: [number, number][] | null;
+  stages: Record<Stage, boolean>;
+  clips: { total: number; kept: number; flagged: number; dropped: number };
 }

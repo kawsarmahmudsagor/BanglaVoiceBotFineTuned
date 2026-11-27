@@ -1,7 +1,7 @@
 import { STAGES, type Stage, type VideoState } from "../types";
 
 /** Stages whose progress counts clips (n/N); the others report a percentage. */
-const CLIP_STAGES: ReadonlySet<Stage> = new Set(["transcribe", "fallback", "punctuate"]);
+const CLIP_STAGES: ReadonlySet<Stage> = new Set(["transcribe_a", "transcribe_b", "punctuate_pieces", "punctuate"]);
 
 export function formatDuration(s: number | null | undefined): string {
   if (s == null || !Number.isFinite(s)) return "–";
@@ -23,7 +23,7 @@ function stageMeasure(v: VideoState, s: Stage): string {
   const p = v.progress[s];
   if (v.stages[s]) return "done";
   if (!p || p.total <= 0) return v.status === "running" ? "working" : "";
-  return CLIP_STAGES.has(s) ? `${p.done}/${p.total} clips` : `${stagePercent(v, s)}%`;
+  return CLIP_STAGES.has(s) ? `${p.done}/${p.total} ${s === "punctuate" ? "clips" : "pieces"}` : `${stagePercent(v, s)}%`;
 }
 
 interface Props {
