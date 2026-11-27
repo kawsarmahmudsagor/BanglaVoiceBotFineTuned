@@ -59,7 +59,8 @@ def _run_export(app, ds: dict, out_dir: Path, skip: bool) -> None:
 
     try:
         summary = export_dataset(app.state.store, dataset_id, out_dir, on_progress,
-                                 data_dir=app.state.settings.data_dir, skip_unreviewed_translated=skip)
+                                 data_dir=app.state.settings.data_dir, skip_unreviewed_translated=skip,
+                                 settings=app.state.settings)
     except Exception as e:
         bus.publish({"type": "stage_failed", "dataset_id": dataset_id, "stage": "export", "error": str(e)})
     else:
@@ -92,7 +93,7 @@ def export(dataset_id: str, body: ExportRequest, request: Request):
 
 @router.post("/{dataset_id}/retry-llm", status_code=202)
 def retry_llm(dataset_id: str, request: Request) -> dict:
-    """Rerun punctuation and translation for clips that waited on the LLM (spec section 8)."""
+    """Rerun punctuation (and regrouping of unsplit videos, spec 4.4) for clips that waited on the LLM."""
     dataset_or_404(request, dataset_id)
     request.app.state.runner.retry_llm(dataset_id)
     return {"ok": True}

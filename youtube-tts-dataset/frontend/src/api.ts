@@ -16,6 +16,8 @@ import type {
   ReviewFilters,
   ReviewQueue,
   SettingsUpdate,
+  StudioClip,
+  StudioVideo,
 } from "./types";
 
 /** A non-2xx response. `body` is the parsed JSON (FastAPI errors carry `detail`). */
@@ -92,11 +94,63 @@ export async function getClipAudio(id: string, clipId: string): Promise<ArrayBuf
   return res.arrayBuffer();
 }
 
+// studio
+export const addStudioUrl = (id: string, url: string) =>
+  request<{ video_id: string }>("POST", `${ds(id)}/studio/videos`, { url });
+export const listStudioVideos = (id: string) => request<StudioVideo[]>("GET", `${ds(id)}/studio/videos`);
+/** URL for a <video>/<audio> element; the backend answers Range requests. */
+export const studioMediaUrl = (id: string, videoId: string) => `${vid(id, videoId)}/media`;
+export const startStudioVideo = (id: string, videoId: string, cuts: [number, number][]) =>
+  request<{ ok: true; cuts: [number, number][] }>("POST", `${vid(id, videoId)}/start`, { cuts });
+export const getVideoClips = (id: string, videoId: string) => request<StudioClip[]>("GET", `${vid(id, videoId)}/clips`);
+
+/** An upload failure. A 409 (file already in the dataset) carries the existing `video_id`. */
+export class UploadError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly video_id?: string,
+  ) {
+    super(message);
+    this.name = "UploadError";
+  }
+}
+
+/** Uploads the raw file as the request body (the name goes in `?filename=`), reporting progress. */
+export function uploadStudioFile(
+  id: string,
+  file: File,
+  onProgress: (sent: number, total: number) => void,
+): Promise<{ video_id: string }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${ds(id)}/studio/upload?filename=${encodeURIComponent(file.name)}`);
+    xhr.upload.onprogress = (e) => onProgress(e.loaded, e.total);
+    xhr.onerror = () => reject(new UploadError(0, "upload failed: network error"));
+    xhr.onabort = () => reject(new UploadError(0, "upload cancelled"));
+    xhr.onload = () => {
+      let data: unknown = null;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        data = xhr.responseText || null;
+      }
+      if (xhr.status === 200) return resolve(data as { video_id: string });
+      const detail = data && typeof data === "object" ? (data as { detail?: unknown }).detail : undefined;
+      const info = detail && typeof detail === "object" ? (detail as { video_id?: string }) : {};
+      reject(new UploadError(xhr.status, errorMessage(xhr.status, data), info.video_id));
+    };
+    xhr.send(file);
+  });
+}
+
 // dataset stats and export
 export const getStats = (id: string) => request<DatasetStats>("GET", `${ds(id)}/stats`);
 /**
- * Starts an export (202). A 409 throws ApiError whose body is `{unreviewed: n}` when translated clips
- * are still unreviewed (retry with `skip_unreviewed_translated` to export without them), or `{error}` otherwise. Progress arrives on the WebSocket with stage "export".
+ * Starts an export (202). A 409 throws ApiError whose body is `{unreviewed: n}` when clips are still
+ * unreviewed: unapproved clips of the new pipeline, or legacy translated clips (retry with
+ * `skip_unreviewed_translated` to export without them), or `{error}` otherwise. Progress arrives on the
+ * WebSocket with stage "export".
  */
 export const exportDataset = (id: string, body: ExportBody = {}) =>
   request<ExportStarted>("POST", `${ds(id)}/export`, body);

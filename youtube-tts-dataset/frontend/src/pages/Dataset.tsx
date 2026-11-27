@@ -26,7 +26,7 @@ export function formatHours(h: number): string {
   return h < 1 ? `${(h * 60).toFixed(1)} min` : `${h.toFixed(2)} h`;
 }
 
-function plural(n: number, word: string): string {
+export function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
@@ -37,7 +37,7 @@ function dropText(dropped: Record<string, number>): string {
   return parts.length ? parts.join(", ") : "none";
 }
 
-function summaryText(s: ExportSummary): string[] {
+export function summaryText(s: ExportSummary): string[] {
   const lines = [`Exported ${plural(s.clips, "clip")}${s.hours > 0 ? ` (${formatHours(s.hours)})` : ""} to:`];
   const left = [
     s.process_error && `${s.process_error} could not be processed`,
@@ -46,17 +46,17 @@ function summaryText(s: ExportSummary): string[] {
   ].filter(Boolean);
   if (left.length) lines.push(`Left out: ${left.join(", ")}.`);
   if (s.unreviewed_translated_skipped)
-    lines.push(`${plural(s.unreviewed_translated_skipped, "unreviewed translated clip")} left out.`);
+    lines.push(`${plural(s.unreviewed_translated_skipped, "unreviewed clip")} left out.`);
   return lines;
 }
 
-function unreviewedOf(e: unknown): number | null {
+export function unreviewedOf(e: unknown): number | null {
   if (!(e instanceof ApiError) || e.status !== 409) return null;
   const n = (e.body as { unreviewed?: unknown } | null)?.unreviewed;
   return typeof n === "number" ? n : null;
 }
 
-function UnreviewedDialog({ count, onSkip, onClose }: { count: number; onSkip: () => void; onClose: () => void }) {
+export function UnreviewedDialog({ count, onSkip, onClose }: { count: number; onSkip: () => void; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const d = ref.current;
@@ -69,10 +69,10 @@ function UnreviewedDialog({ count, onSkip, onClose }: { count: number; onSkip: (
         e.preventDefault();
         onClose();
       }}>
-      <h2 id="unrev-title">{plural(count, "translated clip")} not reviewed</h2>
+      <h2 id="unrev-title">{plural(count, "clip")} not reviewed</h2>
       <p id="unrev-body">
-        Their text is the LLM's translation of the English transcript, and nobody has checked it yet. Review them
-        first, or export now without them.
+        Clips are exported only after you approve them (and translated clips of older datasets only after
+        review). Review them first, or export now without them.
       </p>
       <div className="dialog__actions">
         <a className="btn btn--primary" href="#/review" onClick={onClose}>

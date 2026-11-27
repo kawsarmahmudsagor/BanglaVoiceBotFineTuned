@@ -13,26 +13,32 @@ REPO_ROOT = SUB_ROOT.parent
 
 
 class Thresholds(BaseModel):
-    min_bn_ratio: float = 0.5        # below this share of Bangla script, the transcript goes to the fallback
+    min_bn_ratio: float = 0.5        # below this share of Bangla script, the transcript is broken
     min_chars_per_s: float = 3.0     # plausible speaking rate, in Bangla characters per second of audio
     max_chars_per_s: float = 30.0
     max_word_repeat: int = 6         # one word this many times in a row is a hallucination loop
     dnsmos_min: float = 3.0
     speaker_sim_min: float = 0.60
-    clip_min_s: float = 2.0
-    clip_max_s: float = 15.0
-    merge_gap_s: float = 0.30
+    clip_min_s: float = 15.0
+    clip_max_s: float = 25.0
+    piece_max_s: float = 10.0
+    piece_gap_s: float = 0.3         # minimum pause that may split pieces
+    tail_min_s: float = 5.0
+    disagree_cer: float = 0.25       # A/B CER above this flags the clip
+    tie_margin: float = 0.05         # score gap under this is a tie; model B wins
     demucs_segment_s: float = 7.0
 
 
 class Settings(BaseModel):
     ollama_host: str = "http://localhost:11434"
     ollama_api_key: str = ""
-    llm_model: str = "gemma4:31b-cloud"
+    llm_model: str = "gemma4:e4b"
     data_dir: Path = SUB_ROOT / "var"
     export_dir: Path = REPO_ROOT / "var" / "import"
     port: int = 8765
     hf_token: str = ""
+    model_a_path: str = r"C:\Users\BS23-DESKTOP-00038\Downloads\qwen-3-asr-finetune-1\safetensors"
+    model_b_path: str = r"C:\Users\BS23-DESKTOP-00038\Downloads\whisper-finetune-1\modelswhisper-v3-bn-version1"
 
 
 def _file_values(path: Path | None) -> dict[str, str]:
@@ -66,6 +72,8 @@ def load_settings(
         ("LLM_MODEL", "llm_model"),
         ("YTDS_PORT", "port"),
         ("HF_TOKEN", "hf_token"),
+        ("MODEL_A_PATH", "model_a_path"),
+        ("MODEL_B_PATH", "model_b_path"),
     ]:
         if merged.get(key):
             kw[field] = merged[key]

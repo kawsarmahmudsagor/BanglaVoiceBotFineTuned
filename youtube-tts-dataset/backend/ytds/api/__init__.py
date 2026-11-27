@@ -6,33 +6,35 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..config import SUB_ROOT, Settings, export_hf_token
 from ..events import EventBus
 from ..store import Store
-from . import dataset, jobs, review, settings as settings_routes, ws
+from . import dataset, jobs, review, settings as settings_routes, studio, ws
 
 FRONTEND_DIST = SUB_ROOT / "frontend" / "dist"
 
 
 def _default_runner(settings: Settings, store: Store, bus: EventBus):
+    from .. import models
     from ..gpu import GpuWorker
-    from ..pipeline import fallback, quality, separate, transcribe
+    from ..pipeline import quality, separate
     from ..runner import JobRunner, StageFns
 
     gpu = GpuWorker({
         "demucs": separate.load_demucs,
         "ecapa": quality.load_ecapa,
-        "model_a": transcribe.load_model_a,
-        "whisper_translate": fallback.load_whisper_translate,
+        "model_a": models.loader("a", store, settings),
+        "model_b": models.loader("b", store, settings),
     })
     stages = StageFns.default()
     download = stages.download
 
-    def download_with_cookies(video_id, url, out_dir, on_progress):
+    def download_with_cookies(video_id, url, out_dir, on_progress, **kw):
         cookies = store.get_setting("cookies_path")
-        return download(video_id, url, out_dir, on_progress, cookies=Path(cookies) if cookies else None)
+        return download(video_id, url, out_dir, on_progress, cookies=Path(cookies) if cookies else None, **kw)
 
     stages.download = download_with_cookies
     llm = settings_routes.make_llm(store, settings)
@@ -58,8 +60,15 @@ def create_app(settings: Settings, runner=None, store: Store | None = None, bus:
     app = FastAPI(title="ytds", lifespan=lifespan)
     app.state.settings, app.state.store, app.state.bus, app.state.runner = settings, store, bus, runner
     app.state.exports = set()  # dataset ids with an export running
-    for module in (jobs, review, dataset, settings_routes, ws):
+    for module in (jobs, review, dataset, settings_routes, studio, ws):
         app.include_router(module.router)
     if FRONTEND_DIST.is_dir():
+        index = FRONTEND_DIST / "index.html"
+
+        @app.get("/studio", include_in_schema=False)
+        @app.get("/studio/", include_in_schema=False)
+        def studio_page() -> FileResponse:  # the SPA's real /studio path (spec 7)
+            return FileResponse(index, media_type="text/html")
+
         app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
     return app

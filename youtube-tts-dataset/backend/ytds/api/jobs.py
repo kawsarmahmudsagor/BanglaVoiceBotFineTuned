@@ -21,6 +21,7 @@ class CreateDataset(BaseModel):
     name: str
     speaker: str | None = None
     urls: str
+    allow_empty: bool = False  # Studio: create the dataset with no videos yet
 
 
 class AddVideos(BaseModel):
@@ -89,7 +90,7 @@ async def create_dataset(body: CreateDataset, request: Request) -> dict:
     if any(d["name"] == name for d in store.list_datasets()):
         raise HTTPException(409, f"dataset {name!r} already exists")
     pairs, errors = await run_in_threadpool(_expand, body.urls)
-    if not pairs:
+    if not pairs and not (body.allow_empty and not body.urls.strip()):
         raise HTTPException(400, {"error": "no usable URL", "errors": errors})
     dataset_id = store.create_dataset(name, (body.speaker or "").strip())
     return _add(request, dataset_id, pairs, errors)

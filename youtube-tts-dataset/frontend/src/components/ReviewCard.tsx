@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { clipAudioUrl } from "../api";
+import { clipAudioUrl, patchClip } from "../api";
 import type { ReviewClip, ReviewReason } from "../types";
 import { formatDuration } from "./ProgressRow";
 import { Waveform } from "./Waveform";
@@ -11,6 +11,8 @@ export const REASON_LABEL: Record<ReviewReason, string> = {
   translated: "Translated",
   pending_llm: "Waiting for LLM",
   auto: "Auto-accepted",
+  disagree: "Models disagree",
+  review: "Needs review",
 };
 
 export interface DiffToken {
@@ -79,14 +81,18 @@ interface Props {
   /** Saves the final text; called 500 ms after the last keystroke. */
   onEdit: (text: string) => unknown;
   videoTitle?: string | null;
+  /** Called with the server's clip after a model swap. */
+  onSwapped?: (clip: ReviewClip) => void;
 }
 
 /**
  * One clip to review. Keys: Space play/pause, Enter approve, R reject, J next, K previous. They are ignored
  * while the final-text box has focus, except Ctrl+Enter which approves. Render with `key={clip.id}`.
  */
-export function ReviewCard({ clip, onApprove, onReject, onNext, onPrev, onEdit, videoTitle }: Props) {
-  const [text, setText] = useState(clip.text_final ?? clip.text_a ?? "");
+export function ReviewCard({ clip, onApprove, onReject, onNext, onPrev, onEdit, videoTitle, onSwapped }: Props) {
+  const [text, setText] = useState(
+    clip.text_final ?? (clip.text_pick === "b" ? clip.text_b : clip.text_a) ?? "",
+  );
   const [save, setSave] = useState<SaveState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -156,6 +162,27 @@ export function ReviewCard({ clip, onApprove, onReject, onNext, onPrev, onEdit, 
       if (!mounted.current) return;
       setError(message(e));
       if (kind === "approve" && pending !== null) saveNow(textRef.current); // the edit still needs saving
+    } finally {
+      if (mounted.current) setBusy(false);
+    }
+  }
+
+  const [pick, setPick] = useState(clip.text_pick);
+  async function swap(which: "a" | "b") {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await patchClip(clip.dataset_id, clip.id, { text_pick: which });
+      if (!mounted.current) return;
+      clearTimeout(timer.current);
+      unsaved.current = null;
+      setText(res.text_final ?? "");
+      setPick(res.text_pick ?? which);
+      setSave("idle");
+      onSwapped?.(res);
+    } catch (e) {
+      if (mounted.current) setError(`Could not swap the text: ${message(e)}`);
     } finally {
       if (mounted.current) setBusy(false);
     }
@@ -245,7 +272,7 @@ export function ReviewCard({ clip, onApprove, onReject, onNext, onPrev, onEdit, 
           <h2 id={titleId}>
             Clip {clip.idx + 1}{" "}
             <span className="muted num">
-              {formatDuration(clip.start_s)} to {formatDuration(clip.end_s)}
+              {formatDuration(clip.orig_start_s ?? clip.start_s)} to {formatDuration(clip.orig_end_s ?? clip.end_s)}
             </span>
           </h2>
           <span className="rcard__video" lang="bn" title={clip.video_id}>
@@ -288,20 +315,38 @@ export function ReviewCard({ clip, onApprove, onReject, onNext, onPrev, onEdit, 
 
       <div className="rcard__compare">
         <section aria-label="Transcript">
-          <h3>Transcript</h3>
+          <h3>
+            {clip.text_pick != null ? "Model A" : "Transcript"}
+            {pick === "a" && <span className="pill pill--approved"> kept</span>}
+          </h3>
           <p lang="bn">
             {hasB ? <DiffText parts={diff.a} side="a" /> : clip.text_a || <span className="muted">No text</span>}
           </p>
         </section>
         {hasB && (
           <section aria-label="Model B transcript">
-            <h3>Model B</h3>
+            <h3>
+              Model B
+              {pick === "b" && <span className="pill pill--approved"> kept</span>}
+            </h3>
             <p lang="bn">
               <DiffText parts={diff.b} side="b" />
             </p>
           </section>
         )}
       </div>
+
+      {clip.text_pick != null && (
+        <div className="rcard__swap">
+          <button type="button" className="btn btn--small" disabled={busy || !clip.text_a} onClick={() => void swap("a")}>
+            Use model A
+          </button>
+          <button type="button" className="btn btn--small" disabled={busy || !clip.text_b} onClick={() => void swap("b")}>
+            Use model B
+          </button>
+          <p className="field__hint">Punctuation is not re-applied to the swapped text.</p>
+        </div>
+      )}
 
       {translated && (
         <div className="rcard__compare rcard__compare--translated">

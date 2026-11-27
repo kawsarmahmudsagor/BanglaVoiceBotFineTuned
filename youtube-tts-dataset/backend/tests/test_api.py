@@ -15,9 +15,18 @@ from ytds.store import Store
 SR = 16000
 
 
+class FakeGpu:
+    def __init__(self):
+        self.unloaded: list[str] = []
+
+    def unload(self, name):
+        self.unloaded.append(name)
+
+
 class FakeRunner:
     def __init__(self):
         self.calls, self.llm = [], None
+        self.gpu = FakeGpu()
         self.in_flight: set[tuple[str, str]] = set()
         self.stop_on_skip = False  # True: Skip cancels the running stage at once
 
@@ -35,6 +44,9 @@ class FakeRunner:
 
     def retry(self, dataset_id, video_id):
         self.calls.append(("retry", dataset_id, video_id))
+
+    def start_video(self, dataset_id, video_id, cuts):
+        self.calls.append(("start_video", dataset_id, video_id, cuts))
 
     def skip(self, dataset_id, video_id):
         self.calls.append(("skip", dataset_id, video_id))
@@ -151,6 +163,54 @@ def test_review_patch_approve_and_edit(env):
     assert [(c["id"], c["reason"]) for c in approved] == [("vid1_0000", "cer")]
 
 
+def test_review_disagree_reason_and_filter(env):
+    client, store, _, _, _ = env
+    ds = _dataset_with_clips(store, [
+        {"start_s": 0, "end_s": 3, "status": "flagged", "flag": "disagree"},
+        {"start_s": 3, "end_s": 6, "status": "flagged", "cer": 0.2},
+    ])
+    r = client.get(f"/api/datasets/{ds}/review", params={"reason": "disagree"})
+    assert r.status_code == 200
+    assert [c["flag"] for c in r.json()["clips"]] == ["disagree"]
+    assert [c["reason"] for c in client.get(f"/api/datasets/{ds}/review").json()["clips"]] == ["disagree", "cer"]
+
+
+def test_review_reason_new_pipeline_clips_ignore_legacy_cer(env):
+    client, store, _, _, _ = env
+    ds = _dataset_with_clips(store, [
+        {"start_s": 0, "end_s": 3, "status": "needs_review", "cer": 0.03, "text_pick": "b"},
+        {"start_s": 3, "end_s": 6, "status": "flagged", "cer": 0.4, "text_pick": "a", "flag": "disagree"},
+        {"start_s": 6, "end_s": 9, "status": "needs_review", "cer": 0.02, "text_pick": "b", "flag": "unsplit"},
+        {"start_s": 9, "end_s": 12, "status": "flagged", "cer": 0.2},                  # legacy: no pick
+        {"start_s": 12, "end_s": 15, "status": "auto", "cer": None, "text_pick": None},  # legacy auto
+    ])
+    from ytds.api.review import review_reason
+
+    rows = {c["id"]: review_reason(c) for c in store.clips(ds)}
+    assert rows == {"vid1_0000": "review", "vid1_0001": "disagree", "vid1_0002": "review",
+                    "vid1_0003": "cer", "vid1_0004": "auto"}
+    queue = client.get(f"/api/datasets/{ds}/review").json()["clips"]  # every new clip is in the queue
+    assert [(c["id"], c["reason"]) for c in queue] == [("vid1_0000", "review"), ("vid1_0001", "disagree"),
+                                                       ("vid1_0002", "review"), ("vid1_0003", "cer")]
+    r = client.get(f"/api/datasets/{ds}/review", params={"reason": "review"})
+    assert [c["id"] for c in r.json()["clips"]] == ["vid1_0000", "vid1_0002"]
+    auto = client.get(f"/api/datasets/{ds}/review", params={"status": "auto"}).json()["clips"]
+    assert [(c["id"], c["reason"]) for c in auto] == [("vid1_0004", "auto")]
+    r = client.patch(f"/api/datasets/{ds}/clips/vid1_0000", json={"status": "approved"})
+    assert r.json()["status"] == "approved" and r.json()["reason"] == "review"
+
+
+def test_export_counts_unapproved_new_clips_as_unreviewed(env):
+    client, store, _, _, _ = env
+    ds = _dataset_with_clips(store, [
+        {"start_s": 0, "end_s": 3},                                                   # legacy auto: exports
+        {"start_s": 3, "end_s": 6, "status": "needs_review", "text_pick": "b", "cer": 0.01},
+        {"start_s": 6, "end_s": 9, "status": "approved", "text_pick": "a", "cer": 0.01},
+    ])
+    r = client.post(f"/api/datasets/{ds}/export", json={})
+    assert r.status_code == 409 and r.json() == {"unreviewed": 1}
+
+
 def test_export_409_with_unreviewed(env):
     client, store, _, _, _ = env
     ds = _dataset_with_clips(store, [
@@ -171,8 +231,9 @@ def test_export_runs_in_background_and_reports_over_ws(env, monkeypatch):
     seen = {}
     release = threading.Event()
 
-    def fake_export(store_, dataset_id, out_dir, on_progress, *, data_dir, skip_unreviewed_translated):
+    def fake_export(store_, dataset_id, out_dir, on_progress, *, data_dir, skip_unreviewed_translated, settings):
         seen.update(out_dir=out_dir, data_dir=data_dir, skip=skip_unreviewed_translated)
+        assert settings is env[4]  # provenance resolves model paths from the app's settings
         release.wait(5)
         on_progress(1, 1)
         return {"clips": 1}
@@ -197,7 +258,7 @@ def test_export_skip_unreviewed_translated(env, monkeypatch):
     ])
     seen = {}
 
-    def fake_export(store_, dataset_id, out_dir, on_progress, *, data_dir, skip_unreviewed_translated):
+    def fake_export(store_, dataset_id, out_dir, on_progress, *, data_dir, skip_unreviewed_translated, settings):
         seen["skip"] = skip_unreviewed_translated
         return {"clips": 1}
 
@@ -318,7 +379,7 @@ def test_default_runner_wiring_passes_cookies_and_store_llm(tmp_path, monkeypatc
     app = create_app(Settings(data_dir=tmp_path), store=store, bus=EventBus())
     runner = app.state.runner
     assert isinstance(runner, JobRunner) and runner.llm.model == "from-settings-page"
-    assert sorted(runner.gpu._loaders) == ["demucs", "ecapa", "model_a", "whisper_translate"]
+    assert sorted(runner.gpu._loaders) == ["demucs", "ecapa", "model_a", "model_b"]
 
     runner.stages.download("v", "u", tmp_path, lambda d, t: None)
     store.set_setting("cookies_path", str(tmp_path / "cookies.txt"))
@@ -380,9 +441,47 @@ def test_settings_lists_stage_models(env):
     client = env[0]
     client.put("/api/settings", json={"llm_model": "m3"})
     models = client.get("/api/settings").json()["models"]
-    assert set(models) == {"separate", "vad", "dnsmos", "speaker", "model_a", "translate", "llm"}
+    assert set(models) == {"separate", "vad", "dnsmos", "speaker", "model_a", "model_b", "llm"}
+    assert "translate" not in models
     assert models["separate"] == "htdemucs" and models["llm"] == "m3"
-    assert models["model_a"] == "SayedShaun/Qwen3-ASR-0.6B-Bengali"
+    assert models["model_a"].startswith("Qwen3-ASR 0.6B") and models["model_b"].startswith("Whisper")
+
+
+def test_settings_transcription_choices(env, tmp_path):
+    client, store, _, runner, _ = env
+    body = client.get("/api/settings").json()
+    tr = body["transcription"]
+    assert tr["a"]["current"] == "qwen3-asr-bn-ft1" and tr["b"]["current"] == "whisper-bn-ft1"
+    opts = tr["a"]["options"] + tr["b"]["options"]
+    assert len(opts) == 4
+    assert all(set(o) == {"id", "label", "available", "expected"} for o in opts)
+    moz = next(o for o in opts if o["id"] == "whisper-bn-mozilla")
+    assert moz["available"] is True and moz["expected"] == "mozilla-ai/whisper-large-v3-turbo-bn"
+
+    r = client.put("/api/settings", json={"model_b": "whisper-bn-mozilla"})
+    assert r.status_code == 200
+    assert r.json()["transcription"]["b"]["current"] == "whisper-bn-mozilla"
+    assert store.get_setting("model_b") == "whisper-bn-mozilla"
+    assert runner.gpu.unloaded == ["model_b"]
+
+    assert client.put("/api/settings", json={"model_a": "whisper-bn-ft1"}).status_code == 422
+    assert client.put("/api/settings", json={"model_b": "nope"}).status_code == 422
+    assert store.get_setting("model_a") is None and runner.gpu.unloaded == ["model_b"]
+
+
+def test_settings_rejects_unavailable_local_model(tmp_path, monkeypatch):
+    monkeypatch.setattr("ytds.api.settings.OllamaClient", FakeLlm)
+    missing = str(tmp_path / "no-such-model")
+    settings = Settings(data_dir=tmp_path / "var", model_a_path=missing)
+    runner = FakeRunner()
+    app = create_app(settings, runner=runner, store=Store(tmp_path / "ytds.db"), bus=EventBus())
+    with TestClient(app) as client:
+        a = client.get("/api/settings").json()["transcription"]["a"]["options"][0]
+        assert a == {"id": "qwen3-asr-bn-ft1", "label": a["label"], "available": False, "expected": missing}
+        client.put("/api/settings", json={"model_a": "qwen3-asr-bn-sayedshaun"})
+        r = client.put("/api/settings", json={"model_a": "qwen3-asr-bn-ft1"})
+        assert r.status_code == 422 and missing in r.json()["detail"]
+        assert runner.gpu.unloaded == ["model_a"]
 
 
 @pytest.mark.parametrize("status", ["queued", "running", "skipped", "failed"])
@@ -421,3 +520,30 @@ def test_review_lists_auto_clips_on_request(env):
     r = client.patch(f"/api/datasets/{ds}/clips/vid1_0000", json={"status": "approved"})
     approved = client.get(f"/api/datasets/{ds}/review", params={"status": "approved"}).json()["clips"]
     assert r.status_code == 200 and [c["reason"] for c in approved] == ["auto"]
+
+
+def test_settings_resending_current_unavailable_model_is_accepted(tmp_path, monkeypatch):
+    monkeypatch.setattr("ytds.api.settings.OllamaClient", FakeLlm)
+    settings = Settings(data_dir=tmp_path / "var", model_a_path=str(tmp_path / "no-such-model"))
+    runner, store = FakeRunner(), Store(tmp_path / "ytds.db")
+    app = create_app(settings, runner=runner, store=store, bus=EventBus())
+    with TestClient(app) as client:
+        body = client.get("/api/settings").json()
+        body["thresholds"]["clip_min_s"] = 14.0
+        r = client.put("/api/settings", json={"thresholds": body["thresholds"], "model_a": "qwen3-asr-bn-ft1"})
+        assert r.status_code == 200
+        assert store.get_thresholds().clip_min_s == 14.0
+        assert runner.gpu.unloaded == []
+        assert client.put("/api/settings", json={"model_a": "whisper-bn-ft1"}).status_code == 422
+
+
+def test_create_empty_dataset_needs_allow_empty(env):
+    client, store, _, runner, _ = env
+    assert client.post("/api/datasets", json={"name": "spk", "urls": ""}).status_code == 400
+    r = client.post("/api/datasets", json={"name": "spk", "urls": "", "allow_empty": True})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["added"] == 0 and body["duplicates"] == 0 and body["errors"] == []
+    assert store.get_dataset(body["dataset_id"])["name"] == "spk"
+    assert store.list_videos(body["dataset_id"]) == []
+    assert ("enqueue", body["dataset_id"]) not in runner.calls

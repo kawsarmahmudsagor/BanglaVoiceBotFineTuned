@@ -1,6 +1,7 @@
-"""Routing of a model A transcript: kept as is ("auto") or sent to the English + LLM fallback.
+"""Routing of a transcript: usable ("auto") or "broken" (spec 4.7).
 
-There is one STT model, so the checks look at the transcript alone: empty output, too little Bangla script,
+Applied to the transcript of one STT model (model A's, or the picked model's); the checks look at
+the transcript alone: empty output, too little Bangla script,
 a speaking rate no person has, or a word repeated in a loop (a typical ASR hallucination).
 """
 from __future__ import annotations
@@ -11,7 +12,7 @@ from app.core.text import bn_normalize
 
 from ..config import Thresholds
 
-Route = Literal["auto", "flagged", "fallback"]
+Route = Literal["auto", "broken"]
 
 
 def _chars(text: str) -> str:
@@ -38,15 +39,15 @@ def longest_repeat(text: str) -> int:
 
 
 def route(text_a: str, duration_s: float, th: Thresholds) -> Route:
-    """"fallback" is stored as status pending_llm until the fallback stage runs."""
+    """Return "broken" when the transcript is unusable, else "auto"."""
     chars = _chars(text_a)
     if not chars:
-        return "fallback"
+        return "broken"
     if bn_ratio(text_a) < th.min_bn_ratio:
-        return "fallback"
+        return "broken"
     cps = len(chars) / max(duration_s, 0.1)
     if cps < th.min_chars_per_s or cps > th.max_chars_per_s:
-        return "fallback"
+        return "broken"
     if longest_repeat(text_a) >= th.max_word_repeat:
-        return "fallback"
+        return "broken"
     return "auto"

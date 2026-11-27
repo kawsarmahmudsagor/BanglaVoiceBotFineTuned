@@ -17,18 +17,26 @@ router = APIRouter(prefix="/api/datasets")
 
 QUEUE_STATUSES = ["flagged", "needs_review", "pending_llm"]
 REVIEWED_STATUSES = ["approved", "rejected"]
-Reason = Literal["cer", "translated", "pending_llm", "auto"]
+Reason = Literal["cer", "translated", "pending_llm", "auto", "disagree", "review"]
 _slice_lock = threading.Lock()  # a browser fires parallel Range requests for the same clip
 
 
 class ClipPatch(BaseModel):
     text_final: str | None = None
     status: Literal["approved", "rejected"] | None = None
+    text_pick: Literal["a", "b"] | None = None  # swap to this model's text (text_final follows unless given)
 
 
 def review_reason(clip: dict) -> Reason:
     """Why a clip is (or was) in review: LLM down, translated text, flagged by the A/B check (only datasets
-    transcribed before model B was removed have a CER), or accepted automatically."""
+    transcribed before model B was removed have a CER), or accepted automatically.
+
+    New-pipeline clips (text_pick set) are never auto-accepted: "disagree" when the models disagree, otherwise
+    "review". The legacy reasons below apply only to clips without a pick."""
+    if clip.get("flag") == "disagree":
+        return "disagree"
+    if clip.get("text_pick") is not None:
+        return "review"
     if clip["status"] == "pending_llm":
         return "pending_llm"
     if clip["text_source"] == "translated":
@@ -67,6 +75,8 @@ def review_queue(dataset_id: str, request: Request, reason: Reason | None = None
 def patch_clip(dataset_id: str, clip_id: str, body: ClipPatch, request: Request) -> dict:
     clip = _clip_or_404(request, dataset_id, clip_id)
     fields = body.model_dump(exclude_none=True)
+    if "text_pick" in fields and "text_final" not in fields:
+        fields["text_final"] = clip[f"text_{fields['text_pick']}"] or ""
     text = fields.get("text_final", clip["text_final"]) or ""
     if fields.get("status") == "approved" and not text.strip():
         raise HTTPException(422, "cannot approve a clip with empty text")

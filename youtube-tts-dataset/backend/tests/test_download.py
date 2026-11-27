@@ -127,3 +127,88 @@ def test_real_download_short_video(tmp_path):
         assert w.getnframes() > 48000
     assert meta["title"]
     assert meta["duration_s"] > 0
+
+
+def test_keep_video_format_and_media(tmp_path):
+    import shutil
+    import subprocess
+
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg missing")
+    seen = {}
+
+    class VideoYDL(FakeYDL):
+        def extract_info(self, url, download=True):
+            seen["opts"] = self.opts
+            subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+                 "testsrc=size=160x120:rate=5:duration=1", "-f", "lavfi", "-i",
+                 "sine=duration=1", "-shortest", str(tmp_path / "video.mp4")],
+                check=True,
+            )
+            return dict(self.info)
+
+    meta = download("vid1", "u", tmp_path, lambda d, t: None, ydl_factory=VideoYDL, keep_video=True)
+    assert seen["opts"]["format"] == (
+        "bestvideo[height<=720][vcodec^=avc1]+bestaudio[acodec^=mp4a]"
+        "/best[height<=720][ext=mp4]/best[height<=720]"
+    )
+    assert seen["opts"]["merge_output_format"] == "mp4"
+    assert not seen["opts"].get("postprocessors")
+    assert meta["media"] == "download/video.mp4"
+    assert (tmp_path / "video.mp4").exists()
+    with wave.open(str(tmp_path / "audio.wav")) as w:
+        assert (w.getframerate(), w.getnchannels(), w.getsampwidth()) == (48000, 1, 2)
+
+
+def _make_video(path: Path) -> None:
+    import subprocess
+
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+         "testsrc=size=160x120:rate=5:duration=1", "-f", "lavfi", "-i",
+         "sine=duration=1", "-shortest", str(path)],
+        check=True,
+    )
+
+
+def test_keep_video_webm_is_remuxed_to_mp4(tmp_path):
+    import shutil
+
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg missing")
+
+    class WebmYDL(FakeYDL):
+        def extract_info(self, url, download=True):
+            _make_video(tmp_path / "video.webm")
+            return dict(self.info)
+
+    meta = download("v", "u", tmp_path, lambda d, t: None, ydl_factory=WebmYDL, keep_video=True)
+    assert meta["media"] == "download/video.mp4"
+    assert (tmp_path / "video.mp4").exists() and not (tmp_path / "video.webm").exists()
+    assert (tmp_path / "audio.wav").exists()
+
+
+def test_keep_video_remux_failure_keeps_original(tmp_path, monkeypatch):
+    import shutil
+    import subprocess as sp
+
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg missing")
+    real = sp.run
+
+    def run(cmd, *a, **k):
+        if "copy" in cmd:
+            return sp.CompletedProcess(cmd, 1, "", "boom")
+        return real(cmd, *a, **k)
+
+    monkeypatch.setattr("ytds.pipeline.download.subprocess.run", run)
+
+    class WebmYDL(FakeYDL):
+        def extract_info(self, url, download=True):
+            _make_video(tmp_path / "video.webm")
+            return dict(self.info)
+
+    meta = download("v", "u", tmp_path, lambda d, t: None, ydl_factory=WebmYDL, keep_video=True)
+    assert meta["media"] == "download/video.webm"
+    assert (tmp_path / "audio.wav").exists()

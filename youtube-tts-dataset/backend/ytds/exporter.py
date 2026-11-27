@@ -12,10 +12,12 @@ from typing import Callable
 
 import soundfile as sf
 
+from .config import load_settings
 from .runner import vocals_path
 from .splits import assign_splits
 
 EXPORT_STATUSES = ("auto", "approved")
+_UNREVIEWED_NEW = ("needs_review", "flagged", "pending_llm")  # with auto: a new clip not yet approved
 PAD_S = 0.15
 OUT_SR = 24000
 HEADER = ["file", "text", "speaker", "split"]
@@ -28,21 +30,33 @@ class NothingToExport(Exception):
 
 
 class UnreviewedTranslated(Exception):
+    """Unreviewed clips that would need a reviewer's approval: legacy translated clips, and every clip of the
+    new pipeline that is not approved (the name is kept for the API's skip_unreviewed_translated flag)."""
+
     def __init__(self, count: int):
-        super().__init__(f"{count} translated clip(s) have not been reviewed")
+        super().__init__(f"{count} clip(s) have not been reviewed")
         self.count = count
 
 
 def _select(store, dataset_id: str) -> tuple[list[dict], int, int]:
-    """(exportable clips, unreviewed translated clips, clips with empty text). Unreviewed translated clips
-    (needs_review + translated) are counted and never exported."""
-    clips = store.clips(dataset_id, statuses=[*EXPORT_STATUSES, "needs_review"])
+    """(exportable clips, unreviewed clips, clips with empty text). Counted as unreviewed and never exported:
+    legacy translated clips in needs_review, and new-pipeline clips (text_pick set) that are not approved,
+    since nothing of the new pipeline is auto-accepted. Legacy auto clips export as before."""
+    clips = store.clips(dataset_id, statuses=[*EXPORT_STATUSES, *_UNREVIEWED_NEW])
     kept: list[dict] = []
     unreviewed = empty = 0
     for c in clips:
-        is_unrev = c["status"] == "needs_review"
-        if is_unrev and c["text_source"] != "translated":
-            continue
+        if c.get("text_pick") is not None:  # new pipeline: only approved clips export
+            if c["status"] != "approved":
+                unreviewed += 1
+                continue
+            is_unrev = False
+        else:  # legacy: as before
+            if c["status"] not in (*EXPORT_STATUSES, "needs_review"):
+                continue
+            is_unrev = c["status"] == "needs_review"
+            if is_unrev and c["text_source"] != "translated":
+                continue
         if not (c["text_final"] or "").strip():
             empty += 1
             continue
@@ -54,8 +68,8 @@ def _select(store, dataset_id: str) -> tuple[list[dict], int, int]:
 
 
 def exportable(store, dataset_id: str) -> tuple[list[dict], int]:
-    """(clips to export, number of unreviewed translated clips). Flagged-but-unapproved and unreviewed
-    translated clips are excluded."""
+    """(clips to export, number of unreviewed clips: legacy translated ones and unapproved new-pipeline ones).
+    Legacy flagged-but-unapproved clips are excluded without being counted."""
     kept, unreviewed, _ = _select(store, dataset_id)
     return kept, unreviewed
 
@@ -69,11 +83,17 @@ def _git_commit() -> str | None:
         return None
 
 
-def _model_ids() -> dict:
-    from .pipeline.fallback import TRANSLATE_MODEL
-    from .pipeline.transcribe import MODEL_A
-    return {"model_a": MODEL_A, "fallback": TRANSLATE_MODEL,
-            "separation": "htdemucs", "vad": "silero-vad"}
+def _model_ids(videos: list[dict] = (), settings=None) -> dict:
+    """Provenance of the models: the distinct model A / B option ids recorded on `videos`, each with its configured
+    folder or repo id (never converts or downloads anything)."""
+    from . import models
+
+    out: dict = {"separation": "htdemucs", "vad": "silero-vad"}
+    for slot in ("a", "b"):
+        ids = sorted({v.get(f"model_{slot}") for v in videos} - {None, ""})
+        out[f"model_{slot}"] = [{"id": i, "source": models.source(i, settings) if i in models.BY_ID else None}
+                                for i in ids]
+    return out
 
 
 def _write_metadata(path: Path, rows: list[dict]) -> None:
@@ -97,7 +117,7 @@ def _render(dataset_id: str, clip: dict, data_dir: Path):
 
 def export_dataset(
     store, dataset_id: str, out_dir: Path, on_progress: Callable[[int, int], None], *,
-    data_dir: Path, skip_unreviewed_translated: bool = False,
+    data_dir: Path, skip_unreviewed_translated: bool = False, settings=None,
 ) -> dict:
     from app.datasets.validate_audio import validate_audio
 
@@ -165,9 +185,11 @@ def export_dataset(
     dropped_s: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     for c in store.clips(dataset_id, statuses=["dropped", "rejected"]):
         dropped_s[c["video_id"]][c["drop_reason"] or c["status"]] += c["end_s"] - c["start_s"]
-    videos = []
+    videos, exported = [], []
     for v in store.list_videos(dataset_id):
         mine = [c for c in final if c["video_id"] == v["id"]]
+        if mine:
+            exported.append(v)
         videos.append({
             "video_id": v["id"], "url": v["url"], "title": v["title"], "channel": v["channel"],
             "upload_date": v["upload_date"], "license": v["license"], "clips_kept": len(mine),
@@ -178,7 +200,7 @@ def export_dataset(
         "tool": "youtube-tts-dataset", "git_commit": _git_commit(),
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "dataset": {"id": dataset_id, "name": ds["name"], "speaker": speaker},
-        "thresholds": store.get_thresholds().model_dump(), "models": _model_ids(),
+        "thresholds": store.get_thresholds().model_dump(), "models": _model_ids(exported, settings or load_settings()),
         "videos": videos,
         "counts": {
             "total_clips": len(final),
