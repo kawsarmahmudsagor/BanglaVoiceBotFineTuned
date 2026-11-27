@@ -199,6 +199,7 @@ def decode_pieces(pipeline, audio16k: np.ndarray, pieces: list[dict], token_cap:
 
 def load_whisper(path: str) -> DecodeB:
     """GPU loader body for model B: a CT2 folder or repo id, float16 on CUDA, P1 applied."""
+    import torch  # noqa: F401  on Windows this loads torch/lib's cuBLAS/cuDNN DLLs, which CTranslate2 needs
     from faster_whisper import BatchedInferencePipeline, WhisperModel
 
     model = WhisperModel(path, device="cuda", compute_type="float16")
