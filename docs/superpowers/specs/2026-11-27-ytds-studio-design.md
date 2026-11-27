@@ -49,7 +49,8 @@ At the same time, change clip segmentation for every video (Studio and dashboard
 | `MODEL_A_PATH` | `C:\Users\BS23-DESKTOP-00038\Downloads\qwen-3-asr-finetune-1\safetensors` | HF safetensors checkpoint, `Qwen3ASRForConditionalGeneration` |
 | `MODEL_B_PATH` | `C:\Users\BS23-DESKTOP-00038\Downloads\whisper-finetune-1\modelswhisper-v3-bn-version1` | CTranslate2 export (`model.bin`, `config.json`, `tokenizer.json`, `vocabulary.json`, `preprocessor_config.json`) |
 
-- Each value may also be a Hugging Face repo id; it is downloaded with `HF_TOKEN` on first use. Both models are pushed as **private** repos to the user's HF account: `qwen3-asr-0.6b-bn-bengaliai200h` and `whisper-large-v3-turbo-bn-bengaliai200h-ct2`, each with a model card naming the recipe, base model, data and eval numbers. The Qwen card records `commercial_ok: false` (inherited from `SayedShaun/Qwen3-ASR-0.6B-Bengali`).
+- Each value may also be a Hugging Face repo id; it is downloaded with `HF_TOKEN` on first use. The defaults are the local folders, so the pipeline never depends on the Hub.
+- Separately, outside the pipeline and this plan, both models were uploaded once as private repos with a standalone script: `MahmudSagor/qwen3-asr-0.6b-bn-bengaliai200h` and `MahmudSagor/whisper-large-v3-turbo-bn-bengaliai200h-ct2`. Each has a model card. The Qwen card records R&D use only (`commercial_ok: false`, inherited from `SayedShaun/Qwen3-ASR-0.6B-Bengali`).
 - The app checks both paths at startup and on **Start processing**. A missing model gives a clear error; no video starts.
 - VRAM: model A about 1.5 GB (bf16), model B about 1.6 GB (float16). The GPU worker keeps one model loaded at a time, as today.
 
@@ -275,6 +276,7 @@ Backend (pytest, no GPU unless marked):
 - Settings: model options listed with availability; `PUT` saves a valid id and rejects an unknown one; a change unloads the old model; the next transcribe stage uses the new one; video records the ids.
 - API: upload id dedupe, playlist rejected, `/start` validation and 409, media Range response, clips listing with original times.
 - GPU smoke test (marked): one short video through the full new pipeline; every kept clip is 5–25 s, most are 15–25 s, and its final text ends in a sentence terminator, or the clip carries a `flag`.
+- GPU comparison check (marked, report only, never fails): on the smoke video, also run model A on each whole clip and print, per clip, the CER between that text and model A's joined piece text, plus both texts. If whole-clip text proves clearly better, a whole-clip pass for model A is added later as a Settings toggle (off by default).
 
 Frontend (Vitest):
 
