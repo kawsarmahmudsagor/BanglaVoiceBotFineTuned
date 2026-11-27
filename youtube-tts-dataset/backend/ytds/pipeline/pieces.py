@@ -11,6 +11,7 @@ from .audio16k import SR, load_16k
 from .cut import range_spans
 
 MIN_PIECE_S = 1.0  # a shorter piece is a lone word: join it to its neighbour when that fits
+MAX_BRIDGE_GAP_S = 1.0  # a short piece is never joined across more silence than this
 SPLIT_SEARCH_S = 2.0
 FRAME = SR // 50  # 20 ms
 
@@ -81,7 +82,7 @@ def plan_pieces(
                 continue
             gap = s - cur[1]
             fits = e - cur[0] <= max_s
-            if fits and (gap < gap_s or cur[1] - cur[0] < MIN_PIECE_S):
+            if fits and (gap < gap_s or (cur[1] - cur[0] < MIN_PIECE_S and gap <= MAX_BRIDGE_GAP_S)):
                 cur = (cur[0], e)
             else:
                 flush()

@@ -147,3 +147,19 @@ test("Use model B is disabled when model B has no text", () => {
   expect((screen.getByRole("button", { name: "Use model B" }) as HTMLButtonElement).disabled).toBe(true);
   expect((screen.getByRole("button", { name: "Use model A" }) as HTMLButtonElement).disabled).toBe(false);
 });
+
+test("a new-pipeline clip with no final text shows the picked model's text", () => {
+  setup({ ...base, text_final: null, text_pick: "b" });
+  expect(screen.getByRole("textbox")).toHaveValue("আমি ভাত খেয়েছি");
+});
+
+test("a legacy clip with no final text still shows text_a", () => {
+  setup({ ...base, text_final: null, text_pick: null });
+  expect(screen.getByRole("textbox")).toHaveValue("আমি ভাত খাই");
+});
+
+test("the title shows the original-video times when the clip has them", () => {
+  setup({ ...base, orig_start_s: 100, orig_end_s: 105 });
+  expect(screen.getByRole("heading", { level: 2 }).textContent).toContain("1:40");
+  expect(screen.getByRole("heading", { level: 2 }).textContent).toContain("1:45");
+});

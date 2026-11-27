@@ -247,3 +247,17 @@ def test_fresh_db_user_old_values_survive_restart(tmp_path):
     path = tmp_path / "new.db"
     Store(path).set_thresholds(Thresholds(clip_max_s=15.0))
     assert Store(path).get_thresholds().clip_max_s == 15.0
+
+
+def test_segment_without_transcribe_does_not_imply_new_marks(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    _old_db(path)
+    db = sqlite3.connect(str(path))
+    db.execute("DELETE FROM stages WHERE stage='transcribe'")
+    db.commit()
+    db.close()
+    s = Store(path)
+    for st in ("cut", "pieces", "transcribe_a", "transcribe_b", "punctuate_pieces", "group", "select"):
+        assert not s.stage_done("ds", "v1", st)

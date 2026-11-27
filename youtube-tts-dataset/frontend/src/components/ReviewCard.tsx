@@ -90,7 +90,9 @@ interface Props {
  * while the final-text box has focus, except Ctrl+Enter which approves. Render with `key={clip.id}`.
  */
 export function ReviewCard({ clip, onApprove, onReject, onNext, onPrev, onEdit, videoTitle, onSwapped }: Props) {
-  const [text, setText] = useState(clip.text_final ?? clip.text_a ?? "");
+  const [text, setText] = useState(
+    clip.text_final ?? (clip.text_pick === "b" ? clip.text_b : clip.text_a) ?? "",
+  );
   const [save, setSave] = useState<SaveState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -270,7 +272,7 @@ export function ReviewCard({ clip, onApprove, onReject, onNext, onPrev, onEdit, 
           <h2 id={titleId}>
             Clip {clip.idx + 1}{" "}
             <span className="muted num">
-              {formatDuration(clip.start_s)} to {formatDuration(clip.end_s)}
+              {formatDuration(clip.orig_start_s ?? clip.start_s)} to {formatDuration(clip.orig_end_s ?? clip.end_s)}
             </span>
           </h2>
           <span className="rcard__video" lang="bn" title={clip.video_id}>

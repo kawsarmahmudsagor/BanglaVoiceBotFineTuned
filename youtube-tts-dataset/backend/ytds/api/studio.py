@@ -272,6 +272,11 @@ def video_clips(dataset_id: str, video_id: str, request: Request) -> list[dict]:
     for c in store.clips(dataset_id, video_id=video_id):
         start, end = c["start_s"], c["end_s"]
         if cmap and start is not None and end is not None:
+            # clip padding can reach into the gap before its range: clamp to the clip's own range
+            own = next((m for m in cmap if m["range_idx"] == c.get("range_idx")), None)
+            if own:
+                start = min(max(start, own["cut_start_s"]), own["cut_end_s"])
+                end = min(max(end, own["cut_start_s"]), own["cut_end_s"])
             o_start, o_end = to_orig(start, cmap), to_orig(end, cmap)
         else:
             o_start, o_end = start, end

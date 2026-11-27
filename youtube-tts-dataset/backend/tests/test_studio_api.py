@@ -302,6 +302,23 @@ def test_clips_lists_every_status_with_original_times(env):
     assert client.get(f"/api/datasets/{ds}/videos/nope/clips").status_code == 404
 
 
+def test_clips_orig_times_clamped_to_own_range(env):
+    client, store, _, settings = env
+    ds = _ds(store)
+    _awaiting(store, ds)
+    base = {"video_id": "vid1", "text_source": "stt", "text_final": "ক।", "status": "auto"}
+    store.replace_clips(ds, "vid1", [
+        {**base, "id": "vid1_0000", "idx": 0, "start_s": 20.5, "end_s": 30.0, "range_idx": 1},
+    ])
+    cmap = [{"range_idx": 0, "cut_start_s": 0.0, "cut_end_s": 20.0, "orig_start_s": 100.0},
+            {"range_idx": 1, "cut_start_s": 22.0, "cut_end_s": 42.0, "orig_start_s": 300.0}]
+    d = cut_dir(settings.data_dir, ds, "vid1")
+    d.mkdir(parents=True)
+    (d / "map.json").write_text(json.dumps(cmap), encoding="utf-8")
+    c = client.get(f"/api/datasets/{ds}/videos/vid1/clips").json()[0]
+    assert c["orig_start_s"] == 300.0 and c["orig_end_s"] == 308.0
+
+
 def test_clips_reason_of_new_pipeline_clip_ignores_its_cer(env):
     client, store, _, _ = env
     ds = _ds(store)

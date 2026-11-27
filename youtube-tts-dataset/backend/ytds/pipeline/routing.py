@@ -1,6 +1,7 @@
 """Routing of a transcript: usable ("auto") or "broken" (spec 4.7).
 
-The checks look at the transcript alone: empty output, too little Bangla script,
+Applied to the transcript of one STT model (model A's, or the picked model's); the checks look at
+the transcript alone: empty output, too little Bangla script,
 a speaking rate no person has, or a word repeated in a loop (a typical ASR hallucination).
 """
 from __future__ import annotations
@@ -38,7 +39,7 @@ def longest_repeat(text: str) -> int:
 
 
 def route(text_a: str, duration_s: float, th: Thresholds) -> Route:
-    """broken" means the transcript is unusable."""
+    """Return "broken" when the transcript is unusable, else "auto"."""
     chars = _chars(text_a)
     if not chars:
         return "broken"

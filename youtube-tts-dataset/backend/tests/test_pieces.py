@@ -89,3 +89,11 @@ def test_pieces_wires_vad_and_spans(tmp_path, monkeypatch):
     cmap = [{"range_idx": 0, "cut_start_s": 0.0, "cut_end_s": 20.0}]
     ps = pc.pieces(wav, cmap, Thresholds())
     assert _se(ps) == [(0.5, 3.0), (6.0, 9.0)]
+
+
+def test_tiny_piece_does_not_bridge_a_long_silence():
+    y = _noise(20)
+    ps = plan_pieces([(0, 0.5), (7.5, 9.0)], [(0, 0.0, 20.0)], y, 10.0, 0.3)
+    assert _se(ps) == [(0, 0.5), (7.5, 9.0)]
+    ps = plan_pieces([(0, 0.5), (1.1, 2.6)], [(0, 0.0, 20.0)], y, 10.0, 0.3)
+    assert _se(ps) == [(0, 2.6)]

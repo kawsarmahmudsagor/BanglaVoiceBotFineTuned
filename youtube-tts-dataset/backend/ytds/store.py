@@ -100,6 +100,8 @@ class Store:
                     self._db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
         # stage marks (spec 4.8): a finished old `segment` implies the new segmentation stages, `transcribe` implies select
         now = time.time()
+        # segment alone implies nothing (old transcribe also did the cutting-side work): without a finished
+        # `transcribe` the video reruns from cut
         for old, news in (
             ("segment", ("cut", "pieces", "transcribe_a", "transcribe_b", "punctuate_pieces", "group")),
             ("transcribe", ("select",)),
@@ -107,7 +109,9 @@ class Store:
             for new in news:
                 self._db.execute(
                     "INSERT OR IGNORE INTO stages(dataset_id, video_id, stage, done, updated) "
-                    "SELECT dataset_id, video_id, ?, 1, ? FROM stages WHERE stage=? AND done=1",
+                    "SELECT s.dataset_id, s.video_id, ?, 1, ? FROM stages s WHERE s.stage=? AND s.done=1 "
+                    "AND EXISTS (SELECT 1 FROM stages t WHERE t.dataset_id=s.dataset_id "
+                    "AND t.video_id=s.video_id AND t.stage='transcribe' AND t.done=1)",
                     (new, now, old),
                 )
         # new-pipeline clips (text_pick set) are never auto-accepted: ones made before that rule go to review
