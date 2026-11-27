@@ -82,7 +82,7 @@ test("an edit survives navigating away and back, and Approve sends it", async ()
   await waitFor(() => expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("final5"));
   fireEvent.click(screen.getByRole("button", { name: /Previous/ }));
   await waitFor(() => expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("edited text"));
-  fireEvent.click(screen.getByRole("button", { name: /^Approve/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Approve Enter$/ }));
   await waitFor(() =>
     expect(api.patchClip).toHaveBeenCalledWith("d1", "v1_1", { text_final: "edited text", status: "approved" }),
   );
