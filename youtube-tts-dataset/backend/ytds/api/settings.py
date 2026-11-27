@@ -63,10 +63,12 @@ def transcription_choices(store: Store, settings: Settings) -> dict:
     return out
 
 
-def _check_model(slot: str, option_id: str, settings: Settings) -> None:
+def _check_model(slot: str, option_id: str, store: Store, settings: Settings) -> None:
     o = model_registry.BY_ID.get(option_id)
     if o is None or o.slot != slot:
         raise HTTPException(422, f"unknown model {slot.upper()} option: {option_id}")
+    if option_id == model_registry.current(store, slot):
+        return  # resending the current choice (a whole-form save) is not a change
     ok, expected = model_registry.available(option_id, settings)
     if not ok:
         raise HTTPException(422, f"model {option_id} is not available: folder not found: {expected}")
@@ -94,7 +96,7 @@ def put_settings(body: SettingsUpdate, request: Request) -> dict:
     for slot in ("a", "b"):  # validate before anything is stored
         value = getattr(body, f"model_{slot}")
         if value is not None:
-            _check_model(slot, value, settings)
+            _check_model(slot, value, store, settings)
     if body.thresholds is not None:
         store.set_thresholds(body.thresholds)
     if body.cookies_path is not None:

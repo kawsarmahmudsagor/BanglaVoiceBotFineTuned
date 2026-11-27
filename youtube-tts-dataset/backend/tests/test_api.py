@@ -469,3 +469,18 @@ def test_review_lists_auto_clips_on_request(env):
     r = client.patch(f"/api/datasets/{ds}/clips/vid1_0000", json={"status": "approved"})
     approved = client.get(f"/api/datasets/{ds}/review", params={"status": "approved"}).json()["clips"]
     assert r.status_code == 200 and [c["reason"] for c in approved] == ["auto"]
+
+
+def test_settings_resending_current_unavailable_model_is_accepted(tmp_path, monkeypatch):
+    monkeypatch.setattr("ytds.api.settings.OllamaClient", FakeLlm)
+    settings = Settings(data_dir=tmp_path / "var", model_a_path=str(tmp_path / "no-such-model"))
+    runner, store = FakeRunner(), Store(tmp_path / "ytds.db")
+    app = create_app(settings, runner=runner, store=store, bus=EventBus())
+    with TestClient(app) as client:
+        body = client.get("/api/settings").json()
+        body["thresholds"]["clip_min_s"] = 14.0
+        r = client.put("/api/settings", json={"thresholds": body["thresholds"], "model_a": "qwen3-asr-bn-ft1"})
+        assert r.status_code == 200
+        assert store.get_thresholds().clip_min_s == 14.0
+        assert runner.gpu.unloaded == []
+        assert client.put("/api/settings", json={"model_a": "whisper-bn-ft1"}).status_code == 422
