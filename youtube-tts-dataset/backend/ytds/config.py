@@ -32,7 +32,7 @@ class Thresholds(BaseModel):
 class Settings(BaseModel):
     ollama_host: str = "http://localhost:11434"
     ollama_api_key: str = ""
-    llm_model: str = "gemma4:31b-cloud"
+    llm_model: str = "gemma4:e4b"
     data_dir: Path = SUB_ROOT / "var"
     export_dir: Path = REPO_ROOT / "var" / "import"
     port: int = 8765

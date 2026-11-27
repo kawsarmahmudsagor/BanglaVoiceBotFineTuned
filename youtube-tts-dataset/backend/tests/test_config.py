@@ -31,7 +31,7 @@ def test_root_env_used_when_sub_missing(tmp_path):
 
 def test_defaults(tmp_path):
     s = load_settings({}, sub_env=tmp_path / "a.env", root_env=tmp_path / "b.env")
-    assert s.llm_model == "gemma4:31b-cloud"
+    assert s.llm_model == "gemma4:e4b"
     assert s.port == 8765
     assert s.ollama_host == "http://localhost:11434"
     assert s.data_dir == SUB_ROOT / "var"

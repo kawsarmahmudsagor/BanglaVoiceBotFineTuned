@@ -26,7 +26,7 @@ Open a new terminal after installing so PATH is refreshed. Optional settings go 
 |---|---|---|
 | `OLLAMA_HOST` | `http://localhost:11434` | Local Ollama daemon; when signed in it routes `*-cloud` models to Ollama cloud. |
 | `OLLAMA_API_KEY` | empty | Only for `OLLAMA_HOST=https://ollama.com` (direct cloud API). |
-| `LLM_MODEL` | `gemma4:31b-cloud` | Punctuation and translation model. |
+| `LLM_MODEL` | `gemma4:e4b` | Punctuation model (local Ollama). |
 | `YTDS_DATA_DIR` | `youtube-tts-dataset/var` | Work data (SQLite db, downloads, stems, model cache). |
 | `YTDS_EXPORT_DIR` | `<repo>/var/import` | Default export root. |
 | `YTDS_PORT` | `8765` | Backend port. |
