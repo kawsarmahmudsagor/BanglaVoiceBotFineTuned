@@ -163,6 +163,18 @@ def test_review_patch_approve_and_edit(env):
     assert [(c["id"], c["reason"]) for c in approved] == [("vid1_0000", "cer")]
 
 
+def test_review_disagree_reason_and_filter(env):
+    client, store, _, _, _ = env
+    ds = _dataset_with_clips(store, [
+        {"start_s": 0, "end_s": 3, "status": "flagged", "flag": "disagree"},
+        {"start_s": 3, "end_s": 6, "status": "flagged", "cer": 0.2},
+    ])
+    r = client.get(f"/api/datasets/{ds}/review", params={"reason": "disagree"})
+    assert r.status_code == 200
+    assert [c["flag"] for c in r.json()["clips"]] == ["disagree"]
+    assert [c["reason"] for c in client.get(f"/api/datasets/{ds}/review").json()["clips"]] == ["disagree", "cer"]
+
+
 def test_export_409_with_unreviewed(env):
     client, store, _, _, _ = env
     ds = _dataset_with_clips(store, [

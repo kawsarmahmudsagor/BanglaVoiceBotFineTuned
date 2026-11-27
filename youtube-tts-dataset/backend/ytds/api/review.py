@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/datasets")
 
 QUEUE_STATUSES = ["flagged", "needs_review", "pending_llm"]
 REVIEWED_STATUSES = ["approved", "rejected"]
-Reason = Literal["cer", "translated", "pending_llm", "auto"]
+Reason = Literal["cer", "translated", "pending_llm", "auto", "disagree"]
 _slice_lock = threading.Lock()  # a browser fires parallel Range requests for the same clip
 
 
@@ -30,6 +30,8 @@ class ClipPatch(BaseModel):
 def review_reason(clip: dict) -> Reason:
     """Why a clip is (or was) in review: LLM down, translated text, flagged by the A/B check (only datasets
     transcribed before model B was removed have a CER), or accepted automatically."""
+    if clip.get("flag") == "disagree":
+        return "disagree"
     if clip["status"] == "pending_llm":
         return "pending_llm"
     if clip["text_source"] == "translated":

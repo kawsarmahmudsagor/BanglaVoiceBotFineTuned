@@ -16,6 +16,7 @@ import type {
   ReviewFilters,
   ReviewQueue,
   SettingsUpdate,
+  StudioClip,
   StudioVideo,
 } from "./types";
 
@@ -101,7 +102,7 @@ export const listStudioVideos = (id: string) => request<StudioVideo[]>("GET", `$
 export const studioMediaUrl = (id: string, videoId: string) => `${vid(id, videoId)}/media`;
 export const startStudioVideo = (id: string, videoId: string, cuts: [number, number][]) =>
   request<{ ok: true; cuts: [number, number][] }>("POST", `${vid(id, videoId)}/start`, { cuts });
-export const getVideoClips = (id: string, videoId: string) => request<ReviewClip[]>("GET", `${vid(id, videoId)}/clips`);
+export const getVideoClips = (id: string, videoId: string) => request<StudioClip[]>("GET", `${vid(id, videoId)}/clips`);
 
 /** An upload failure. A 409 (file already in the dataset) carries the existing `video_id`. */
 export class UploadError extends Error {

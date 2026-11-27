@@ -124,6 +124,14 @@ export interface ReviewClip extends Clip {
   orig_end_s?: number;
 }
 
+/** A clip from GET /videos/{id}/clips: reason and status are null between group and select. */
+export type StudioClip = Omit<Clip, "status"> & {
+  status: ClipStatus | null;
+  reason: ReviewReason | null;
+  orig_start_s: number;
+  orig_end_s: number;
+};
+
 export interface ReviewFilters {
   reason?: ReviewReason;
   video?: string;
