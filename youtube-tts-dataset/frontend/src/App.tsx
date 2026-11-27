@@ -35,8 +35,9 @@ function writeStored(key: string, value: string): void {
   }
 }
 
-function currentPage(): PagePath {
-  if (window.location.pathname.replace(/\/+$/, "") === "/studio") return "studio";
+export function currentPage(): PagePath {
+  // The backend serves index.html at /studio; once a nav link sets a hash, the hash decides.
+  if (!window.location.hash && window.location.pathname.replace(/\/+$/, "") === "/studio") return "studio";
   const p = window.location.hash.replace(/^#\/?/, "");
   return PAGES.find((x) => x.path === p)?.path ?? "jobs";
 }

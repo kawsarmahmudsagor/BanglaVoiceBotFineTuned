@@ -149,19 +149,27 @@ export function Studio({ dataset, datasets, onSelectDataset, onDatasetCreated }:
   const [actionError, setActionError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
+  const seq = useRef(0);
+  const datasetRef = useRef<string | null>(datasetId);
+  datasetRef.current = datasetId;
+
   const reload = useCallback(async () => {
     if (!datasetId) return;
+    const mine = ++seq.current;
     try {
-      setRows(await listStudioVideos(datasetId));
+      const list = await listStudioVideos(datasetId);
+      if (mine === seq.current && datasetRef.current === datasetId) setRows(list);
     } catch (e) {
-      setMessage(errText(e));
+      if (mine === seq.current && datasetRef.current === datasetId) setMessage(errText(e));
     }
   }, [datasetId]);
 
   useEffect(() => {
+    seq.current += 1; // drop in-flight lists of the previous dataset
     setRows([]);
     setSelected(null);
     setMessage(null);
+    setUpload(null);
     void reload();
   }, [reload]);
 
@@ -231,18 +239,25 @@ export function Studio({ dataset, datasets, onSelectDataset, onDatasetCreated }:
 
   async function doUpload(file: File) {
     if (!datasetId) return;
+    const forDataset = datasetId;
+    const stale = () => datasetRef.current !== forDataset;
     setMessage(null);
     setSelected(null);
     setUpload({ name: file.name, sent: 0, total: file.size });
     try {
-      const r = await uploadStudioFile(datasetId, file, (sent, total) => setUpload({ name: file.name, sent, total }));
-      setSelected(r.video_id);
+      const r = await uploadStudioFile(forDataset, file, (sent, total) => {
+        if (!stale()) setUpload({ name: file.name, sent, total });
+      });
+      if (!stale()) setSelected(r.video_id);
     } catch (err) {
+      if (stale()) return;
       if (err instanceof UploadError && err.status === 409 && err.video_id) setSelected(err.video_id);
       else setMessage(errText(err));
     } finally {
-      setUpload(null);
-      await reload();
+      if (!stale()) {
+        setUpload(null);
+        await reload();
+      }
     }
   }
 

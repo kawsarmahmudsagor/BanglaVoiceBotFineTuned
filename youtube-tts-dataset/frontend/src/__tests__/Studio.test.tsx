@@ -63,3 +63,39 @@ test("dropping a file uploads it", async () => {
   fireEvent.drop(await screen.findByTestId("dropzone"), { dataTransfer: { files: [file] } });
   await waitFor(() => expect(api.uploadStudioFile).toHaveBeenCalledWith("d1", file, expect.any(Function)));
 });
+
+test("switching dataset while the first list is pending never shows the old rows", async () => {
+  const d2: DatasetSummary = { ...dataset, id: "d2", name: "D2" };
+  let resolveOld: (v: StudioVideo[]) => void = () => {};
+  vi.mocked(api.listStudioVideos).mockImplementation((id: string) =>
+    id === "d1" ? new Promise((r) => (resolveOld = r)) : Promise.resolve([]),
+  );
+  const ui = (d: DatasetSummary) => (
+    <Studio dataset={d} datasets={[dataset, d2]} onSelectDataset={() => {}} onDatasetCreated={() => {}} />
+  );
+  const { rerender } = render(ui(dataset));
+  rerender(ui(d2));
+  await waitFor(() => expect(api.listStudioVideos).toHaveBeenCalledWith("d2"));
+  resolveOld([{ ...base, title: "OLD ROW" }]);
+  await new Promise((r) => setTimeout(r, 20));
+  expect(screen.queryByText("OLD ROW")).toBeNull();
+});
+
+test("an upload finishing after a dataset switch does not select or keep progress", async () => {
+  const d2: DatasetSummary = { ...dataset, id: "d2", name: "D2" };
+  vi.mocked(api.listStudioVideos).mockResolvedValue([]);
+  let finish: (v: { video_id: string }) => void = () => {};
+  vi.mocked(api.uploadStudioFile).mockImplementation(() => new Promise((r) => (finish = r)));
+  const ui = (d: DatasetSummary) => (
+    <Studio dataset={d} datasets={[dataset, d2]} onSelectDataset={() => {}} onDatasetCreated={() => {}} />
+  );
+  const { rerender } = render(ui(dataset));
+  const file = new File(["x"], "clip.mp4", { type: "video/mp4" });
+  fireEvent.drop(await screen.findByTestId("dropzone"), { dataTransfer: { files: [file] } });
+  await screen.findByText("Uploading clip.mp4");
+  rerender(ui(d2));
+  await waitFor(() => expect(screen.queryByText("Uploading clip.mp4")).toBeNull());
+  finish({ video_id: "v9" });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(screen.getByText(/Add a YouTube URL/)).toBeTruthy();
+});
