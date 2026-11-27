@@ -62,6 +62,14 @@ def _segment_removed(*args, **kwargs):
     raise NotImplementedError("segment stage replaced by pieces; the runner is rewritten in Task 8")
 
 
+def _transcribe_removed(*args, **kwargs):
+    raise NotImplementedError("transcribe_clips replaced by transcribe_pieces_a / whisper_b; see Task 8")
+
+
+def _fallback_removed(*args, **kwargs):
+    raise NotImplementedError("translation fallback removed (spec 4.7); the runner is rewritten in Task 8")
+
+
 @dataclass
 class StageFns:
     """The stage callables, with the real stage modules' signatures (injectable for tests)."""
@@ -77,14 +85,12 @@ class StageFns:
     @classmethod
     def default(cls) -> StageFns:
         from .pipeline.download import download
-        from .pipeline.fallback import run_fallback
         from .pipeline.punct import punctuate
         from .pipeline.quality import quality
         from .pipeline.separate import separate
-        from .pipeline.transcribe import transcribe_clips
 
         return cls(download=download, separate=separate, segment=_segment_removed, quality=quality,
-                   transcribe=transcribe_clips, fallback=run_fallback, punctuate=punctuate)
+                   transcribe=_transcribe_removed, fallback=_fallback_removed, punctuate=punctuate)
 
 
 class StageCancelled(Exception):

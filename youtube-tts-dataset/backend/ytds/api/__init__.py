@@ -17,15 +17,16 @@ FRONTEND_DIST = SUB_ROOT / "frontend" / "dist"
 
 
 def _default_runner(settings: Settings, store: Store, bus: EventBus):
+    from .. import models
     from ..gpu import GpuWorker
-    from ..pipeline import fallback, quality, separate, transcribe
+    from ..pipeline import quality, separate
     from ..runner import JobRunner, StageFns
 
     gpu = GpuWorker({
         "demucs": separate.load_demucs,
         "ecapa": quality.load_ecapa,
-        "model_a": transcribe.load_model_a,
-        "whisper_translate": fallback.load_whisper_translate,
+        "model_a": models.loader("a", store, settings),
+        "model_b": models.loader("b", store, settings),
     })
     stages = StageFns.default()
     download = stages.download

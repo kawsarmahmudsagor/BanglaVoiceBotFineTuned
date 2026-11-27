@@ -1,6 +1,6 @@
-"""Transcribe stage: model A (Qwen3-ASR Bengali), batched on the GPU.
+"""Model A (Qwen3-ASR Bengali, transformers): loader and piece transcription, batched on the GPU.
 
-Model loaders are plain functions; the GPU worker's loaders are registered by the app (Task 11, ruling R2).
+The GPU worker's "model_a" loader is built by ytds.models.loader, which resolves the chosen option to a path.
 """
 from __future__ import annotations
 
@@ -10,13 +10,10 @@ from typing import Callable
 
 import numpy as np
 
-from ..config import Thresholds
 from .audio16k import SR, load_16k
-from .routing import route
 
 Transcriber = Callable[[list[np.ndarray]], list[str]]
 
-MODEL_A = "SayedShaun/Qwen3-ASR-0.6B-Bengali"
 BATCH = 8
 
 # --- Ported from backend/workers/backends/qwen-asr/mlops_backend/prompt.py and prepare/qwen_asr.py
@@ -82,13 +79,14 @@ def in_batches(model: Transcriber, audios: list[np.ndarray],
     return out
 
 
-def load_model_a() -> Transcriber:
+def load_model_a(path: str) -> Transcriber:
+    """A Qwen3-ASR checkpoint (local safetensors folder or HF repo id), bf16 on CUDA."""
     import torch
     from transformers import AutoProcessor, Qwen3ASRForConditionalGeneration
 
-    processor = AutoProcessor.from_pretrained(MODEL_A)
+    processor = AutoProcessor.from_pretrained(path)
     model = Qwen3ASRForConditionalGeneration.from_pretrained(
-        MODEL_A, dtype=torch.bfloat16, attn_implementation="sdpa"
+        path, dtype=torch.bfloat16, attn_implementation="sdpa"
     ).to("cuda").eval()
     prompt = prompt_text(processor)
 
@@ -103,19 +101,12 @@ def load_model_a() -> Transcriber:
     return lambda audios: in_batches(batch, audios)
 
 
-def transcribe_clips(clips: list[dict], vocals_wav: Path, gpu, on_progress: Callable[[int, int], None],
-                     th: Thresholds | None = None) -> None:
-    """All live clips through model A; sets text_a, status, text_source (text_b and cer stay empty).
-    A "broken" route is stored as status pending_llm. Progress total is the number of live clips."""
-    th = th or Thresholds()
-    live = [c for c in clips if c.get("status") != "dropped"]
-    if not live:
-        return
+def transcribe_pieces_a(pieces: list[dict], vocals_wav: Path, model: Transcriber,
+                        on_progress: Callable[[int, int], None]) -> list[str]:
+    """Model A text per piece (start_s/end_s on the vocals), in piece order. Progress total is len(pieces)."""
+    if not pieces:
+        return []
     y = load_16k(vocals_wav)
-    audios = [y[int(c["start_s"] * SR):int(c["end_s"] * SR)] for c in live]
-    n = len(live)
-    texts_a = in_batches(gpu.use("model_a"), audios, lambda d: on_progress(d, n))
-    for c, a in zip(live, texts_a):
-        status = route(a, c["end_s"] - c["start_s"], th)
-        c.update(text_a=a, text_b=None, cer=None, text_source="stt",
-                 status="pending_llm" if status == "broken" else status)
+    audios = [y[int(p["start_s"] * SR):int(p["end_s"] * SR)] for p in pieces]
+    n = len(pieces)
+    return in_batches(model, audios, lambda d: on_progress(d, n))

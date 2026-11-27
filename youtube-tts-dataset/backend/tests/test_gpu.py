@@ -27,6 +27,18 @@ def test_use_same_model_no_reload():
     assert len(n) == 1
 
 
+def test_unload_drops_only_the_named_model():
+    calls = []
+    w = GpuWorker({"a": lambda: "A", "b": lambda: "B"}, empty_cache=lambda: calls.append("empty"))
+    w.unload("a")  # nothing loaded: no-op
+    assert calls == [] and w.loaded is None
+    w.use("a")
+    w.unload("b")  # another model loaded: no-op
+    assert w.loaded == "a" and calls == []
+    w.unload("a")
+    assert w.loaded is None and calls == ["empty"]
+
+
 def test_oom_retry_halves_once():
     seen = []
     cleared = []

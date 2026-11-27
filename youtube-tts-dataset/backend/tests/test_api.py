@@ -15,9 +15,18 @@ from ytds.store import Store
 SR = 16000
 
 
+class FakeGpu:
+    def __init__(self):
+        self.unloaded: list[str] = []
+
+    def unload(self, name):
+        self.unloaded.append(name)
+
+
 class FakeRunner:
     def __init__(self):
         self.calls, self.llm = [], None
+        self.gpu = FakeGpu()
         self.in_flight: set[tuple[str, str]] = set()
         self.stop_on_skip = False  # True: Skip cancels the running stage at once
 
@@ -171,8 +180,9 @@ def test_export_runs_in_background_and_reports_over_ws(env, monkeypatch):
     seen = {}
     release = threading.Event()
 
-    def fake_export(store_, dataset_id, out_dir, on_progress, *, data_dir, skip_unreviewed_translated):
+    def fake_export(store_, dataset_id, out_dir, on_progress, *, data_dir, skip_unreviewed_translated, settings):
         seen.update(out_dir=out_dir, data_dir=data_dir, skip=skip_unreviewed_translated)
+        assert settings is env[4]  # provenance resolves model paths from the app's settings
         release.wait(5)
         on_progress(1, 1)
         return {"clips": 1}
@@ -197,7 +207,7 @@ def test_export_skip_unreviewed_translated(env, monkeypatch):
     ])
     seen = {}
 
-    def fake_export(store_, dataset_id, out_dir, on_progress, *, data_dir, skip_unreviewed_translated):
+    def fake_export(store_, dataset_id, out_dir, on_progress, *, data_dir, skip_unreviewed_translated, settings):
         seen["skip"] = skip_unreviewed_translated
         return {"clips": 1}
 
@@ -318,7 +328,7 @@ def test_default_runner_wiring_passes_cookies_and_store_llm(tmp_path, monkeypatc
     app = create_app(Settings(data_dir=tmp_path), store=store, bus=EventBus())
     runner = app.state.runner
     assert isinstance(runner, JobRunner) and runner.llm.model == "from-settings-page"
-    assert sorted(runner.gpu._loaders) == ["demucs", "ecapa", "model_a", "whisper_translate"]
+    assert sorted(runner.gpu._loaders) == ["demucs", "ecapa", "model_a", "model_b"]
 
     runner.stages.download("v", "u", tmp_path, lambda d, t: None)
     store.set_setting("cookies_path", str(tmp_path / "cookies.txt"))
@@ -380,9 +390,47 @@ def test_settings_lists_stage_models(env):
     client = env[0]
     client.put("/api/settings", json={"llm_model": "m3"})
     models = client.get("/api/settings").json()["models"]
-    assert set(models) == {"separate", "vad", "dnsmos", "speaker", "model_a", "translate", "llm"}
+    assert set(models) == {"separate", "vad", "dnsmos", "speaker", "model_a", "model_b", "llm"}
+    assert "translate" not in models
     assert models["separate"] == "htdemucs" and models["llm"] == "m3"
-    assert models["model_a"] == "SayedShaun/Qwen3-ASR-0.6B-Bengali"
+    assert models["model_a"].startswith("Qwen3-ASR 0.6B") and models["model_b"].startswith("Whisper")
+
+
+def test_settings_transcription_choices(env, tmp_path):
+    client, store, _, runner, _ = env
+    body = client.get("/api/settings").json()
+    tr = body["transcription"]
+    assert tr["a"]["current"] == "qwen3-asr-bn-ft1" and tr["b"]["current"] == "whisper-bn-ft1"
+    opts = tr["a"]["options"] + tr["b"]["options"]
+    assert len(opts) == 4
+    assert all(set(o) == {"id", "label", "available", "expected"} for o in opts)
+    moz = next(o for o in opts if o["id"] == "whisper-bn-mozilla")
+    assert moz["available"] is True and moz["expected"] == "mozilla-ai/whisper-large-v3-turbo-bn"
+
+    r = client.put("/api/settings", json={"model_b": "whisper-bn-mozilla"})
+    assert r.status_code == 200
+    assert r.json()["transcription"]["b"]["current"] == "whisper-bn-mozilla"
+    assert store.get_setting("model_b") == "whisper-bn-mozilla"
+    assert runner.gpu.unloaded == ["model_b"]
+
+    assert client.put("/api/settings", json={"model_a": "whisper-bn-ft1"}).status_code == 422
+    assert client.put("/api/settings", json={"model_b": "nope"}).status_code == 422
+    assert store.get_setting("model_a") is None and runner.gpu.unloaded == ["model_b"]
+
+
+def test_settings_rejects_unavailable_local_model(tmp_path, monkeypatch):
+    monkeypatch.setattr("ytds.api.settings.OllamaClient", FakeLlm)
+    missing = str(tmp_path / "no-such-model")
+    settings = Settings(data_dir=tmp_path / "var", model_a_path=missing)
+    runner = FakeRunner()
+    app = create_app(settings, runner=runner, store=Store(tmp_path / "ytds.db"), bus=EventBus())
+    with TestClient(app) as client:
+        a = client.get("/api/settings").json()["transcription"]["a"]["options"][0]
+        assert a == {"id": "qwen3-asr-bn-ft1", "label": a["label"], "available": False, "expected": missing}
+        client.put("/api/settings", json={"model_a": "qwen3-asr-bn-sayedshaun"})
+        r = client.put("/api/settings", json={"model_a": "qwen3-asr-bn-ft1"})
+        assert r.status_code == 422 and missing in r.json()["detail"]
+        assert runner.gpu.unloaded == ["model_a"]
 
 
 @pytest.mark.parametrize("status", ["queued", "running", "skipped", "failed"])

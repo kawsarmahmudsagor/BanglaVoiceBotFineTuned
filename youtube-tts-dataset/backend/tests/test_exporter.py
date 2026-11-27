@@ -146,3 +146,19 @@ def test_zero_rows_aborts_and_keeps_previous_export(env):
         _run(env)
     assert (out / "metadata.csv").read_bytes() == before
     assert not (tmp / "out.tmp").exists()
+
+
+def test_curation_models_lists_recorded_model_ids(env):
+    from ytds.config import Settings
+
+    store, ds, tmp = env
+    _add(store, ds, [("auto", "stt", "এক")])
+    store.update_video(ds, "vid1", model_a="qwen3-asr-bn-sayedshaun", model_b="whisper-bn-ft1")
+    store.add_video(ds, "vid2", "http://x/vid2")  # nothing exported from it
+    store.update_video(ds, "vid2", model_a="qwen3-asr-bn-ft1", model_b="whisper-bn-mozilla")
+    _, _, out = _run(env, settings=Settings(data_dir=tmp, model_b_path="B"))
+    models = json.loads((out / "curation.json").read_text(encoding="utf-8"))["models"]
+    assert "fallback" not in models
+    assert models["model_a"] == [{"id": "qwen3-asr-bn-sayedshaun", "source": "SayedShaun/Qwen3-ASR-0.6B-Bengali"}]
+    assert models["model_b"] == [{"id": "whisper-bn-ft1", "source": "B"}]
+    assert models["separation"] == "htdemucs" and models["vad"] == "silero-vad"

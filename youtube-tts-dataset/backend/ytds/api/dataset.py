@@ -59,7 +59,8 @@ def _run_export(app, ds: dict, out_dir: Path, skip: bool) -> None:
 
     try:
         summary = export_dataset(app.state.store, dataset_id, out_dir, on_progress,
-                                 data_dir=app.state.settings.data_dir, skip_unreviewed_translated=skip)
+                                 data_dir=app.state.settings.data_dir, skip_unreviewed_translated=skip,
+                                 settings=app.state.settings)
     except Exception as e:
         bus.publish({"type": "stage_failed", "dataset_id": dataset_id, "stage": "export", "error": str(e)})
     else:

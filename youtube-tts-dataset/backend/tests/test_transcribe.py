@@ -11,16 +11,6 @@ DATA = Path(__file__).parent / "data"
 BN_CLIP = DATA / "bn_clip.wav"
 
 
-class FakeGpu:
-    def __init__(self, models):
-        self.models = models
-        self.used: list[str] = []
-
-    def use(self, name):
-        self.used.append(name)
-        return self.models[name]
-
-
 def _vocals(tmp_path) -> Path:
     sr = 44100
     wav = tmp_path / "vocals.wav"
@@ -28,34 +18,34 @@ def _vocals(tmp_path) -> Path:
     return wav
 
 
-def test_transcribe_clips_model_a_only(tmp_path):
-    calls: list[int] = []
+def test_transcribe_pieces_a_slices_vocals_and_reports_progress(tmp_path):
+    seen: list[list[int]] = []
 
     def model_a(audios):
-        calls.append(len(audios))
-        return ["আমার সোনার বাংলা", "", "hello world"][: len(audios)]
+        seen.append([len(a) for a in audios])
+        return [f"t{i}" for i in range(len(audios))]
 
-    gpu = FakeGpu({"model_a": model_a})
-    clips = [{"idx": i, "start_s": i * 3.0, "end_s": i * 3.0 + 2.5} for i in range(3)]
-    clips.insert(1, {"idx": 9, "start_s": 0.0, "end_s": 1.0, "status": "dropped"})
+    pieces = [{"idx": i, "start_s": i * 1.0, "end_s": i * 1.0 + 0.5} for i in range(10)]
     progress: list[tuple[int, int]] = []
+    out = tr.transcribe_pieces_a(pieces, _vocals(tmp_path), model_a, lambda d, t: progress.append((d, t)))
 
-    tr.transcribe_clips(clips, _vocals(tmp_path), gpu, lambda d, t: progress.append((d, t)))
+    assert out == [f"t{i}" for i in range(8)] + ["t0", "t1"]
+    assert seen == [[8000] * 8, [8000] * 2]  # 0.5 s at 16 kHz, batches of eight
+    assert progress == [(8, 10), (10, 10)]
 
-    assert gpu.used == ["model_a"]
-    kept = [c for c in clips if c.get("status") != "dropped"]
-    assert [c["text_a"] for c in kept] == ["আমার সোনার বাংলা", "", "hello world"]
-    assert [c["status"] for c in kept] == ["auto", "pending_llm", "pending_llm"]
-    assert all(c["text_b"] is None and c["cer"] is None and c["text_source"] == "stt" for c in kept)
-    dropped = clips[1]
-    assert dropped["status"] == "dropped" and "text_a" not in dropped
-    assert progress[-1] == (3, 3)
 
-def test_transcribe_clips_no_live_clips_skips_gpu(tmp_path):
-    gpu = FakeGpu({})
-    clips = [{"idx": 0, "start_s": 0.0, "end_s": 1.0, "status": "dropped"}]
-    tr.transcribe_clips(clips, _vocals(tmp_path), gpu, lambda d, t: None)
-    assert gpu.used == []
+def test_transcribe_pieces_a_strips_glosses_via_model_helpers(tmp_path):
+    out = tr.transcribe_pieces_a([{"start_s": 0.0, "end_s": 1.0}], _vocals(tmp_path),
+                                 lambda audios: [tr.split_transcript("language Bengali<asr_text>স্কিল {Skill}")],
+                                 lambda d, t: None)
+    assert out == ["স্কিল"]
+
+
+def test_transcribe_pieces_a_no_pieces_skips_model(tmp_path):
+    def model_a(audios):
+        raise AssertionError("not called")
+
+    assert tr.transcribe_pieces_a([], tmp_path / "missing.wav", model_a, lambda d, t: None) == []
 
 
 def test_batches_of_eight():
@@ -77,7 +67,9 @@ def test_ported_qwen_helpers():
 
 @pytest.mark.gpu
 def test_model_a_loads_and_transcribes():
-    model = tr.load_model_a()
+    from ytds.config import load_settings
+
+    model = tr.load_model_a(load_settings().model_a_path)
     out = model([load_16k(BN_CLIP)])
     print("model_a:", out)
     assert len(out) == 1 and any("ঀ" <= ch <= "৿" for ch in out[0])

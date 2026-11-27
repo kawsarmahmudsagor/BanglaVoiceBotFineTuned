@@ -38,6 +38,12 @@ class GpuWorker:
         with self._lock:
             self._drop()
 
+    def unload(self, name: str) -> None:
+        """Drop the model only if `name` is the one loaded (a Settings change of that model)."""
+        with self._lock:
+            if self.loaded == name:
+                self._drop()
+
     def _drop(self) -> None:
         if self.loaded is None:
             return
