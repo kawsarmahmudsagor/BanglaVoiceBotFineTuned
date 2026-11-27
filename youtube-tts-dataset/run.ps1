@@ -114,7 +114,7 @@ if (-not $Dev) {
 $port = Get-Port
 if ($Dev) {
     Start-Process powershell -WorkingDirectory $backend -ArgumentList @('-NoExit', '-Command', 'uv run python -m ytds')
-    Start-Process powershell -WorkingDirectory $frontend -ArgumentList @('-NoExit', '-Command', 'npm.cmd run dev')
+    Start-Process powershell -WorkingDirectory $frontend -ArgumentList @('-NoExit', '-Command', '$env:YTDS_PORT=''' + $port + '''; npm.cmd run dev')
     Write-Host "Backend:  http://localhost:$port" -ForegroundColor Green
     Write-Host 'Frontend: http://localhost:5173  (Vite dev server, proxies /api and /ws to the backend)' -ForegroundColor Green
     exit 0
