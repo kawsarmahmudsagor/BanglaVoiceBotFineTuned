@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { vi } from "vitest";
 import { StudioReview } from "../components/StudioReview";
 import * as api from "../api";
@@ -86,4 +86,33 @@ test("an edit survives navigating away and back, and Approve sends it", async ()
   await waitFor(() =>
     expect(api.patchClip).toHaveBeenCalledWith("d1", "v1_1", { text_final: "edited text", status: "approved" }),
   );
+});
+
+test("a late text-only response does not undo an approval", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    let resolveEdit: (c: never) => void = () => {};
+    vi.mocked(api.patchClip).mockImplementation((_d, id, patch) => {
+      const c = clips.find((x) => x.id === id)!;
+      if (!("status" in patch)) return new Promise((r) => (resolveEdit = r as never));
+      return Promise.resolve({ ...c, ...patch } as never);
+    });
+    render(<StudioReview datasetId="d1" videoId="v1" />);
+    const box = (await screen.findByRole("textbox")) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "edited text" } });
+    await act(async () => {
+      vi.advanceTimersByTime(600);
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Approve Enter$/ }));
+    await screen.findByRole("button", { name: "Approved (2)" });
+    await act(async () => {
+      resolveEdit({ ...clips[1], status: "flagged", text_final: "edited text" } as never);
+    });
+    expect(screen.getByRole("button", { name: "Approved (2)" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Approved (2)" }));
+    fireEvent.click(screen.getAllByRole("button", { name: /1:05\.2/ })[0]);
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("edited text");
+  } finally {
+    vi.useRealTimers();
+  }
 });
