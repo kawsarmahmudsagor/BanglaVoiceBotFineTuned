@@ -106,7 +106,7 @@ def load_model_a() -> Transcriber:
 def transcribe_clips(clips: list[dict], vocals_wav: Path, gpu, on_progress: Callable[[int, int], None],
                      th: Thresholds | None = None) -> None:
     """All live clips through model A; sets text_a, status, text_source (text_b and cer stay empty).
-    A "fallback" route is stored as status pending_llm. Progress total is the number of live clips."""
+    A "broken" route is stored as status pending_llm. Progress total is the number of live clips."""
     th = th or Thresholds()
     live = [c for c in clips if c.get("status") != "dropped"]
     if not live:
@@ -118,4 +118,4 @@ def transcribe_clips(clips: list[dict], vocals_wav: Path, gpu, on_progress: Call
     for c, a in zip(live, texts_a):
         status = route(a, c["end_s"] - c["start_s"], th)
         c.update(text_a=a, text_b=None, cer=None, text_source="stt",
-                 status="pending_llm" if status == "fallback" else status)
+                 status="pending_llm" if status == "broken" else status)

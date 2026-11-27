@@ -11,7 +11,7 @@ from app.core.text import bn_normalize
 
 from ..config import Thresholds
 
-Route = Literal["auto", "flagged", "fallback"]
+Route = Literal["auto", "broken"]
 
 
 def _chars(text: str) -> str:
@@ -38,15 +38,15 @@ def longest_repeat(text: str) -> int:
 
 
 def route(text_a: str, duration_s: float, th: Thresholds) -> Route:
-    """"fallback" is stored as status pending_llm until the fallback stage runs."""
+    """broken" means the transcript is unusable."""
     chars = _chars(text_a)
     if not chars:
-        return "fallback"
+        return "broken"
     if bn_ratio(text_a) < th.min_bn_ratio:
-        return "fallback"
+        return "broken"
     cps = len(chars) / max(duration_s, 0.1)
     if cps < th.min_chars_per_s or cps > th.max_chars_per_s:
-        return "fallback"
+        return "broken"
     if longest_repeat(text_a) >= th.max_word_repeat:
-        return "fallback"
+        return "broken"
     return "auto"
