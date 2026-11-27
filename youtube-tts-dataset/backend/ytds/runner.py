@@ -588,7 +588,10 @@ class JobRunner:
         clips: list[dict] = []
         for r in sorted({p["range_idx"] for p in pieces}):
             rp = [p for p in pieces if p["range_idx"] == r]
-            punctuated = not any(p["no_punct"] for p in rp if not p["broken"])
+            # Pause-based (unsplit) grouping only when the LLM was down for the whole range; a piece whose
+            # punctuation alone was rejected just does not end a sentence.
+            live = [p for p in rp if not p["broken"]]
+            punctuated = not live or not all(p["no_punct"] for p in live)
             clips.extend(group_pieces(rp, th, punctuated))
         rows = []
         for idx, c in enumerate(clips):  # idx continuous across ranges

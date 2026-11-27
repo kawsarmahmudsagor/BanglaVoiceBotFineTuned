@@ -256,7 +256,7 @@ def start_video(dataset_id: str, video_id: str, body: StartBody, request: Reques
 def _reason(c: dict) -> str | None:
     if c["status"] is None:  # between group and select: not decided yet
         return None
-    return "disagree" if c.get("flag") == "disagree" else review_reason(c)
+    return review_reason(c)  # same reasons as the Review page
 
 
 @router.get("/{dataset_id}/videos/{video_id}/clips")

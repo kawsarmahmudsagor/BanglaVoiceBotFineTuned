@@ -508,6 +508,23 @@ def test_llm_down_flags_unsplit_and_retry_regroups(env):
     assert fakes.order[0] == ("release",) and fakes.order[-1] == ("llm_unload",)
 
 
+def test_one_rejected_piece_keeps_sentence_grouping(env):
+    """A piece whose punctuation alone was rejected (no_punct) just does not end a sentence; the range is still
+    grouped at sentence ends. Only a range where every piece is no_punct (LLM down) is grouped unsplit."""
+    store, bus, settings, make = env
+    fakes = Fakes(texts=lambda vid, i: (lambda t: (t, t))(default_texts(vid, i)[0] + (" ফেল" if i == 4 else "")))
+    fakes.llm_down_if = lambda text: "ফেল" in text.split()
+    ds = _dataset(store, "v1")
+    _run(make(fakes), ds)
+    pieces = store.pieces(ds, "v1")
+    assert [p["no_punct"] for p in pieces] == [int(i == 4) for i in range(12)]
+    live = [c for c in store.clips(ds, video_id="v1") if c["status"] != "dropped"]
+    assert len(live) == 4
+    assert all(c["flag"] is None and c["status"] == "auto" for c in live)
+    th = store.get_thresholds()
+    assert all(c["end_s"] - c["start_s"] >= th.tail_min_s for c in live)
+
+
 def test_llm_retry_skips_regroup_when_a_clip_was_reviewed(env):
     store, bus, settings, make = env
     fakes = Fakes()
