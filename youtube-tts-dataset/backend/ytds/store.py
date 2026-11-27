@@ -111,7 +111,11 @@ class Store:
                     (new, now, old),
                 )
         # thresholds: values still at the old defaults move to the new ones
-        row = self._db.execute("SELECT value FROM settings WHERE key='thresholds'").fetchone()
+        # (once only: a persisted marker stops a later user-saved 2.0/15.0 being rewritten on restart)
+        done = self._db.execute("SELECT 1 FROM settings WHERE key='thresholds_migrated'").fetchone()
+        row = None if done else self._db.execute("SELECT value FROM settings WHERE key='thresholds'").fetchone()
+        if not done:
+            self._db.execute("INSERT OR REPLACE INTO settings(key, value) VALUES ('thresholds_migrated', '1')")
         if row:
             try:
                 data = json.loads(row["value"])

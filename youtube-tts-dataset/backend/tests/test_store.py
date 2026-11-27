@@ -217,3 +217,19 @@ def test_add_video_studio(store):
     v = store.list_videos(ds)[0]
     assert v["status"] == "fetching"
     assert (v["origin"], v["source"]) == ("studio", "local")
+
+
+def test_threshold_migration_runs_once(tmp_path):
+    path = tmp_path / "old.db"
+    _old_db(path, '{"clip_min_s": 2.0, "clip_max_s": 15.0}')
+    s = Store(path)
+    assert s.get_thresholds().clip_max_s == 25.0
+    s.set_thresholds(Thresholds(clip_min_s=2.0, clip_max_s=15.0))
+    t = Store(path).get_thresholds()
+    assert (t.clip_min_s, t.clip_max_s) == (2.0, 15.0)
+
+
+def test_fresh_db_user_old_values_survive_restart(tmp_path):
+    path = tmp_path / "new.db"
+    Store(path).set_thresholds(Thresholds(clip_max_s=15.0))
+    assert Store(path).get_thresholds().clip_max_s == 15.0
