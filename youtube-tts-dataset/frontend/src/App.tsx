@@ -5,10 +5,12 @@ import { Jobs } from "./pages/Jobs";
 import { Review } from "./pages/Review";
 import { DatasetPage } from "./pages/Dataset";
 import { Settings } from "./pages/Settings";
+import { Studio } from "./pages/Studio";
 
 // Hash routes: the backend serves dist with StaticFiles(html=True), which 404s on deep paths.
 const PAGES = [
   { path: "jobs", label: "Jobs" },
+  { path: "studio", label: "Studio" },
   { path: "review", label: "Review" },
   { path: "dataset", label: "Dataset" },
   { path: "settings", label: "Settings" },
@@ -34,6 +36,7 @@ function writeStored(key: string, value: string): void {
 }
 
 function currentPage(): PagePath {
+  if (window.location.pathname.replace(/\/+$/, "") === "/studio") return "studio";
   const p = window.location.hash.replace(/^#\/?/, "");
   return PAGES.find((x) => x.path === p)?.path ?? "jobs";
 }
@@ -151,6 +154,9 @@ export function App() {
           </div>
         )}
         {page === "jobs" && <Jobs dataset={dataset} onDatasetCreated={onDatasetCreated} onVideosChanged={reloadDatasets} />}
+        {page === "studio" && (
+          <Studio dataset={dataset} datasets={datasets} onSelectDataset={selectDataset} onDatasetCreated={onDatasetCreated} />
+        )}
         {page === "review" && <Review dataset={dataset} />}
         {page === "dataset" && <DatasetPage dataset={dataset} />}
         {page === "settings" && <Settings dataset={dataset} onDatasetChanged={() => void reloadDatasets()} />}

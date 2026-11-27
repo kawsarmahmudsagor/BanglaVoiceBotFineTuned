@@ -77,6 +77,8 @@ export interface CreateDatasetBody {
   name: string;
   speaker?: string;
   urls: string;
+  /** Studio: create the dataset with no videos yet (urls must be empty). */
+  allow_empty?: boolean;
 }
 
 export interface UrlError {
