@@ -8,8 +8,19 @@ Gradio UI to check Bangla STT quality and latency for the two model families the
   (`language Bengali<asr_text>`, read from `backend/workers/backends/qwen-asr/mlops_backend/prompt.py`).
 
 The model family is detected from the checkpoint (its `config.json` `model_type`), so one box takes either.
-Presets: `openai/whisper-large-v3-turbo` (default), `mozilla-ai/whisper-large-v3-turbo-bn`,
-`SayedShaun/Qwen3-ASR-0.6B-Bengali`. Point the box at your own checkpoint after training.
+
+**Model dropdown** (`registry.py`): the base models (`openai/whisper-large-v3-turbo`,
+`mozilla-ai/whisper-large-v3-turbo-bn`, `SayedShaun/Qwen3-ASR-0.6B-Bengali`) plus every ASR run under
+`/srv/mlops/runs` (override: `STT_RUNS_ROOT`), one entry each: its export (`ct2` / `safetensors`, written after
+the run finished, labelled with the run's eval WER on its own eval set), or its `final` checkpoint when it has no
+export. Selecting an entry loads it; "Rescan runs" picks up new runs. Whisper `checkpoint-N` dirs hold no tokenizer, so the base model's tokenizer is staged next to
+links to the checkpoint (`~/.cache/stt-playground/staged`) before the CT2 conversion. The checkpoint box still
+takes any path or repo id.
+
+**Log**: every model load, file transcription and live turn is appended to `logs/playground.jsonl` (override:
+`STT_LOG`), one JSON object per line, durations in seconds: model label, checkpoint, family, engine, device, GPU,
+compute type, decoding/beam/VAD, audio length, latency (mean, best, every run), RTF, transcript, reference,
+WER/CER; live turns add silence wait, hand-off and speech-end-to-text. `pandas.read_json(path, lines=True)` reads it.
 
     ./run.sh                                       # http://localhost:7860
     STT_CHECKPOINT=/srv/mlops/.../ckpt ./run.sh    # your fine-tuned checkpoint
@@ -23,6 +34,19 @@ Presets: `openai/whisper-large-v3-turbo` (default), `mozilla-ai/whisper-large-v3
 - Latency = full transcription incl. VAD and decoding, mean of N runs after warm-up.
   RTF = latency / audio length. It excludes RealtimeSTT's endpointing wait (silence timeout).
 - Latency rises while a training run shares the GPU.
+- Whisper token cap: faster-whisper passes `max_length=448` to CTranslate2, which then stops after 224 generated
+  tokens. Bangla costs ~16 tokens per second of speech, so stock faster-whisper cuts any window over ~14 s
+  mid-sentence. The playground raises it to 440 new tokens (`WHISPER_MAX_LENGTH`, default 880); set
+  `WHISPER_MAX_LENGTH=448` to reproduce the stock behaviour. A window still holds at most ~27 s of Bangla speech.
+- Whisper window cap: with VAD on, the batched pipeline (the recorder's, and now the file tab's) merges speech into
+  windows of up to 30 s. The Bangla fine-tunes, trained on single-sentence clips, end the transcript at a pause
+  inside a long window and drop the phrase after it. The playground caps windows at 10 s (`WHISPER_WINDOW_S`; 30 =
+  stock). Both settings are logged (`whisper_max_length`, `window_s`).
+- Live turns save the audio sent to the engine to `logs/audio/*.wav` (path in the log's `audio_file`).
+- Safeguards (`whisper_chunking.py`, on by default, `WHISPER_SAFEGUARDS=0` to turn off): unbroken speech over 10 s
+  is split at its quietest point with 1 s overlap and the duplicated words are removed; a window that hit the token
+  cap or gave fewer than 12 tokens/s is decoded again as 5 s windows. Each call logs a `whisper_windows` record.
+- All Whisper problems, causes, fixes and settings for a production voice bot: `docs/whisper-specs.md`.
 
 ## Live tab (turn-end timing)
 

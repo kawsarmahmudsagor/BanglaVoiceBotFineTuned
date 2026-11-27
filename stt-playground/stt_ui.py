@@ -23,21 +23,65 @@ import numpy as np
 from app.core.backend_kit.audio import load_audio
 from app.core.text import bn_normalize
 from qwen_engine import ENGINE as QWEN_ENGINE, QwenAsr, is_qwen, register
+from registry import base_model_of, label_for, registry
+from runlog import LOG_PATH, log
+import whisper_chunking
 
 register()  # module level: the recorder's spawned child re-imports this module and needs the engine too
 
-PRESETS = {
-    "Whisper large-v3-turbo (base, to be fine-tuned)": "openai/whisper-large-v3-turbo",
-    "Whisper large-v3-turbo Bengali (mozilla-ai)": "mozilla-ai/whisper-large-v3-turbo-bn",
-    "Qwen3-ASR 0.6B Bengali (SayedShaun, to be fine-tuned)": "SayedShaun/Qwen3-ASR-0.6B-Bengali",
-}
+
+def _raise_whisper_token_cap() -> None:
+    """faster-whisper hardcodes WhisperModel.max_length = 448 and passes it to CTranslate2, which then stops after
+    224 generated tokens (half of max_length). Bangla costs ~16 tokens per second of speech, so every window longer
+    than ~14 s was cut mid-sentence (often mid-character). Raise max_length so the cap becomes 440 new tokens,
+    which with the 4-token prompt still fits the decoder's 448 positions. WHISPER_MAX_LENGTH=448 restores the stock
+    behaviour (what LocalVoiceAgent does today). Module level, like register(): the live recorder's child process
+    re-imports this module and builds its own WhisperModel."""
+    import faster_whisper
+
+    cap = int(os.environ.get("WHISPER_MAX_LENGTH", "880"))
+    cls = faster_whisper.WhisperModel
+    if getattr(cls, "_playground_cap", None) == cap:
+        return
+    init = getattr(cls, "_playground_orig_init", cls.__init__)
+
+    def __init__(self, *a, **kw):
+        init(self, *a, **kw)
+        self.max_length = cap
+
+    cls._playground_orig_init, cls._playground_cap, cls.__init__ = init, cap, __init__
+
+
+_raise_whisper_token_cap()
+whisper_chunking.install()  # 10 s windows, overlap at forced splits, retry of cut windows (see whisper_chunking.py)
+WHISPER_WINDOW_S = whisper_chunking.WINDOW_S
+
 DEFAULT_CKPT = os.environ.get("STT_CHECKPOINT", "openai/whisper-large-v3-turbo")
 CT2_CACHE = Path(os.environ.get("CT2_CACHE", Path.home() / ".cache" / "stt-playground" / "ct2"))
 DEVICE = os.environ.get("STT_DEVICE", "cuda")
 LANG = "bn"
 
-_state: dict = {"model": None, "label": None, "qwen": False}
+_state: dict = {"model": None, "label": None, "qwen": False, "ckpt": None, "compute_type": None}
 _history: list[list] = []
+
+
+def _with_tokenizer(ckpt: str) -> str:
+    """A Whisper training checkpoint dir (checkpoint-N) holds no tokenizer, and the CT2 converter needs one.
+    Stage a dir with links to the checkpoint's files plus the base model's tokenizer; other inputs pass through."""
+    p = Path(ckpt)
+    if not p.is_dir() or (p / "tokenizer.json").exists() or (p / "vocab.json").exists():
+        return ckpt
+    base = base_model_of(p) or "openai/whisper-large-v3-turbo"
+    stage = CT2_CACHE.parent / "staged" / ckpt.strip("/").replace("/", "--")
+    stage.mkdir(parents=True, exist_ok=True)
+    if not (stage / "tokenizer.json").exists():  # tokenizer first: saving it never writes through a link
+        from transformers import WhisperTokenizerFast
+
+        WhisperTokenizerFast.from_pretrained(base).save_pretrained(str(stage))
+    for f in p.iterdir():
+        if f.is_file() and f.suffix not in (".pt", ".pth", ".bin") and not (stage / f.name).exists():
+            (stage / f.name).symlink_to(f.resolve())
+    return str(stage)
 
 
 def resolve_ct2(ckpt: str, compute_type: str) -> tuple[str, str]:
@@ -49,6 +93,7 @@ def resolve_ct2(ckpt: str, compute_type: str) -> tuple[str, str]:
     if (out / "model.bin").exists():
         return str(out), f"cached CT2 conversion {out}"
     out.parent.mkdir(parents=True, exist_ok=True)
+    ckpt = _with_tokenizer(ckpt)
     script = Path(sys.executable).parent / "ct2-transformers-converter"
     head = [str(script)] if script.exists() else [sys.executable, "-m", "ctranslate2.converters.transformers"]
     subprocess.run(head + ["--model", ckpt, "--output_dir", str(out), "--force", "--quantization", compute_type,
@@ -65,7 +110,7 @@ def load_model(ckpt: str, compute_type: str) -> str:
     if not ckpt:
         return "Enter a checkpoint (HF repo id, HF-format dir, or CT2 dir)."
     t0 = time.perf_counter()
-    _state.update(model=None, qwen=False)
+    _state.update(model=None, qwen=False, ckpt=None, label=None)
     if is_qwen(ckpt):
         return _load_qwen(ckpt)
     try:
@@ -82,8 +127,13 @@ def load_model(ckpt: str, compute_type: str) -> str:
         list(model.transcribe(np.zeros(16000, dtype="float32"), language=LANG)[0])  # warm-up (CUDA init)
         warm_s = time.perf_counter() - t2
     except Exception as e:  # noqa: BLE001 - show any load error in the UI
+        log("load", ok=False, model=label_for(ckpt), checkpoint=ckpt, family="Whisper", device=DEVICE,
+            compute_type=compute_type, error=f"{type(e).__name__}: {e}")
         return f"Load failed: {type(e).__name__}: {e}"
-    _state.update(model=model, label=ckpt.rstrip("/").split("/")[-1])
+    _state.update(model=model, label=label_for(ckpt), ckpt=ckpt, compute_type=compute_type)
+    log("load", ok=True, model=_state["label"], checkpoint=ckpt, family="Whisper",
+        engine="faster-whisper (CTranslate2)", ct2_path=path, device=DEVICE, compute_type=compute_type,
+        convert_s=round(convert_s, 3), load_s=round(load_s, 3), warmup_s=round(warm_s, 3))
     return (f"Loaded **{ckpt}** on {DEVICE}/{compute_type}. {note}. "
             f"convert {convert_s:.1f}s, load {load_s:.1f}s, warm-up {warm_s:.1f}s.")
 
@@ -97,8 +147,12 @@ def _load_qwen(ckpt: str) -> str:
         model.transcribe(np.zeros(16000, dtype="float32"))  # warm-up (CUDA init)
         warm_s = time.perf_counter() - t1
     except Exception as e:  # noqa: BLE001 - show any load error in the UI
+        log("load", ok=False, model=label_for(ckpt), checkpoint=ckpt, family="Qwen3-ASR", device=DEVICE,
+            compute_type="bfloat16", error=f"{type(e).__name__}: {e}")
         return f"Load failed: {type(e).__name__}: {e}"
-    _state.update(model=model, label=ckpt.rstrip("/").split("/")[-1], qwen=True)
+    _state.update(model=model, label=label_for(ckpt), qwen=True, ckpt=ckpt, compute_type="bfloat16")
+    log("load", ok=True, model=_state["label"], checkpoint=ckpt, family="Qwen3-ASR", engine="transformers",
+        device=DEVICE, compute_type="bfloat16", load_s=round(load_s, 3), warmup_s=round(warm_s, 3))
     return (f"Loaded **{ckpt}** (Qwen3-ASR, transformers) on {DEVICE}/bf16, greedy; compute type, beam and VAD "
             f"do not apply. load {load_s:.1f}s, warm-up {warm_s:.1f}s.")
 
@@ -113,13 +167,14 @@ def _edit_distance(a, b) -> int:
     return prev[-1]
 
 
-def _score(hyp: str, ref: str) -> str:
+def _score(hyp: str, ref: str) -> tuple[float, float] | None:
+    """(WER, CER) after bn_normalize (asr mode), or None for an empty reference."""
     h, r = bn_normalize(hyp, mode="asr"), bn_normalize(ref, mode="asr")
     if not r.split():
-        return ""
+        return None
     wer = _edit_distance(r.split(), h.split()) / len(r.split())
     cer = _edit_distance(list(r), list(h)) / max(len(r), 1)
-    return f"WER {wer:.1%} | CER {cer:.1%} (bn_normalize, asr mode)"
+    return wer, cer
 
 
 def transcribe(audio_path, reference, runs, beam, vad):
@@ -138,18 +193,36 @@ def transcribe(audio_path, reference, runs, beam, vad):
         if _state["qwen"]:
             text = model.transcribe(wav)
         else:
-            segs, _info = model.transcribe(wav, language=LANG, task="transcribe", beam_size=int(beam),
-                                          vad_filter=bool(vad), condition_on_previous_text=False)
+            if vad:  # same path as the live recorder: batched pipeline, windowed by whisper_chunking
+                from faster_whisper import BatchedInferencePipeline
+
+                segs, _info = BatchedInferencePipeline(model=model).transcribe(
+                    wav, language=LANG, task="transcribe", beam_size=int(beam), vad_filter=True, batch_size=16)
+            else:
+                segs, _info = model.transcribe(wav, language=LANG, task="transcribe", beam_size=int(beam),
+                                              vad_filter=False, condition_on_previous_text=False)
             text = " ".join(s.text.strip() for s in segs).strip()  # generator: decoding happens here
         lat.append(time.perf_counter() - t0)
     mean = sum(lat) / len(lat)
     rtf = mean / audio_s if audio_s else 0.0
     lines = [f"audio {audio_s:.2f}s",
-             f"latency {mean * 1000:.0f} ms mean, {min(lat) * 1000:.0f} ms best (n={len(lat)})",
+             f"latency {mean:.3f} s mean, {min(lat):.3f} s best (n={len(lat)})",
              f"RTF {rtf:.3f}  " + ("(Qwen3-ASR, greedy)" if _state["qwen"]
-                                     else f"(beam {int(beam)}, VAD {'on' if vad else 'off'})")]
-    if reference.strip():
-        lines.append(_score(text, reference))
+                                     else f"(beam {int(beam)}, VAD {'on, ' + f'{WHISPER_WINDOW_S:g} s windows' if vad else 'off'})")]
+    score = _score(text, reference) if reference.strip() else None
+    if score:
+        lines.append(f"WER {score[0]:.1%} | CER {score[1]:.1%} (bn_normalize, asr mode)")
+    qwen = _state["qwen"]
+    log("transcribe", mode="file", model=_state["label"], checkpoint=_state["ckpt"],
+        family="Qwen3-ASR" if qwen else "Whisper", device=DEVICE, compute_type=_state["compute_type"],
+        decoding="greedy" if qwen else "beam", beam_size=None if qwen else int(beam),
+        vad_filter=None if qwen else bool(vad), window_s=None if qwen or not vad else WHISPER_WINDOW_S,
+        whisper_max_length=None if qwen else int(os.environ.get("WHISPER_MAX_LENGTH", "880")),
+        language=LANG, audio_file=str(audio_path),
+        audio_s=round(audio_s, 3), runs=len(lat), latency_s=round(mean, 4), latency_best_s=round(min(lat), 4),
+        latency_runs_s=[round(x, 4) for x in lat], rtf=round(rtf, 4), text=text, reference=reference.strip() or None,
+        wer=round(score[0], 4) if score else None, cer=round(score[1], 4) if score else None)
+    lines.append(f"logged to {LOG_PATH}")
     _history.insert(0, [_state["label"], f"{audio_s:.2f}", f"{mean * 1000:.0f}", f"{rtf:.3f}", text[:80]])
     del _history[50:]
     return text, "\n".join(lines), _history
@@ -159,6 +232,7 @@ def transcribe(audio_path, reference, runs, beam, vad):
 # from the browser mic via feed_audio (AUDIO_IO=browser), turn end = post_speech_silence_duration (STT_SILENCE_SEC),
 # stage marks from the same callbacks as LocalVoiceAgent's stt.timing_callbacks. ----
 SILENCE_SEC = float(os.environ.get("STT_SILENCE_SEC", "0.6"))  # LocalVoiceAgent default
+TURN_AUDIO_DIR = LOG_PATH.parent / "audio"  # one WAV per live turn, referenced by the log's audio_file
 
 
 class Live:
@@ -172,6 +246,8 @@ class Live:
         self.lock = threading.Lock()
         self.resampler = None
         self.resampler_sr = None
+        self.label = None
+        self.cfg: dict = {}
 
     def _mark(self, k):
         with self.lock:
@@ -207,7 +283,15 @@ class Live:
             model=path, transcription_engine=QWEN_ENGINE if qwen else "faster_whisper", device=DEVICE,
             compute_type="bfloat16" if qwen else compute_type, language=LANG, use_microphone=False, spinner=False, enable_realtime_transcription=False,
             post_speech_silence_duration=float(silence), beam_size=int(beam), **self._callbacks())
-        self.label = ckpt.rstrip("/").split("/")[-1]
+        self.label = label_for(ckpt)
+        self.cfg = {"model": self.label, "checkpoint": ckpt, "family": "Qwen3-ASR" if qwen else "Whisper",
+                    "engine": QWEN_ENGINE if qwen else "faster_whisper", "device": DEVICE,
+                    "compute_type": "bfloat16" if qwen else compute_type, "decoding": "greedy" if qwen else "beam",
+                    "beam_size": None if qwen else int(beam), "language": LANG,
+                    "post_speech_silence_s": float(silence),
+                    "window_s": None if qwen else WHISPER_WINDOW_S,
+                    "whisper_max_length": None if qwen else int(os.environ.get("WHISPER_MAX_LENGTH", "880"))}
+        log("live_start", **self.cfg)
         self.resampler = None
         self.running = True
         self.state = "listening..."
@@ -231,7 +315,29 @@ class Live:
             se, ep, st = m["speech_end"], m.get("endpoint", done), m.get("stt_start", m.get("endpoint", done))
             self.turns.insert(0, {"silence_ms": (ep - se) * 1000, "gap_ms": (st - ep) * 1000,
                                   "stt_ms": (done - st) * 1000, "total_ms": (done - se) * 1000, "text": text.strip()})
+            wav_path, audio_s = self._save_turn_audio()
+            log("transcribe", mode="live", **self.cfg, silence_wait_s=round(ep - se, 4),
+                handoff_s=round(st - ep, 4), latency_s=round(done - st, 4),
+                speech_end_to_text_s=round(done - se, 4), audio_s=audio_s, audio_file=wav_path,
+                text=text.strip())
             self.state = "listening..."
+
+    def _save_turn_audio(self) -> tuple[str | None, float | None]:
+        """Save the exact audio the recorder sent to the engine (last_transcription_bytes, 16 kHz float32) as a
+        WAV next to the log, so a turn can be replayed in the file tab or offline."""
+        audio = getattr(self.rec, "last_transcription_bytes", None)
+        if audio is None or not len(audio):
+            return None, None
+        import soundfile as sf
+
+        out = TURN_AUDIO_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}-{int(time.time() * 1000) % 1000:03d}.wav"
+        try:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            sf.write(out, np.asarray(audio, dtype=np.float32), 16000)
+        except Exception as e:  # noqa: BLE001 - never break the live loop over a log file
+            print(f"cannot save turn audio: {e}")
+            return None, round(len(audio) / 16000, 3)
+        return str(out), round(len(audio) / 16000, 3)
 
     def feed(self, chunk):
         """Browser mic chunk -> 16 kHz int16 -> recorder. Resampled here with a stateful stream resampler:
@@ -256,6 +362,7 @@ class Live:
         self.running = False
         rec, self.rec = self.rec, None
         if rec is not None:
+            log("live_stop", model=self.label, turns=len(self.turns))
             try:
                 rec.shutdown()
             except Exception:  # noqa: BLE001
@@ -281,12 +388,17 @@ def build():
     with gr.Blocks(title="Bangla STT playground") as demo:
         gr.Markdown("## Bangla STT playground: quality & latency\nWhisper via faster-whisper (CT2), the engine "
                     "RealtimeSTT uses; Qwen3-ASR via transformers (bf16, greedy).")
+        reg = registry()
         with gr.Row():
-            preset = gr.Dropdown(list(PRESETS), value=None, label="Preset", scale=2)
+            preset = gr.Dropdown(list(reg), value=label_for(DEFAULT_CKPT, reg) if DEFAULT_CKPT in reg.values() else None,
+                                 label="Model (base + fine-tuned runs; selecting loads it)", scale=4)
+            refresh = gr.Button("\u21bb Rescan runs", scale=0, min_width=120)
+        with gr.Row():
             ckpt = gr.Textbox(value=DEFAULT_CKPT, label="Checkpoint (HF repo id, HF-format dir, CT2 dir, or Qwen3-ASR dir)", scale=3)
-            ctype = gr.Dropdown(["float16", "int8_float16", "int8", "float32"], value="float16", label="Compute type", scale=1)
+            ctype = gr.Dropdown(["float16", "int8_float16", "int8", "float32"], value="float16", label="Compute type (Whisper)", scale=1)
             load_btn = gr.Button("Load", variant="primary", scale=1)
         status = gr.Markdown("Not loaded.")
+        gr.Markdown(f"Every load, transcription and live turn is appended to `{LOG_PATH}` (JSONL, seconds).")
         with gr.Tab("Live (auto turn-end)"):
             gr.Markdown("Same pipeline as LocalVoiceAgent: RealtimeSTT recorder (faster-whisper, or the Qwen3-ASR engine "
                         "for a Qwen checkpoint). Press **Start**, allow the mic "
@@ -322,7 +434,12 @@ def build():
                     metrics = gr.Textbox(label="Metrics", lines=4, interactive=False)
             hist = gr.Dataframe(headers=["model", "audio s", "latency ms", "RTF", "text"], value=_history,
                                 label="History", interactive=False)
-        preset.change(lambda p: PRESETS.get(p, gr.skip()), preset, ckpt)
+        def pick(name, compute_type):
+            path = registry().get(name)
+            return (gr.skip(), gr.skip()) if not path else (path, load_model(path, compute_type))
+
+        preset.input(pick, [preset, ctype], [ckpt, status])
+        refresh.click(lambda: gr.update(choices=list(registry())), None, preset)
         load_btn.click(load_model, [ckpt, ctype], status)
         go.click(transcribe, [audio, ref, runs, beam, vad], [out, metrics, hist])
         demo.load(load_model, [ckpt, ctype], status)

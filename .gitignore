@@ -26,3 +26,6 @@ realtimesst.log
 
 # ytds frontend build output
 youtube-tts-dataset/frontend/dist/
+
+# stt-playground transcription log
+stt-playground/logs/

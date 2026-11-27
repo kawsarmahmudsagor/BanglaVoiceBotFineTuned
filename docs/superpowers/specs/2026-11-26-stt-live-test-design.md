@@ -8,7 +8,7 @@ Status: draft, for later. Approach A chosen by the owner (2026-11-26).
 The owner fine-tunes Whisper large-v3-turbo for Bangla (first result: model version
 `training-1-whisper-v3-turbo-bn`, run `r-854260e0`, base `mozilla-ai/whisper-large-v3-turbo-bn`, WER 48.96% → 32.63%,
 `ct2` export). Today the only way to try a checkpoint by voice is the standalone Gradio tool in
-`whisper-stt-playground/`. The platform should have a built-in page to test an STT model the way LocalVoiceAgent
+`stt-playground/`. The platform should have a built-in page to test an STT model the way LocalVoiceAgent
 runs it: speak, the turn ends after a short silence, the transcript appears automatically, and every turn shows
 where the latency went.
 
@@ -88,18 +88,18 @@ Chosen by the owner: **A**.
   lock helpers; excluded from the uv workspace).
 - Dependencies: `fastapi`, `uvicorn[standard]`, `RealtimeSTT[faster-whisper]`, `faster-whisper`, `ctranslate2`,
   `transformers==5.24.1` (the qwen-asr backend's pin: Qwen3-ASR inference needs transformers 5; the Whisper HF → CT2
-  conversion was verified with 5.24.1 in `whisper-stt-playground/`), `accelerate`, `librosa`, `jinja2` (Qwen chat
+  conversion was verified with 5.24.1 in `stt-playground/`), `accelerate`, `librosa`, `jinja2` (Qwen chat
   template), `soxr`, `torch==2.7.1` (cu128 index), DB driver used by the worker. Not the `qwen_asr` pip package.
 - RealtimeSTT comes from LocalVoiceAgent as a pinned git dependency
   (`git+https://github.com/kawsarmahmudsagor/LocalVoiceAgent@fd6bb52258a3154a20d75249ee803dcd99dc3df7#subdirectory=RealtimeSTT`),
-  which is what `whisper-stt-playground/` uses and was verified with. (Spec §8.1 plans a vendored copy for the call
+  which is what `stt-playground/` uses and was verified with. (Spec §8.1 plans a vendored copy for the call
   page; switching to it then is a one-line source change.)
 - Port `VOICE_PORT` (default 8010), host `127.0.0.1`. `run-vm.sh` starts it in tmux session `mlops-voice` and
   `status`/`stop` cover it; `run-vm.sh dev` starts it too. `.env.example` gains `VOICE_PORT`; the frontend gains
   `NEXT_PUBLIC_VOICE_URL` (default `http://localhost:8010`, same pattern as `NEXT_PUBLIC_API_URL`). CORS allows
   `WEB_ORIGIN`. README tunnel command adds `-L 8010:localhost:8010`.
 - CUDA libraries: set `LD_LIBRARY_PATH` to the venv's `site-packages/nvidia/*/lib` dirs before start
-  (CTranslate2 needs cuBLAS/cuDNN 12; `whisper-stt-playground/run.sh` does the same).
+  (CTranslate2 needs cuBLAS/cuDNN 12; `stt-playground/run.sh` does the same).
 - The recorder spawns a child process; the service module must not build heavy state at import.
 
 ### 7.2 Model sources and loading
@@ -305,7 +305,7 @@ supports (`ct2` export, or `safetensors` from the `qwen-asr` backend).
 - transformers 5.24.1 plus `ct2-transformers-converter` worked for Whisper large-v3-turbo in the playground; other
   Whisper variants are untested.
 
-## 13. Relation to `whisper-stt-playground/`
+## 13. Relation to `stt-playground/`
 
 The standalone Gradio tool stays as a quick offline check until this page ships; its verified pieces (CT2
 conversion with tokenizer fallback, stateful resampling, timing callbacks) are the reference implementation for
