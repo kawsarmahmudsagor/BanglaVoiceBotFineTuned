@@ -60,6 +60,17 @@ def _last_error_line(exc: Exception) -> str:
     return lines[-1] if lines else repr(exc)
 
 
+def _locate_video(info: dict, out_dir: Path) -> Path:
+    for item in info.get("requested_downloads") or []:
+        fp = item.get("filepath")
+        if fp and Path(fp).exists():
+            return Path(fp)
+    found = sorted(out_dir.glob("video.*"))
+    if not found:
+        raise DownloadError("downloaded video file not found")
+    return found[0]
+
+
 def download(
     video_id: str,
     url: str,
@@ -99,13 +110,29 @@ def download(
     if cookies:
         opts["cookiefile"] = str(cookies)
 
-    raw_wav = out_dir / ("video.mp4" if keep_video else "raw.wav")
+    source = out_dir / "raw.wav"
+    media_rel = None
     final = out_dir / "audio.wav"
     try:
         with ydl_factory(opts) as ydl:
             info = ydl.extract_info(url, download=True)
+        if keep_video:
+            source = _locate_video(info, out_dir)
+            if source.suffix.lower() != ".mp4":
+                mp4 = out_dir / "video.mp4"
+                remux = subprocess.run(
+                    ["ffmpeg", "-y", "-loglevel", "error", "-i", str(source),
+                     "-c", "copy", str(mp4)],
+                    capture_output=True, encoding="utf-8", errors="replace",
+                )
+                if remux.returncode == 0:
+                    source.unlink(missing_ok=True)
+                    source = mp4
+                else:
+                    mp4.unlink(missing_ok=True)
+            media_rel = f"download/{source.name}"
         proc = subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(raw_wav),
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(source),
              "-ac", "1", "-ar", "48000", "-c:a", "pcm_s16le", str(final)],
             capture_output=True, encoding="utf-8", errors="replace",
         )
@@ -131,5 +158,5 @@ def download(
         "license": info.get("license"),
     }
     if keep_video:
-        meta["media"] = "download/video.mp4"
+        meta["media"] = media_rel
     return meta
