@@ -97,7 +97,7 @@ Real training runs in six backends under `backend/workers/backends/`, each with 
 |---|---|
 | `unsloth` | LLM SFT (Qwen3, Gemma 3, TituLM Llama 3.2; lora, qlora, full) and Whisper LoRA |
 | `hf` | Whisper full or adapter, wav2vec2 and MMS CTC, Indic Parler-TTS |
-| `nemo` | ASR (IndicConformer, BanglaConformer) |
+| `nemo` | ASR (IndicConformer, BanglaConformer, Bengali FastConformer hybrid) |
 | `f5` | TTS (IndicF5) |
 | `cosyvoice` | TTS (CosyVoice 3, experimental for Bangla) |
 | `qwen-asr` | ASR (Qwen3-ASR 0.6B Bengali; transformers 5, full fine-tune) |

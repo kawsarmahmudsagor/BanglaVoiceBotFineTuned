@@ -1,0 +1,89 @@
+id: bn-fastconformer-hybrid
+task: asr
+name: Bengali FastConformer Hybrid RNNT-CTC Large v2
+hf_repo: SayedShaun/stt_bn_fastconformer_hybrid_large_v2
+derived_from: nvidia/stt_en_fastconformer_hybrid_large_pc
+params: 115M
+role: comparison
+license:
+  id: cc-by-4.0
+  commercial_ok: true
+  url: https://huggingface.co/SayedShaun/stt_bn_fastconformer_hybrid_large_v2
+  notes: >-
+    CC BY 4.0, the same license as NVIDIA's English base checkpoint. Redistributing the weights or a fine-tune
+    requires credit to the NVIDIA base checkpoint and to the eight training corpora. OpenSLR-37 and OpenSLR-53 are
+    CC BY-SA 4.0; the card treats share-alike as not passing to model weights, which is common practice but not
+    settled law.
+bangla:
+  status: finetuned
+  evidence: >-
+    Fine-tuned from NVIDIA's English FastConformer hybrid on 1,048 h of Bengali (Common Voice 26, OpenSLR-53,
+    OpenSLR-37, FLEURS bn_in, Ben-10, Shrutilipi, Kathbath, IndicVoices) with a new Bengali tokenizer. The card
+    reports RNNT WER 17.87% / CER 6.14% and CTC WER 23.38% / CER 7.68% on its own pooled test split (8,924
+    utterances, greedy, no LM). Not yet measured on our VM. FLEURS bn and Ben-10 are in its training data, so its
+    scores on our FLEURS bn test and Bengali.AI sets are contaminated.
+  url: https://huggingface.co/SayedShaun/stt_bn_fastconformer_hybrid_large_v2
+# Checked on the workstation (2026-11-27, NeMo 3.0.0): restores with stock NeMo as EncDecHybridRNNTCTCBPEModel,
+# 114.6M params, dw_striding 8x, att_context_size [-1, -1] (offline), aux CTC weight 0.3, optim adamw lr 3e-5.
+runtime:
+  engine: custom
+  convert: onnx
+  streaming: false
+description: |
+  A 115M FastConformer with both RNN-T and CTC decoders sharing one encoder, for Bengali. It takes 16 kHz mono
+  audio in 0.5-20 s segments. It outputs Bengali script without punctuation and without Latin letters or ASCII
+  digits. Bengali numerals (০-৯) are in its tokenizer.
+
+  The checkpoint is offline (full-context attention). For streaming, fine-tune it as a cache-aware model with a
+  limited attention context; that is a training change, not a decoding option. There is no RealtimeSTT engine for
+  it yet (`custom`).
+dataset:
+  format: asr
+  required_fields: [file, text]
+  optional_fields: [region, channel, noise, speaker]
+  example: "clips/0001.wav,আমার অর্ডারটা কবে পৌঁছাবে জানাবেন"
+  recommended:
+    hours: "10-100"
+    sample_rate: "16000"
+    clip_seconds: "0.5-20"
+    speakers: "100+ for speaker variety"
+  notes: |
+    Upload as a zip with `metadata.csv` (columns `file,text`) and the audio files. Transcripts in Bangla script,
+    Unicode NFC. Prepare strips punctuation and maps ASCII digits to Bengali numerals. Write English words in Bangla
+    script: the tokenizer has single Latin letters (so those rows are kept), but the model never learned to emit
+    them, and spelling English letter by letter is hard to learn from little data.
+    Keep phone-call audio (8 kHz upsampled) in the mix if the bot serves calls.
+finetune:
+  methods: [full]
+  frameworks: [nemo]
+  targets:
+    - "Loads with stock NeMo as `EncDecHybridRNNTCTCBPEModel`; the nemo backend restores the .nemo file from the Hugging Face repo with no conversion."
+    - "Keep the existing Bengali SentencePiece tokenizer (BPE, vocab 1,024); train both the RNN-T and CTC heads (hybrid loss, CTC weight 0.3 as in the checkpoint)."
+    - "Use a low learning rate: the card trained at 3e-5 with cosine decay because the acoustic model had already converged."
+    - "For streaming, fine-tune again with a cache-aware encoder (limited `att_context_size`, causal convolutions); the backend keeps the checkpoint's encoder streaming keys unchanged."
+  hyperparams:
+    learning_rate: 3.0e-5
+    max_epochs: 20
+    batch_size: 16
+    ctc_loss_weight: 0.3
+  metrics: [wer, cer]
+  pitfalls:
+    - "FLEURS bn_in and Ben-10 are in its training data: do not compare its FLEURS or Bengali.AI scores with other models."
+    - "It never emits punctuation, Latin script or ASCII digits, so it cannot transcribe code-switched Bangla-English speech."
+    - "The card's training text is NFC-normalized, which stores ড় ঢ় য় as base letter + nukta (U+09BC). Normalize references the same way before scoring."
+    - "Segments over 20 s were never seen in training; split long audio before transcribing."
+recipe_template:
+  backend: nemo
+  method: {type: full}
+  hparams:
+    learning_rate: 3.0e-5
+    epochs: 20
+  export: [nemo]
+sources:
+  - title: Bengali FastConformer Hybrid Transducer-CTC Large (v2) model card
+    url: https://huggingface.co/SayedShaun/stt_bn_fastconformer_hybrid_large_v2
+  - title: conformer-training-pipeline (training code)
+    url: https://github.com/sayedshaun/conformer-training-pipeline
+  - title: "Fast Conformer with Linearly Scalable Attention for Efficient Speech Recognition"
+    url: https://arxiv.org/abs/2305.05084
+verified: 2026-11-27

@@ -9,6 +9,7 @@ from app.core.contract import read_config
 from mlops_backend import asr
 
 INDIC = "ai4bharat/indicconformer_stt_bn_hybrid_ctc_rnnt_large"
+BN_FASTCONFORMER = "SayedShaun/stt_bn_fastconformer_hybrid_large_v2"
 # Bangla transcripts without digits: bn_normalize maps "0" to "০", and tokenizers may lack the Bangla digits.
 BN_TEXTS = ["আমি বাংলায় কথা বলি", "আজ আকাশ পরিষ্কার", "তুমি কোথায় যাচ্ছ", "আমরা ভাত খাই"]
 
@@ -131,7 +132,7 @@ def test_handlers_exposed():
 
 
 @pytest.mark.heavy
-@pytest.mark.parametrize("model", [INDIC])
+@pytest.mark.parametrize("model", [INDIC, BN_FASTCONFORMER])
 def test_nemo_20_steps(run_dir, monkeypatch, tmp_path, model):
     """GPU VM only: 20 steps on the tiny dataset, eval with baseline, .nemo export."""
     from app.core.backend_kit import Reporter
