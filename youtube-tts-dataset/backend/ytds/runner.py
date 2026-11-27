@@ -37,7 +37,7 @@ GPU_STAGES = ("separate", "transcribe_a", "transcribe_b", "punctuate_pieces", "q
 LLM_STAGES = ("punctuate_pieces", "punctuate")  # GPU-thread stages whose GPU tenant is the Ollama model
 FINALIZE = "finalize"
 PUNCT_RETRY = "punctuate_retry"
-REGROUP_RETRY = "regroup_retry"
+REGROUP_STAGES = ("punctuate_pieces", "group", "quality", "select", "punctuate")  # rerun by a regroup
 RECOVER_S = 0.2  # pause after an unexpected worker error, before trying again
 POOL_WORKERS = 2
 MIN_CLEAN_S = 30.0
@@ -140,7 +140,7 @@ class JobRunner:
         self._stop = threading.Event()
         self._tasks: queue.Queue = queue.Queue()
         self._active: set[str] = set()          # dataset ids being scheduled
-        self._inflight: set[tuple] = set()      # (dataset_id, video_id[, PUNCT_RETRY | REGROUP_RETRY])
+        self._inflight: set[tuple] = set()      # (dataset_id, video_id[, PUNCT_RETRY])
         self._cancel: set[tuple[str, str]] = set()  # stopped videos whose running stage must end
         self._llm_retry: list[str] = []         # dataset ids waiting for the GPU thread
         self._llm_busy = 0
@@ -186,19 +186,26 @@ class JobRunner:
         """Studio: the user chose the keep ranges (None or [] = whole video); the video runs from `cut` on."""
         with self._lock:
             self._cancel.discard((dataset_id, video_id))
-        self.store.update_video(dataset_id, video_id, cuts=None if cuts is None else json.dumps(cuts),
+        # always non-NULL for a started video: NULL means "the user never chose ranges" (see retry)
+        self.store.update_video(dataset_id, video_id, cuts=json.dumps(cuts if cuts is not None else []),
                                 status="queued", error=None)
         self.enqueue(dataset_id)
 
     def retry(self, dataset_id: str, video_id: str) -> None:
+        """Rerun from the first unfinished stage. A Studio video goes back to `fetching` when its download is
+        unfinished, and to `awaiting_cut` (not queued) when the user never started it with ranges."""
         with self._lock:
             self._cancel.discard((dataset_id, video_id))
         step = self._next_step(dataset_id, video_id)
         if step != FINALIZE:
             self.store.mark_stage(dataset_id, video_id, step, False)
         v = self._video(dataset_id, video_id)
-        studio_fetch = step == "download" and v is not None and v.get("origin") == "studio"
-        self.store.update_video(dataset_id, video_id, status="fetching" if studio_fetch else "queued", error=None)
+        studio = v is not None and v.get("origin") == "studio"
+        if studio and step == "cut" and v.get("cuts") is None:
+            self.store.update_video(dataset_id, video_id, status="awaiting_cut", error=None)
+            return
+        self.store.update_video(dataset_id, video_id, status="fetching" if studio and step == "download" else "queued",
+                                error=None)
         self.enqueue(dataset_id)
 
     def busy(self, dataset_id: str, video_id: str) -> bool:
@@ -542,6 +549,14 @@ class JobRunner:
         self._write_pieces(ds, vid, out)
 
     def _stage_group(self, ds: str, vid: str) -> None:
+        """Builds the clips. When the video already has reviewed clips (a Retry LLM regroup the reviewer got
+        ahead of), they are kept: quality and select are marked done and only punctuate reruns."""
+        if self._reviewed(self.store.clips(ds, video_id=vid)):
+            for s in ("quality", "select"):
+                self.store.mark_stage(ds, vid, s, True)
+            self._publish(type="log", dataset_id=ds, video_id=vid, stage="group",
+                          message="clips were reviewed before the regroup ran; kept as they are")
+            return
         th = self.store.get_thresholds()
         pieces = self.store.pieces(ds, vid)
         clips: list[dict] = []
@@ -622,7 +637,9 @@ class JobRunner:
         return any(c["status"] in ("approved", "rejected") or not _machine_text(c) for c in clips)
 
     def _run_llm_retry(self, ds: str) -> None:
-        """Errors are logged per video and leave its status alone: its stages already finished."""
+        """A regroup (spec 4.4) clears the marks of punctuate_pieces..punctuate and queues the video, so the
+        stage graph reruns them with its usual resume, failure status and GPU tenancy. Errors of the
+        punctuation-only retry are logged per video and leave its status alone: its stages already finished."""
         for v in self.store.list_videos(ds):
             vid = v["id"]
             if not self.store.stage_done(ds, vid, "punctuate"):
@@ -631,7 +648,7 @@ class JobRunner:
                 clips = self.store.clips(ds, video_id=vid)
                 if (v["status"] == "done" and any(c["flag"] == "unsplit" for c in clips)
                         and not self._reviewed(clips)):
-                    self._guarded(ds, vid, REGROUP_RETRY, lambda: self._regroup(ds, vid))
+                    self._schedule_regroup(ds, vid)
                 else:
                     self._guarded(ds, vid, PUNCT_RETRY,
                                   lambda: self._with_llm(lambda: self._stage_punctuate(ds, vid, only_no_punct=True)))
@@ -648,14 +665,8 @@ class JobRunner:
             with self._lock:
                 self._inflight.discard((ds, vid, tag))
 
-    def _regroup(self, ds: str, vid: str) -> None:
-        """Spec 4.4: punctuate the pieces again and rebuild the clips of a video that was grouped without the LLM.
-        Rechecks that nobody reviewed a clip right before the clips are replaced."""
-        self._with_llm(lambda: self._stage_punctuate_pieces(ds, vid))
-        if self._reviewed(self.store.clips(ds, video_id=vid)):
-            return
-        self._stage_group(ds, vid)
-        self._stage_quality(ds, vid)
-        self._stage_select(ds, vid)
-        self._with_llm(lambda: self._stage_punctuate(ds, vid))
-        self._finalize(ds, vid)
+    def _schedule_regroup(self, ds: str, vid: str) -> None:
+        for stage in REGROUP_STAGES:
+            self.store.mark_stage(ds, vid, stage, False)
+        self.store.update_video(ds, vid, status="queued", error=None)
+        self.enqueue(ds)

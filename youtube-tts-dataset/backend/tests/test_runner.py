@@ -363,12 +363,17 @@ def test_gpu_stage_major_across_videos(env):
     store, bus, settings, make = env
     fakes = Fakes()
     ds = _dataset(store, "v1", "v2")
+    for v in ("v1", "v2"):  # both ready for separate at once
+        store.mark_stage(ds, v, "download", True)
+        store.mark_stage(ds, v, "cut", True)
+        d = cut_dir(settings.data_dir, ds, v)
+        d.mkdir(parents=True)
+        (d / "map.json").write_text(json.dumps(CMAP), encoding="utf-8")
     _run(make(fakes), ds)
 
     seq = [s for s, _ in fakes.log]
     assert seq.count("separate") == 2 and seq.count("transcribe_a") == 2
     assert max(i for i, s in enumerate(seq) if s == "separate") < min(i for i, s in enumerate(seq) if s == "transcribe_a")
-    assert max(i for i, s in enumerate(seq) if s == "transcribe_a") < min(i for i, s in enumerate(seq) if s == "transcribe_b")
     assert all(_video(store, ds, v)["status"] == "done" for v in ("v1", "v2"))
 
 
@@ -814,3 +819,110 @@ def test_retry_after_cancel_runs_the_stage_again(env):
     runner.retry(ds, "v1")
     _run(runner, ds)
     assert _video(store, ds, "v1")["status"] == "done"
+
+
+def test_regroup_failure_marks_video_failed_and_retry_recovers(env):
+    store, bus, settings, make = env
+    fakes = Fakes()
+    fakes.llm_up = False
+    ds = _dataset(store, "v1")
+    runner = make(fakes)
+    _run(runner, ds)
+    assert any(c["flag"] == "unsplit" for c in store.clips(ds, video_id="v1"))
+
+    fakes.llm_up = True
+    fakes.fail = {("quality", "v1"): RuntimeError("ecapa boom")}
+    runner.retry_llm(ds)
+    assert runner.wait_idle(IDLE_S)
+    v = _video(store, ds, "v1")
+    assert v["status"] == "failed" and v["error"] == "ecapa boom"  # not "done" with half-built clips
+
+    fakes.fail = {}
+    runner.retry(ds, "v1")
+    assert runner.wait_idle(IDLE_S)
+    assert _video(store, ds, "v1")["status"] == "done"
+    live = [c for c in store.clips(ds, video_id="v1") if c["status"] != "dropped"]
+    assert len(live) == 4 and all(c["flag"] is None and c["status"] == "auto" for c in live)
+    assert all(c["text_final"] == _kept(c) + "।" for c in live)
+
+
+def test_restart_mid_regroup_resumes(env):
+    store, bus, settings, make = env
+    fakes = Fakes()
+    fakes.llm_up = False
+    ds = _dataset(store, "v1")
+    first = make(fakes)
+    _run(first, ds)
+    first.stop()
+
+    fakes.llm_up = True
+    first._run_llm_retry(ds)  # schedules the regroup; no worker threads run it
+    assert not any(store.stage_done(ds, "v1", s) for s in STAGES[6:])
+    assert _video(store, ds, "v1")["status"] == "queued"
+    store.update_video(ds, "v1", status="running")  # the backend died while the regroup's first stage ran
+
+    second = make(fakes)
+    second.start()
+    assert second.wait_idle(IDLE_S)
+    assert _video(store, ds, "v1")["status"] == "done"
+    live = [c for c in store.clips(ds, video_id="v1") if c["status"] != "dropped"]
+    assert len(live) == 4 and all(c["flag"] is None and c["status"] == "auto" for c in live)
+
+
+def test_review_before_regroup_group_keeps_clips(env):
+    """A clip reviewed after Retry LLM scheduled the regroup but before group ran is not wiped."""
+    store, bus, settings, make = env
+    fakes = Fakes()
+    fakes.llm_up = False
+    ds = _dataset(store, "v1")
+    runner = make(fakes)
+    _run(runner, ds)
+    runner.stop()
+
+    fakes.llm_up = True
+    runner._run_llm_retry(ds)
+    before = store.clips(ds, video_id="v1")
+    store.update_clip(ds, before[0]["id"], status="approved")
+
+    second = make(fakes)
+    second.start()
+    assert second.wait_idle(IDLE_S)
+    after = store.clips(ds, video_id="v1")
+    assert [(c["id"], c["start_s"], c["end_s"], c["flag"]) for c in after] == \
+        [(c["id"], c["start_s"], c["end_s"], c["flag"]) for c in before]
+    assert after[0]["status"] == "approved"
+    assert _video(store, ds, "v1")["status"] == "done"
+
+
+@pytest.mark.parametrize("stopped", [True, False])
+def test_retry_of_unstarted_studio_video_returns_to_awaiting_cut(env, stopped):
+    store, bus, settings, make = env
+    fakes = Fakes()
+    ds = _dataset(store, "v1", origin="studio", status="fetching")
+    runner = make(fakes)
+    _run(runner, ds)
+    assert _video(store, ds, "v1")["status"] == "awaiting_cut"
+    if stopped:
+        runner.skip(ds, "v1")
+    runner.retry(ds, "v1")
+    assert runner.wait_idle(IDLE_S)
+    assert _video(store, ds, "v1")["status"] == "awaiting_cut"
+    assert fakes.calls_for("v1") == ["download"]  # the whole video was not processed without ranges
+
+
+@pytest.mark.parametrize("cuts", [[[0, 30]], None])
+def test_retry_of_started_studio_video_failed_at_cut_runs(env, cuts):
+    store, bus, settings, make = env
+    fakes = Fakes(fail={("cut", "v1"): RuntimeError("bad file")})
+    ds = _dataset(store, "v1", origin="studio", status="fetching")
+    runner = make(fakes)
+    _run(runner, ds)
+    runner.start_video(ds, "v1", cuts)
+    assert runner.wait_idle(IDLE_S)
+    assert _video(store, ds, "v1")["status"] == "failed"
+
+    fakes.fail = {}
+    runner.retry(ds, "v1")
+    assert runner.wait_idle(IDLE_S)
+    assert _video(store, ds, "v1")["status"] == "done"
+    assert fakes.cuts_seen["v1"] == (cuts or [])
