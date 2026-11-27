@@ -53,6 +53,23 @@ At the same time, change clip segmentation for every video (Studio and dashboard
 - The app checks both paths at startup and on **Start processing**. A missing model gives a clear error; no video starts.
 - VRAM: model A about 1.5 GB (bf16), model B about 1.6 GB (float16). The GPU worker keeps one model loaded at a time, as today.
 
+### 2.2 Model choice in Settings
+
+The dashboard Settings page (not Studio) gets a **Transcription models** section with two dropdowns, **Model A** and **Model B**. Options:
+
+| Slot | Option id | Label | Source | Default |
+|---|---|---|---|---|
+| A | `qwen3-asr-bn-ft1` | Qwen3-ASR 0.6B — Bengali.AI 200h fine-tune | `MODEL_A_PATH` (local folder or HF repo id) | yes |
+| A | `qwen3-asr-bn-sayedshaun` | Qwen3-ASR 0.6B Bengali (SayedShaun, current model) | HF `SayedShaun/Qwen3-ASR-0.6B-Bengali` | |
+| B | `whisper-bn-ft1` | Whisper large-v3-turbo-bn — Bengali.AI 200h fine-tune (`r-854260e0`) | `MODEL_B_PATH` (CT2 folder or HF repo id) | yes |
+| B | `whisper-bn-mozilla` | Whisper large-v3-turbo-bn (mozilla-ai, the earlier model B) | HF `mozilla-ai/whisper-large-v3-turbo-bn`, converted to CT2 float16 once and cached under `<data_dir>/models/` (the converter removed in 5c05bfa comes back) | |
+
+- Model A options load with the same Qwen3-ASR code; model B options with the same faster-whisper code and all §4.5 rules.
+- The choice is stored in the `settings` table (`model_a`, `model_b`). `GET /api/settings` returns the options and the current choice; `PUT /api/settings` accepts `model_a` / `model_b` (unknown id: 422).
+- Each option shows whether it is available (local folder present, or HF id). A local option whose folder is missing is shown disabled with the path it expected.
+- Changing a model unloads it from the GPU worker if it is loaded. The new model is used from the next `transcribe_a` / `transcribe_b` run. Stages that already ran keep their text. A hint under the dropdowns says so.
+- Provenance: each video records `model_a` / `model_b` option ids when its transcribe stages run, and the export's `curation.json` `models` block lists the ids (and resolved paths or repo ids) of the models used. The `fallback` entry is removed from that block.
+
 ## 3. Data model
 
 ### 3.1 `videos` table: new columns
@@ -63,6 +80,7 @@ At the same time, change clip segmentation for every video (Studio and dashboard
 | `source` | TEXT | `youtube` (default) or `local` |
 | `cuts` | TEXT | JSON list of `[start_s, end_s]` keep ranges in original-video seconds; NULL means whole video |
 | `media` | TEXT | relative path of the playable preview file (Studio only), NULL otherwise |
+| `model_a`, `model_b` | TEXT | option ids of the models that transcribed the video (§2.2) |
 
 Columns are added with `ALTER TABLE ... ADD COLUMN` when missing, so an existing `ytds.db` opens without loss.
 
@@ -185,7 +203,7 @@ Each transcript (piece or clip) gets a score in [0, 1]; 0 means broken.
 - The `fallback` stage, its `whisper_translate` GPU model and the `pending_llm` status are no longer produced. The fallback module and loader are deleted.
 - The video warning "poor STT" now means more than half of the clips were dropped as `bad_stt`.
 - **Retry LLM** only reruns punctuation (and §4.4 regrouping). It no longer translates.
-- Settings hints for the three routing thresholds say "the clip is dropped" instead of "translated".
+- Settings hints for the three routing thresholds say "the clip is dropped" instead of "translated". Nothing else on the Settings page is removed; the model dropdowns (§2.2) are added.
 - Old datasets: existing `translated` and `pending_llm` clips are left as they are. The dashboard Review page still shows and edits them, and export still treats them as today. Nothing new of that kind is created.
 
 ### 4.8 Migration of existing videos
@@ -254,10 +272,13 @@ Backend (pytest, no GPU unless marked):
 - Model B windowing: `plan_windows`, `join_overlap`, `_suspicious` unit tests ported with the code; marked GPU test for the P1 token cap (§4.5).
 - Routing: broken piece excluded from grouping and splits clips; broken clip dropped with `bad_stt`; no clip reaches `pending_llm`; `fallback` stage not in `STAGES`.
 - Runner: Studio video stops at `awaiting_cut`; `/start` resumes it; dashboard video runs straight through; LLM-down path flags `unsplit`.
+- Settings: model options listed with availability; `PUT` saves a valid id and rejects an unknown one; a change unloads the old model; the next transcribe stage uses the new one; video records the ids.
 - API: upload id dedupe, playlist rejected, `/start` validation and 409, media Range response, clips listing with original times.
 - GPU smoke test (marked): one short video through the full new pipeline; every kept clip is 5–25 s, most are 15–25 s, and its final text ends in a sentence terminator, or the clip carries a `flag`.
 
 Frontend (Vitest):
+
+- Settings model dropdowns: show options, disable a missing local model, save the choice.
 
 - Range editor: mark in/out, drag edges, delete, overlapping ranges merged on submit.
 - Studio main panel renders the right view for each status.
